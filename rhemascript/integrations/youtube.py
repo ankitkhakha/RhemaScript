@@ -145,18 +145,56 @@ class YouTubeClient:
         return {key: item.get(key) for key in ("id", "snippet", "contentDetails", "statistics")}
 
     def upload_video(self, file_path: str, *, title: str, description: str,
+                     project_id: str, project_version: str,
+                     final_film_evidence_ref: str,
+                     gate_records: list[dict[str, str]],
+                     human_director_acceptance: bool,
                      tags: list[str] | None = None, category_id: str = "22",
                      privacy_status: str = "private", publish_at: str | None = None,
-                     made_for_kids: bool = False, publishing_authorisation: bool = False) -> dict[str, Any]:
-        """Resumable upload. Public/scheduled publishing requires explicit authority.
+                     made_for_kids: bool = False,
+                     publishing_authorisation: bool = False) -> dict[str, Any]:
+        """Resumable upload behind all six project gates and separate authorities.
 
-        The safe default is private. publish_at is accepted only with private privacy.
+        The caller must supply ordered, approved gate records for this project,
+        final-film evidence matching the last gate, final human acceptance, and
+        separate publishing authorisation. The safe default is private.
         """
-        from rhemascript.core.authority import authorise_action, AuthorityError
+        from rhemascript.core.authority import (
+            authorise_action, final_acceptance_allowed, AuthorityError,
+        )
+        from rhemascript.core.gates import (
+            GateDecision, GateError, GateRecord, ProjectGateState,
+        )
+        if not all(isinstance(value, str) and value.strip() for value in
+                   (project_id, project_version, final_film_evidence_ref)):
+            raise YouTubeIntegrationError("project identity, version, and final-film evidence reference are required")
+        if not isinstance(gate_records, list):
+            raise YouTubeIntegrationError("all six approved project gate records are required")
+        state = ProjectGateState(project_id)
         try:
-            authorise_action("PUBLISH", {"publishing_authorisation": publishing_authorisation})
-        except AuthorityError as exc:
-            raise YouTubeIntegrationError("upload denied: publishing authorisation is absent") from exc
+            for raw in gate_records:
+                if not isinstance(raw, dict):
+                    raise GateError("gate record must be an object")
+                state = state.record(GateRecord(
+                    project_id=raw.get("project_id", ""),
+                    gate=raw.get("gate", ""),
+                    decision=GateDecision(raw.get("decision")),
+                    actor_id=raw.get("actor_id", ""),
+                    evidence_ref=raw.get("evidence_ref", ""),
+                ))
+            if not state.all_gates_approved:
+                raise GateError("all six project gates must be approved")
+            if state.records[-1].evidence_ref != final_film_evidence_ref:
+                raise GateError("final-film evidence reference does not match the final gate")
+            if not final_acceptance_allowed(
+                human_director_acceptance=human_director_acceptance
+            ):
+                raise AuthorityError("final human acceptance is absent")
+            authorise_action("PUBLISH", {
+                "publishing_authorisation": publishing_authorisation
+            })
+        except (AuthorityError, GateError, ValueError) as exc:
+            raise YouTubeIntegrationError(f"upload denied by RhemaScript governance: {exc}") from None
         path = Path(file_path)
         if not path.is_file() or path.stat().st_size == 0:
             raise YouTubeIntegrationError("video file is missing or empty")
