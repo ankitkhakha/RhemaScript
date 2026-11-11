@@ -174,6 +174,42 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
 
+    def test_thumbnail_write_uses_if18_gateway_and_publish_authority(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, dict(headers), body))
+                if url.startswith("https://oauth2.googleapis.com/token"):
+                    return 200, b'{"access_token":"thumb-access"}', {}
+                if url.startswith("https://www.googleapis.com/upload/youtube/v3/thumbnails/set"):
+                    return 200, b'{"items":[{"default":{"url":"thumbnail"}}]}', {}
+                raise AssertionError("unexpected gateway request")
+
+        events = []
+        transport = MethodTransport()
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),), transport=transport,
+            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
+        )
+        client = YouTubeClient(self.config(), gateway=gateway)
+        with tempfile.NamedTemporaryFile(suffix=".png") as image:
+            image.write(b"thumbnail-bytes")
+            image.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                result = client.set_thumbnail(
+                    "video-123", image.name, **self.publish_context(),
+                )
+
+        self.assertIn("items", result)
+        self.assertEqual([call[1] for call in transport.calls], ["POST", "POST"])
+        self.assertEqual(
+            [event["operation"] for event in events if event["phase"] == "REQUESTED"],
+            ["OAUTH_TOKEN", "THUMBNAIL_WRITE"],
+        )
+        self.assertNotIn("thumb-access", repr(events))
+        self.assertNotIn("thumbnail-bytes", repr(events))
+
     def test_request_rejects_non_google_hosts_before_transport(self):
         calls = []
         client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
