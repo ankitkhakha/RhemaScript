@@ -63,5 +63,44 @@ class ReadinessReportTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             build_readiness_report({"status": "READY"})
 
+
+    def test_one_call_pipeline_validates_manifest_assesses_and_reports(self):
+        from rhemascript.reports import run_project_assessment
+        manifest = {
+            "manifest_id": "RS-ONE-CALL-001",
+            "schema_version": "1.0",
+            "project_record": dict(PROJECT),
+            "artifacts": [{
+                "artifact_id": "SOURCE-1",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "BIBLICAL_SOURCE",
+                "version": "1",
+                "status": "VERIFIED",
+                "evidence_refs": ["synthetic:source"],
+            }],
+            "evidence_records": [{
+                "evidence_id": "CAP01-EVIDENCE",
+                "capability_id": "CAP-01",
+                "payload": {"sources": [{"source_ref": "synthetic:source"}]},
+                "evidence_refs": ["synthetic:source"],
+                "artifact_refs": ["SOURCE-1"],
+            }],
+            "source_to_final_links": [],
+        }
+        validated, result, report = run_project_assessment(
+            manifest,
+            actor_role="SYNTHETIC_TEST_HARNESS",
+            orchestrator=CreativeProductionOrchestrator(ReadyEngine()),
+        )
+        self.assertEqual(validated.manifest_id, "RS-ONE-CALL-001")
+        self.assertEqual(result.project_id, PROJECT["project_id"])
+        self.assertEqual(report["run_id"], result.run_id)
+        self.assertEqual(report["project_id"], validated.project_id)
+        self.assertFalse(report["generation_preconditions_met"])
+        self.assertFalse(report["execution"]["generation_performed"])
+        self.assertFalse(report["execution"]["external_action_performed"])
+        self.assertFalse(report["execution"]["publishing_performed"])
+
 if __name__ == "__main__":
     unittest.main()
