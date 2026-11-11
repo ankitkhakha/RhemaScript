@@ -11,7 +11,7 @@ Implemented client operations:
 - Verify upload/video processing and privacy status.
 - Read channel analytics by date range, with optional video filter.
 
-The client is dormant until explicitly instantiated with credentials. No network call occurs on import. Uploads fail closed unless the caller supplies all six ordered, approved RhemaScript project gate records, matching project identity/version, the final-film evidence reference matching the sixth gate, explicit human-director final acceptance, and separate publishing authorisation. The client validates these using the existing `ProjectGateState`, `GateRecord`, and authority functions; it does not create or infer approvals. Uploaded videos default to `private`.
+The client is dormant until explicitly instantiated with credentials. No network call occurs on import. Uploads and thumbnail writes fail closed unless the caller supplies a complete RhemaScript Evidence Pack. The client validates that pack with the existing evidence-pack validator, including project/version binding and the connected Source-to-Final chain; it then checks that the final-film artifact is approved, all six ordered gate records are approved, and the final gate references that exact final-film evidence. Explicit Human Director final acceptance and separate publishing authorisation are also required. The integration does not create or infer approvals. Uploaded videos default to `private`.
 
 ## Zero-cost setup boundary
 
@@ -41,16 +41,14 @@ client = YouTubeClient(YouTubeConfig.from_environment())
 channel = client.channel()
 
 # Keep private unless the human director explicitly authorises publication.
-# Supply real, ordered gate records and the final-film evidence reference
-# from the approved RhemaScript project evidence pack.
+# Supply the validated project Evidence Pack, including its six gate records
+# and connected Source-to-Final artifact chain.
 uploaded = client.upload_video(
     "approved-final.mp4",
     title="Approved title",
     description="Approved description",
-    project_id="RS-PROJECT-ID",
-    project_version="APPROVED-VERSION",
+    evidence_pack=approved_project_evidence_pack,
     final_film_evidence_ref="EVIDENCE-REF-FOR-FINAL-FILM",
-    gate_records=approved_six_gate_records,
     human_director_acceptance=True,
     tags=["RhemaScript", "Bible"],
     privacy_status="private",
