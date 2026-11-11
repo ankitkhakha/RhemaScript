@@ -12,7 +12,7 @@ python -m raei.ledger --ledger demo.json assess CS-01 3 tests/test_ledger.py::te
 python -m raei.ledger --ledger demo.json report
 ```
 
-Only a score of at least 3 with a verified evidence reference can pass a unit. Prerequisites must already be passed. Passed units cannot be overwritten. The event chain detects edits to prior events. Evidence references are asserted by the operator and must be independently inspected. This prototype is local and deterministic.
+Only a score of at least 3 with a verified evidence reference can pass a unit. Prerequisites must already be passed. Passed units cannot be overwritten. The event chain detects edits to prior events. Evidence references are asserted by the operator and must be independently inspected. This prototype is local and deterministic. The CLI assessment command defaults to `reported_unverified`; use `--evidence-status verified` only after inspecting the referenced artefact and result. An evidence reference is an operator assertion, not automatic file inspection.
 
 
 ## Curriculum registry
