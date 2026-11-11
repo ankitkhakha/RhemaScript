@@ -21,3 +21,14 @@
 - Execution flags are copied from the orchestration result and remain false in the current orchestrator implementation.
 
 This module is deterministic and read-only. It does not change evidence, gates, approvals, project status, audit records or execution state.
+
+
+## One-call project assessment
+
+`run_project_assessment(pack, actor_role=...)` provides the consolidated entry point. It validates the evidence pack, passes the compiled evidence and existing gate records to the Creative Production Orchestrator, and returns:
+
+1. the validated evidence pack;
+2. the orchestration result; and
+3. the read-only readiness report.
+
+Optional dependency injection of an orchestrator is intended for deterministic tests. Production use defaults to the existing orchestrator and its existing capability engine. The function does not execute media generation, provider calls, external writes or publishing.
