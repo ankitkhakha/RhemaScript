@@ -3,7 +3,6 @@ import unittest
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
-from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from raei.ledger import empty_ledger, add_unit, record_assessment, validate, LedgerError, append_event, main, load
 
