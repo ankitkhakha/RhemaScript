@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rhemascript.org/schemas/project-evidence-pack-v1.schema.json",
+  "title": "RhemaScript Project Evidence Pack V1.0",
+  "description": "Version-bound evidence manifest. This schema does not grant approval or execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_id", "schema_version", "project_record", "artifacts", "evidence_records", "source_to_final_links"],
+  "properties": {
+    "manifest_id": {"type": "string", "minLength": 1},
+    "schema_version": {"const": "1.0"},
+    "project_record": {
+      "type": "object",
+      "required": ["record_id", "record_type", "schema_version", "project_id", "status", "classification", "version"],
+      "properties": {
+        "record_id": {"type": "string", "minLength": 1},
+        "record_type": {"type": "string", "minLength": 1},
+        "schema_version": {"type": "string", "minLength": 1},
+        "project_id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["DRAFT", "UNDER_REVIEW", "APPROVED", "AUTHORISED", "EXECUTED", "VERIFIED", "ACCEPTED", "ON_HOLD", "BLOCKED", "REJECTED", "SUPERSEDED", "ARCHIVED", "CANCELLED"]},
+        "classification": {"enum": ["OPERATIONAL", "CONTROLLED", "PROTECTED"]},
+        "version": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": true
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["artifact_id", "project_id", "project_version", "artifact_type", "version", "status"],
+        "properties": {
+          "artifact_id": {"type": "string", "minLength": 1},
+          "project_id": {"type": "string", "minLength": 1},
+          "project_version": {"type": "string", "minLength": 1},
+          "artifact_type": {"enum": ["BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM"]},
+          "version": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "minLength": 1},
+          "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": true
+      }
+    },
+    "evidence_records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["evidence_id", "capability_id", "payload"],
+        "properties": {
+          "evidence_id": {"type": "string", "minLength": 1},
+          "capability_id": {"enum": ["CAP-01", "CAP-02", "CAP-03", "CAP-04", "CAP-05", "CAP-06", "CAP-07", "CAP-08", "CAP-09", "CAP-10", "CAP-11", "CAP-12", "CAP-13", "CAP-14", "CAP-15"]},
+          "payload": {"type": "object"},
+          "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "artifact_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "source_to_final_links": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from_artifact_id", "to_artifact_id", "relationship"],
+        "properties": {
+          "from_artifact_id": {"type": "string", "minLength": 1},
+          "to_artifact_id": {"type": "string", "minLength": 1},
+          "relationship": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    },
+    "gate_records": {
+      "type": "array",
+      "description": "Existing six-gate records only; preserve the established gate order and actor/evidence requirements.",
+      "items": {
+        "type": "object",
+        "required": ["project_id", "gate", "decision", "actor_id", "evidence_ref"],
+        "properties": {
+          "project_id": {"type": "string", "minLength": 1},
+          "gate": {"enum": ["PROJECT_CREATIVE_DIRECTION", "SCRIPT_BIBLICAL_ACCURACY", "VISUAL_DEVELOPMENT", "PRODUCTION_PLAN_PROMPT", "GENERATION_AUTHORISATION", "FINAL_FILM"]},
+          "decision": {"enum": ["APPROVED", "REJECTED", "RETURNED"]},
+          "actor_id": {"type": "string", "minLength": 1},
+          "evidence_ref": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}
