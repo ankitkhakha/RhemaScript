@@ -28,4 +28,21 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run full local CI suite
+        id: rhemascript_ci
         run: python ci/run_ci.py
+      - name: Publish CI execution receipt
+        if: always()
+        env:
+          CI_OUTCOME: ${{ steps.rhemascript_ci.outcome }}
+          CI_COMMIT: ${{ github.sha }}
+          CI_REF: ${{ github.ref }}
+        run: |
+          {
+            echo "## RhemaScript CI execution receipt"
+            echo
+            echo "- Outcome: **${CI_OUTCOME}**"
+            echo "- Commit: ` ${CI_COMMIT} `"
+            echo "- Ref: ` ${CI_REF} `"
+            echo "- Runner: GitHub-hosted Ubuntu / Python 3.12"
+            echo "- Command: `python ci/run_ci.py`"
+          } >> "$GITHUB_STEP_SUMMARY"
