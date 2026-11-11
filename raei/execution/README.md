@@ -116,3 +116,16 @@ The programme is complete only when:
 - the final readiness report lists scores, evidence, limitations, unresolved assurance requirements and the exact authority boundary for subsequent development.
 
 This system tracks and validates evidence. It does not itself teach, execute tests, interpret Scripture, certify competence or grant production authority.
+
+
+## RhemaScript project-integrity validator
+
+```sh
+python -m unittest tests.test_project_integrity -v
+```
+
+The validator in `validate_project_integrity.py` checks the eight Source-to-Final
+Integrity Chain stages, the ordered six approval gates, evidence references and
+explicit authority decisions. It requires generation and publishing to remain
+unexecuted and production authority to remain `not_granted`. Synthetic fixtures
+are test data only; they are not project approvals or evidence of real production.
