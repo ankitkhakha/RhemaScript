@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 import json
 import os
 import uuid
+from urllib.request import build_opener, HTTPRedirectHandler
 
 
 API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -31,6 +32,12 @@ REQUIRED_SCOPES = (
 
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    """Reject redirects so credentials and media never follow an untrusted hop."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 
 
@@ -129,12 +136,19 @@ class YouTubeClient:
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
+        parsed = urlparse(url)
+        allowed_hosts = {"oauth2.googleapis.com", "www.googleapis.com",
+                         "youtube.googleapis.com", "youtubeanalytics.googleapis.com"}
+        if (parsed.scheme != "https" or parsed.hostname not in allowed_hosts
+                or parsed.username or parsed.password or parsed.port not in (None, 443)):
+            raise YouTubeIntegrationError("request URL is outside the official HTTPS Google host allowlist")
         req = Request(url, data=body, headers=headers or {}, method=method)
         try:
             if self._transport:
                 status, raw, response_headers = self._transport(req, self.config.timeout_seconds)
             else:
-                with urlopen(req, timeout=self.config.timeout_seconds) as response:
+                opener = build_opener(_NoRedirect())
+                with opener.open(req, timeout=self.config.timeout_seconds) as response:
                     status, raw, response_headers = (
                         response.status, response.read(8_000_001), dict(response.headers.items())
                     )
@@ -277,7 +291,7 @@ class YouTubeClient:
         if status not in (200, 201) or not location:
             raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
         parsed = urlparse(location)
-        if parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}:
+        if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}\n                or parsed.username or parsed.password or parsed.port not in (None, 443)\n                or parsed.fragment):
             raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
 
         total = path.stat().st_size
