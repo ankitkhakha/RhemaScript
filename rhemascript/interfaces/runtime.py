@@ -58,7 +58,9 @@ class InterfaceGateway:
         except DisclosureError as exc:
             raise InterfaceError(str(exc)) from exc
 
-        operation = request["operation"].upper()
+        # Canonicalise before the consequential-action check so casing or
+        # surrounding whitespace cannot bypass the existing authority guard.
+        operation = request["operation"].strip().upper()
         if operation in DANGEROUS_OPERATIONS:
             try:
                 authorise_action(operation, authority or {})
