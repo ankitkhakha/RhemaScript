@@ -63,7 +63,7 @@ The example is a local learning record, not a RhemaScript production project or 
 
 ## Transactional SQLite evidence-store practical
 
-`raei.store.EvidenceStore` is a local-only engineering practical using Python's standard-library SQLite implementation. It demonstrates atomic write transactions, foreign-key-enforced prerequisites, optimistic version checks, immutable passed units, idempotent request replay, a hash-linked audit event stream, and a competing-writer test.
+`raei.store.EvidenceStore` is a local-only engineering practical using Python's standard-library SQLite implementation. It demonstrates atomic write transactions, foreign-key-enforced prerequisites, optimistic version checks, immutable passed units, idempotent request replay, a hash-linked audit event stream, consistent local backup/restore, and competing-writer tests.
 
 Run:
 
