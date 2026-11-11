@@ -75,10 +75,11 @@ The orchestrator does not create approvals, approve a gate, waive a gate, or cha
 ## 5. Separate execution authority
 
 Generation preconditions are considered satisfied only when:
-- all six existing gates have approved records for the same project; and
-- the separate explicit generation-authorisation flag is true.
+- all six existing gates have approved records for the same project;
+- the separate explicit generation-authorisation flag is true; and
+- every critical source, interpretation, script, creative, visual, tool, security, rights, asset, production-plan and QC capability has been assessed with its required evidence.
 
-Even then, this orchestrator performs no generation. It returns `generation_action_performed = false`. External actions and publishing are also always reported as not performed. A future execution adapter must independently enforce the existing authority controls and must not treat this assessment output as an execution command.
+Even then, this orchestrator performs no generation. It returns `generation_action_performed = false`. It also returns the exact `missing_generation_capabilities` when critical evidence is absent. External actions and publishing are always reported as not performed. A future execution adapter must independently enforce the existing authority controls and must not treat this assessment output as an execution command.
 
 ## 6. Traceability
 
