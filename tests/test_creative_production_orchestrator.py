@@ -90,6 +90,18 @@ class CreativeProductionOrchestratorTests(unittest.TestCase):
         self.assertFalse(result.external_action_performed)
         self.assertFalse(result.publishing_performed)
 
+    def test_six_gates_and_authorisation_do_not_bypass_missing_core_capability_evidence(self):
+        result=CreativeProductionOrchestrator().run(
+            PROJECT, capability_evidence={}, actor_role="TEST_HARNESS",
+            gate_records=approved_gates(PROJECT["project_id"]),
+            generation_authorisation=True
+        )
+        self.assertTrue(result.gate_status["all_gates_approved"])
+        self.assertFalse(result.gate_status["required_generation_capabilities_complete"])
+        self.assertIn("CAP-01",result.gate_status["missing_generation_capabilities"])
+        self.assertFalse(result.generation_preconditions_met)
+        self.assertFalse(result.generation_action_performed)
+
     def test_wrong_project_gate_record_is_rejected(self):
         records=approved_gates(PROJECT["project_id"])
         records[0]["project_id"]="A-DIFFERENT-PROJECT"
