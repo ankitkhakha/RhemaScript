@@ -68,3 +68,19 @@ This lab is in-memory and single-process. Its rate limiter is not distributed, i
 A learner must explain authentication versus authorization, identify the trust boundary, demonstrate BOLA and mass-assignment failures against an intentionally unsafe example, repair them, add a regression test for each, explain the OWASP API risks, and document remaining deployment risks. Score each dimension 0–4: conceptual accuracy, threat identification, implementation, negative testing, evidence/limitations. Pass requires at least 3 in every dimension and no critical failure.
 
 **Current competency result:** not assessed. Code and tests are practice artefacts, not a passed assessment.
+
+
+## Authentication boundary practical (additional)
+
+`raei.api_auth` adds a strict, standard-library HMAC-SHA256 bearer-token verification exercise. It checks the signature before trusting claims; pins the accepted algorithm to HS256; rejects malformed, oversized and duplicate-key JSON; validates issuer, audience, subject, expiry, not-before and an allowlist of roles; and uses constant-time signature comparison.
+
+Additional tests are in `tests/test_api_auth.py`.
+
+Run:
+
+```sh
+python -m unittest tests.test_api_auth -v
+python -m unittest tests.test_api_contracts tests.test_api_security_lab tests.test_api_auth -v
+```
+
+The token issuer helper exists only to create local test tokens. Real token issuance and identity lifecycle belong to a trusted identity provider. The HMAC secret is injected and must be managed outside source control. This deliberately small implementation is for learning and must not replace a maintained, security-reviewed OIDC/JWT library in production. It does not implement key rotation, asymmetric signatures, revocation, refresh tokens, discovery, TLS, or secure secret storage. Do not put a production secret in tests or repository files.
