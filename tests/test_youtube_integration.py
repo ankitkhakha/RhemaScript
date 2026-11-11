@@ -24,11 +24,44 @@ class YouTubeIntegrationTests(unittest.TestCase):
              "actor_id": "human-director", "evidence_ref": f"evidence:{gate}"}
             for gate in gates
         ]
-        return {
-            "project_id": "RS-TEST-001",
-            "project_version": "1.0",
-            "final_film_evidence_ref": "evidence:FINAL_FILM",
+        kinds = (
+            "BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION",
+            "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM",
+        )
+        artifacts = []
+        links = []
+        previous = None
+        for index, kind in enumerate(kinds):
+            ident = f"ART-{index + 1}"
+            artifacts.append({
+                "artifact_id": ident, "project_id": "RS-TEST-001",
+                "project_version": "1.0", "artifact_type": kind,
+                "version": "1", "status": "APPROVED",
+                "evidence_refs": ["evidence:FINAL_FILM"] if kind == "EDITED_FILM" else [],
+            })
+            if previous is not None:
+                links.append({"from_artifact_id": previous, "to_artifact_id": ident,
+                              "relationship": "derived_from"})
+            previous = ident
+        evidence_pack = {
+            "manifest_id": "RS-MANIFEST-TEST", "schema_version": "1.0",
+            "project_record": {
+                "record_id": "RS-EVIDENCE-TEST", "record_type": "SYNTHETIC_PROJECT",
+                "schema_version": "1.0", "project_id": "RS-TEST-001",
+                "status": "DRAFT", "classification": "OPERATIONAL", "version": "1.0",
+            },
+            "artifacts": artifacts,
+            "evidence_records": [{
+                "evidence_id": "EV-TEST", "capability_id": "CAP-01",
+                "payload": {"sources": [{"source_ref": "bible:ref"}]},
+                "evidence_refs": ["bible:ref"], "artifact_refs": ["ART-1"],
+            }],
+            "source_to_final_links": links,
             "gate_records": records,
+        }
+        return {
+            "evidence_pack": evidence_pack,
+            "final_film_evidence_ref": "evidence:FINAL_FILM",
             "human_director_acceptance": True,
             "publishing_authorisation": authorised,
         }
@@ -61,16 +94,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
         with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
-            client.set_thumbnail("video-123", "/not/read.png", **{
-                key: value for key, value in context.items()
-                if key != "publishing_authorisation"
-            }, publishing_authorisation=False)
+            client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_thumbnail_write_rejects_out_of_order_gate_records(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
-        context["gate_records"][0], context["gate_records"][1] = (
-            context["gate_records"][1], context["gate_records"][0]
+        context["evidence_pack"]["gate_records"][0], context["evidence_pack"]["gate_records"][1] = (
+            context["evidence_pack"]["gate_records"][1],
+            context["evidence_pack"]["gate_records"][0],
         )
         with self.assertRaisesRegex(YouTubeIntegrationError, "expected gate"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
