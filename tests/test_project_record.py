@@ -56,6 +56,24 @@ class ProjectRecordTests(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             revise_stage(project, "approved_script", "script-v1", "script:ref", "Initial", ["wrong-ref"])
 
+
+    def test_comparison_reports_changed_stage_and_downstream_gate_impact(self):
+        from raei.project_record import compare_project_records
+        before = create_project_record("RS-COMPARE-001")
+        before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
+        after = revise_stage(before, "biblical_source", "source-v2", "bible:ref2", "Correction")
+        report = compare_project_records(before, after)
+        self.assertEqual(["biblical_source"], [x["stage"] for x in report["changed_stages"]])
+        self.assertEqual(list(GATES), report["affected_gates"])
+        self.assertEqual(list(GATES), report["gates_without_current_approval_evidence"])
+        self.assertTrue(report["requires_review"])
+        self.assertEqual("not_granted_by_comparison", report["generation_authority"])
+
+    def test_comparison_rejects_different_projects(self):
+        from raei.project_record import compare_project_records
+        with self.assertRaises(IntegrityError):
+            compare_project_records(create_project_record("A"), create_project_record("B"))
+
     def test_original_record_is_not_mutated(self):
         project = create_project_record("RS-LOCAL-TEST-006")
         revised = revise_stage(project, "biblical_source", "source-v1", "bible:ref", "Initial")
