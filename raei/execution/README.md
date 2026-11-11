@@ -145,16 +145,20 @@ python -m raei.orchestrator --ledger raei-learning-ledger.json init
 python -m raei.orchestrator --ledger raei-learning-ledger.json next
 python -m raei.orchestrator --ledger raei-learning-ledger.json show CS-FOUND
 python -m raei.orchestrator --ledger raei-learning-ledger.json practice CS-FOUND evidence/cs-foundation.md "executed original exercise" "result inspected"
-python -m raei.orchestrator --ledger raei-learning-ledger.json assess CS-FOUND '{"accuracy":3,"reasoning":3,"execution":3,"evidence":3}' evidence/cs-foundation.md
+python -m raei.orchestrator --ledger raei-learning-ledger.json assess CS-FOUND '{"accuracy":3,"reasoning":3,"execution":3,"evidence":3}' evidence/cs-foundation.md --evidence-status verified
 python -m raei.orchestrator --ledger raei-learning-ledger.json status
-
-The orchestrator's `practice` and `assess` commands now call the existing
-`raei.learning` functions directly. Seeded curriculum lessons supply their
-registered objectives, sources, task and rubric; a separate lesson-creation
-step is not required for those units. The commands persist each operation
-through the existing hash-chained ledger. Use the exact rubric criterion names
-shown by `show UNIT_ID`; every criterion must be scored.
 ```
+
+The `practice` and `assess` commands call the existing `raei.learning`
+functions directly. Seeded curriculum units supply their registered objectives,
+sources, task and rubric; a separate lesson-creation step is not required.
+Both CLI commands default evidence status to `reported_unverified`. Use
+`--evidence-status verified` only after the referenced artefact and result
+have actually been inspected. An assessment can pass only when it has a
+verified practice record, every rubric criterion scores at least 3, and the
+assessment evidence is verified. The correction-recording function remains
+available in `raei.learning`; a correction CLI subcommand is not currently
+implemented. Use the exact rubric criterion names shown by `show UNIT_ID`.
 
 Use a normal ASCII filename such as `raei-learning-ledger.json` when running
 the commands. The example command above is illustrative; the CLI refuses to
