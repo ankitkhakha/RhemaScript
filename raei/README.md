@@ -27,3 +27,16 @@ python -m unittest discover -s tests -v
 ```
 
 The registry is a scope index. It does not automatically mark ledger units passed or supply evidence. A lesson, practical artefact, verified assessment and correction history remain mandatory.
+
+
+## RhemaScript integrity practical
+
+`raei.integrity.validate_project_chain(project)` checks the eight source-to-final stages, all six approval gates, approval-to-artefact linkage, generation authorization evidence and prohibited publication claims. It is a validator only: it cannot approve a gate, authorize generation, generate media or publish.
+
+Run its regression tests with:
+
+```sh
+python -m unittest tests.test_integrity -v
+```
+
+A valid report means the supplied records are structurally complete and internally linked. It does not prove that an artefact is biblically accurate, visually correct, approved by the rightful authority or safe to publish; those require inspection under the existing RhemaScript controls.
