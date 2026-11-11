@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Strict evidence gate for RAEI learning readiness; never grants production authority."""
+"""Fail-closed evidence completeness check; never grants production authority."""
 from __future__ import annotations
-import argparse, json
+import argparse
+import json
 from pathlib import Path
 from typing import Any
 
@@ -15,100 +16,129 @@ REQUIRED_DOMAINS = {"engineering","whole_bible","bible_only_ethics","rhemascript
 def _record(value: Any) -> bool:
     return isinstance(value, dict)
 
-def _evidence_ok(item: Any) -> bool:
+def _score_ok(score: Any) -> bool:
+    return isinstance(score, int) and not isinstance(score, bool) and 3 <= score <= 4
+
+def _verified_evidence(item: Any) -> bool:
     if not _record(item) or item.get("status") != "verified":
         return False
     ref = item.get("evidence_ref") or item.get("evidence")
-    score = item.get("score", item.get("competency_score", 3))
-    return isinstance(ref, str) and bool(ref.strip()) and isinstance(score, int) and not isinstance(score, bool) and score >= 3
+    score = item.get("score", item.get("competency_score"))
+    return isinstance(ref, str) and bool(ref.strip()) and _score_ok(score)
+
+def _unique_records(items: Any, key_name: str, label: str, errors: list[str]) -> dict[str, dict]:
+    if not isinstance(items, list):
+        errors.append(f"{label} must be a list")
+        return {}
+    records = {}
+    for item in items:
+        if not _record(item):
+            errors.append(f"{label} contains a malformed record")
+            continue
+        key = item.get(key_name)
+        if not isinstance(key, str) or not key or key in records:
+            errors.append(f"{label} has missing or duplicate {key_name}: {key!r}")
+            continue
+        records[key] = item
+    return records
 
 def validate(data: Any) -> list[str]:
-    errors = []
-    if not _record(data): return ["Ledger root must be a JSON object."]
+    errors: list[str] = []
+    if not _record(data):
+        return ["Ledger root must be a JSON object."]
     domains = data.get("domains")
-    if not _record(domains): return ["domains must be a JSON object."]
+    if not _record(domains):
+        return ["domains must be a JSON object."]
     missing = REQUIRED_DOMAINS - set(domains)
-    if missing: errors.append("Missing required domains: " + ", ".join(sorted(missing)))
+    if missing:
+        errors.append("Missing required domains: " + ", ".join(sorted(missing)))
+
     for name, domain in domains.items():
         if not _record(domain):
-            errors.append(f"{name}: domain record must be an object"); continue
-        if domain.get("status") not in VALID_STATUSES: errors.append(f"{name}: invalid or missing status")
-        if domain.get("critical_failure") is True: errors.append(f"{name}: critical failure is recorded")
+            errors.append(f"{name}: domain record must be an object")
+            continue
+        if domain.get("status") not in VALID_STATUSES:
+            errors.append(f"{name}: invalid or missing status")
+        if domain.get("critical_failure") is True:
+            errors.append(f"{name}: critical failure is recorded")
         if domain.get("status") == "passed":
-            score = domain.get("competency_score")
-            if not isinstance(score, int) or isinstance(score, bool) or score < 3: errors.append(f"{name}: passed status requires competency_score >= 3")
-            if not isinstance(domain.get("evidence"), list) or not domain["evidence"]: errors.append(f"{name}: passed status requires evidence")
+            if not _score_ok(domain.get("competency_score")):
+                errors.append(f"{name}: passed status requires competency_score 3 or 4")
+            evidence = domain.get("evidence")
+            if not isinstance(evidence, list) or not evidence or not all(_verified_evidence(x) for x in evidence):
+                errors.append(f"{name}: passed status requires verified evidence with score 3 or 4")
 
     eng = domains.get("engineering", {})
     if _record(eng):
         items = eng.get("evidence", [])
-        required = eng.get("required_capstones", ENGINEERING_CAPSTONES)
-        if not isinstance(required, list): errors.append("engineering.required_capstones must be a list"); required = ENGINEERING_CAPSTONES
-        for cap in required:
-            if not isinstance(items, list) or not any(_record(x) and x.get("id") == cap and _evidence_ok(x) for x in items):
+        if not isinstance(items, list):
+            errors.append("engineering.evidence must be a list")
+            items = []
+        for cap in ENGINEERING_CAPSTONES:
+            if not any(_record(x) and x.get("id") == cap and _verified_evidence(x) for x in items):
                 errors.append(f"Engineering capstone lacks verified evidence: {cap}")
 
     bible = domains.get("whole_bible", {})
     if _record(bible):
-        books = bible.get("books", [])
-        if not isinstance(books, list): errors.append("whole_bible.books must be a list"); books = []
-        records = {}
-        for item in books:
-            if not _record(item): errors.append("whole_bible contains a malformed book record"); continue
-            key = item.get("book_id")
-            if not isinstance(key, str) or key in records: errors.append(f"whole_bible has missing or duplicate book_id: {key!r}"); continue
-            records[key] = item
+        records = _unique_records(bible.get("books", []), "book_id", "whole_bible.books", errors)
         for book in BIBLE_BOOKS:
             item = records.get(book, {})
             evidence = {"status": item.get("evidence_status"), "evidence_ref": item.get("evidence_ref"), "score": item.get("score")}
-            if item.get("status") != "passed" or not _evidence_ok(evidence): errors.append(f"Bible book not passed with verified evidence: {book}")
+            if item.get("status") != "passed" or not _verified_evidence(evidence):
+                errors.append(f"Bible book not passed with verified evidence: {book}")
         extra = set(records) - set(BIBLE_BOOKS)
-        if extra: errors.append("Unknown Bible book IDs: " + ", ".join(sorted(extra)))
+        if extra:
+            errors.append("Unknown Bible book IDs: " + ", ".join(sorted(extra)))
 
     ethics = domains.get("bible_only_ethics", {})
     if _record(ethics):
-        cases = ethics.get("cases", [])
-        if not isinstance(cases, list): errors.append("bible_only_ethics.cases must be a list"); cases = []
-        records = {}
-        for item in cases:
-            if not _record(item): errors.append("bible_only_ethics contains a malformed case record"); continue
-            key = item.get("case_id")
-            if not isinstance(key, str) or key in records: errors.append(f"bible_only_ethics has missing or duplicate case_id: {key!r}"); continue
-            records[key] = item
+        records = _unique_records(ethics.get("cases", []), "case_id", "bible_only_ethics.cases", errors)
         for case_id in ETHICS_CASES:
             item = records.get(case_id, {})
-            score, ref = item.get("score"), item.get("evidence_ref")
-            if item.get("status") != "passed" or not isinstance(score, int) or isinstance(score, bool) or score < 3 or not isinstance(ref, str) or not ref.strip() or item.get("biblical_context_reviewed") is not True or item.get("explicit_vs_inference_recorded") is not True:
+            if (item.get("status") != "passed" or not _score_ok(item.get("score"))
+                or not isinstance(item.get("evidence_ref"), str) or not item.get("evidence_ref", "").strip()
+                or item.get("biblical_context_reviewed") is not True
+                or item.get("explicit_vs_inference_recorded") is not True
+                or item.get("uncertainty_recorded") is not True
+                or item.get("proof_texting_check_passed") is not True):
                 errors.append(f"Bible-only ethics case incomplete: {case_id}")
+        extra = set(records) - set(ETHICS_CASES)
+        if extra:
+            errors.append("Unknown ethics case IDs: " + ", ".join(sorted(extra)))
 
     rs = domains.get("rhemascript", {})
     if _record(rs):
-        caps = rs.get("capabilities", [])
-        if not isinstance(caps, list): errors.append("rhemascript.capabilities must be a list"); caps = []
-        records = {}
-        for item in caps:
-            if not _record(item): errors.append("rhemascript contains a malformed capability record"); continue
-            key = item.get("capability_id")
-            if not isinstance(key, str) or key in records: errors.append(f"rhemascript has missing or duplicate capability_id: {key!r}"); continue
-            records[key] = item
+        records = _unique_records(rs.get("capabilities", []), "capability_id", "rhemascript.capabilities", errors)
         for cap in RHEMA_IDS:
             item = records.get(cap, {})
-            score, ref = item.get("score"), item.get("evidence_ref")
-            if item.get("status") != "passed" or not isinstance(score, int) or isinstance(score, bool) or score < 3 or not isinstance(ref, str) or not ref.strip():
+            if item.get("status") != "passed" or not _score_ok(item.get("score")) or not isinstance(item.get("evidence_ref"), str) or not item.get("evidence_ref", "").strip():
                 errors.append(f"RhemaScript capability not passed with evidence: {cap}")
+        extra = set(records) - set(RHEMA_IDS)
+        if extra:
+            errors.append("Unknown RhemaScript capability IDs: " + ", ".join(sorted(extra)))
 
     integrated = domains.get("integrated_capstone", {})
     if _record(integrated):
-        score, evidence = integrated.get("competency_score"), integrated.get("evidence")
-        if integrated.get("status") != "passed": errors.append("Integrated capstone has not passed")
-        if not isinstance(score, int) or isinstance(score, bool) or score < 3: errors.append("Integrated capstone requires competency_score >= 3")
-        if not isinstance(evidence, list) or not evidence: errors.append("Integrated capstone requires inspectable evidence")
+        evidence = integrated.get("evidence")
+        if integrated.get("status") != "passed":
+            errors.append("Integrated capstone has not passed")
+        if not _score_ok(integrated.get("competency_score")):
+            errors.append("Integrated capstone requires competency_score 3 or 4")
+        if not isinstance(evidence, list) or not evidence or not all(_verified_evidence(x) for x in evidence):
+            errors.append("Integrated capstone requires verified inspectable evidence with score 3 or 4")
+
+    assurance = data.get("independent_assurance")
+    if not _record(assurance) or assurance.get("status") != "satisfied" or not isinstance(assurance.get("evidence"), list) or not assurance["evidence"]:
+        errors.append("Independent assurance remains unsatisfied or lacks evidence")
+    if data.get("production_authority") != "not_granted":
+        errors.append("Production authority must remain not_granted in this learning validator")
     return errors
 
 def report(data: Any) -> dict[str, Any]:
     errors = validate(data)
     assurance = data.get("independent_assurance", {}) if _record(data) else {}
-    return {"result": "NOT_READY" if errors else "LEARNING_READINESS_EVIDENCE_COMPLETE", "errors": errors,
+    return {"result": "NOT_READY" if errors else "LEARNING_EVIDENCE_COMPLETE_PENDING_AUTHORITY_REVIEW",
+            "errors": errors,
             "independent_assurance": assurance.get("status", "not_satisfied") if _record(assurance) else "not_satisfied",
             "production_authority": "not_granted",
             "note": "Evidence completeness is not an independent competence certificate and never grants production, generation, deployment or publishing authority."}
@@ -118,14 +148,18 @@ def main() -> int:
     parser.add_argument("ledger", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
-    try: data = json.loads(args.ledger.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(args.ledger.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"INVALID_LEDGER: {exc}"); return 2
+        print(f"INVALID_LEDGER: {exc}")
+        return 2
     result = report(data)
-    if args.json: print(json.dumps(result, indent=2, sort_keys=True))
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
     else:
         print(result["result"])
-        for error in result["errors"]: print(f"- {error}")
+        for error in result["errors"]:
+            print(f"- {error}")
         print(f"Independent assurance: {result['independent_assurance']}")
         print("Production authority: not granted")
     return 0 if not result["errors"] else 1
