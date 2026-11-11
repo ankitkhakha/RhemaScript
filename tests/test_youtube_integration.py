@@ -53,7 +53,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "publishing authorisation"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
