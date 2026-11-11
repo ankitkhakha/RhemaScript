@@ -211,13 +211,13 @@ class YouTubeClient:
                     "Content-Length": str(len(chunk)),
                     "Content-Range": f"bytes {offset}-{end}/{total}",
                 }
-                status, final_raw, _ = self._request(
+                status, final_raw, chunk_response_headers = self._request(
                     location, method="PUT", body=chunk, headers=chunk_headers,
                 )
                 if status in (200, 201):
                     offset = total
                 elif status == 308:
-                    acknowledged = (_header_value(_, "Range") if isinstance(_, dict) else None)
+                    acknowledged = (chunk_response_headers.get("Range") or chunk_response_headers.get("range"))
                     if acknowledged and "-" in acknowledged:
                         try:
                             offset = int(acknowledged.rsplit("-", 1)[1]) + 1
