@@ -177,6 +177,9 @@ def _cap08(e):
     for i,segment in enumerate(narration):
         if not isinstance(segment,dict) or not segment.get("segment_id") or not isinstance(segment.get("text"),str):
             raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
+        start=segment.get("start_seconds"); end=segment.get("end_seconds")
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+            raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
         narration_by_id[segment["segment_id"]]=segment
     durations=[]; shot_findings=[]; required_assets=set()
     asset_ids={a.get("asset_id") for a in assets if isinstance(a,dict) and a.get("asset_id")}
@@ -186,6 +189,9 @@ def _cap08(e):
         raise SpecialistInputError("generation_constraints.max_clip_seconds must be positive")
     if isinstance(min_clip,bool) or not isinstance(min_clip,(int,float)) or min_clip<0 or min_clip>max_clip:
         raise SpecialistInputError("generation_constraints.min_clip_seconds must be non-negative and <= max_clip_seconds")
+    target_ratio=generation.get("target_aspect_ratio")
+    if target_ratio not in ("9:16","16:9","1:1"):
+        raise SpecialistInputError("generation_constraints.target_aspect_ratio must be an explicit supported ratio")
     shot_ids=[]
     for i,shot in enumerate(shots):
         if not isinstance(shot,dict): raise SpecialistInputError("each shot must be an object")
@@ -199,7 +205,10 @@ def _cap08(e):
         shot_type=shot.get("shot_type")
         if shot_type not in ("A_ROLL","B_ROLL","TRANSITION"): flags.append("INVALID_SHOT_TYPE")
         if shot_type=="B_ROLL" and not shot.get("broll_purpose"): flags.append("BROLL_PURPOSE_MISSING")
+        if shot_type=="A_ROLL" and not shot.get("subject_action"): flags.append("AROLL_SUBJECT_ACTION_MISSING")
         if not shot.get("purpose") or not shot.get("visual_action"): flags.append("SHOT_PURPOSE_OR_ACTION_MISSING")
+        if shot.get("aspect_ratio") != target_ratio: flags.append("SHOT_ASPECT_RATIO_MISMATCH")
+        if not isinstance(shot.get("generation_required"),bool): flags.append("GENERATION_REQUIRED_NOT_DECLARED")
         segment_refs=shot.get("narration_segment_ids",[])
         if not isinstance(segment_refs,list) or not segment_refs: flags.append("NO_NARRATION_MAPPING")
         else:
@@ -212,6 +221,7 @@ def _cap08(e):
         if shot.get("generation_required") is True:
             if shot.get("asset_reviewed") is not True: flags.append("ASSET_FIRST_REVIEW_MISSING")
             if not shot.get("new_generation_justification"): flags.append("GENERATION_JUSTIFICATION_MISSING")
+            if not shot.get("selected_operation") or not shot.get("selected_model"): flags.append("GENERATION_OPERATION_OR_MODEL_MISSING")
             units=shot.get("generation_unit_durations")
             if not isinstance(units,list) or not units: flags.append("GENERATION_UNITS_MISSING")
             else:
@@ -231,6 +241,7 @@ def _cap08(e):
             raise SpecialistInputError(f"caption_segments[{i}] requires segment_id")
         if row["segment_id"] in caption_by_id: caption_flags.append("DUPLICATE_CAPTION_SEGMENT")
         caption_by_id[row["segment_id"]]=row
+    if not audio_plan.get("narration_master_id"): caption_flags.append("NARRATION_MASTER_ID_MISSING")
     missing_captions=sorted(set(narration_by_id)-set(caption_by_id))
     extra_captions=sorted(set(caption_by_id)-set(narration_by_id))
     text_mismatches=[]; timing_mismatches=[]
