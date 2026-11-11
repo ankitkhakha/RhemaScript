@@ -350,10 +350,71 @@ def _cap11(e):
     scores=_obj(e,"quality_dimensions"); missing=sorted(set(weights)-set(scores))
     if missing or set(scores)-set(weights): raise SpecialistInputError(f"quality_dimensions must contain exactly {sorted(weights)}")
     total=sum(_score(scores[k],k)*w for k,w in weights.items())/100
-    hard_stops=_seq(e,"hard_stop_findings")
+    hard_stops=list(_seq(e,"hard_stop_findings"))
+    qc=_obj(e,"qc_evidence")
+    flags=[]
+    approved=qc.get("approved_narration_text"); final=qc.get("final_transcript_text")
+    if not isinstance(approved,str) or not isinstance(final,str):
+        raise SpecialistInputError("qc_evidence requires approved_narration_text and final_transcript_text")
+    if qc.get("transcript_source") not in ("HUMAN_TRANSCRIPT","VERIFIED_ASR"):
+        flags.append("FINAL_TRANSCRIPT_SOURCE_NOT_VERIFIED")
+    if approved!=final:
+        flags.append("NARRATION_TEXT_MISMATCH")
+        hard_stops.append("NARRATION_TEXT_MISMATCH")
+    status_fields=("biblical_integrity_status","source_integrity_status","rights_status","platform_compliance_status")
+    for field in status_fields:
+        value=qc.get(field)
+        if value not in ("PASS","REVIEW","FAIL","CLEARED","NOT_CLEARED"):
+            flags.append(f"{field.upper()}_MISSING_OR_INVALID")
+        elif value in ("FAIL","NOT_CLEARED"):
+            flags.append(f"{field.upper()}_FAIL")
+            hard_stops.append(f"{field.upper()}_FAIL")
+        elif value=="REVIEW":
+            flags.append(f"{field.upper()}_REVIEW_REQUIRED")
+    visual=_seq(qc,"visual_alignment_findings")
+    for i,row in enumerate(visual):
+        if not isinstance(row,dict): raise SpecialistInputError("each visual_alignment_finding must be an object")
+        if row.get("alignment_status") in ("CONTRADICTS","UNMAPPED"):
+            flags.append(f"VISUAL_ALIGNMENT_{row.get('alignment_status')}_{i}")
+            hard_stops.append(f"VISUAL_ALIGNMENT_{row.get('alignment_status')}_{i}")
+        elif row.get("alignment_status")!="PASS":
+            flags.append(f"VISUAL_ALIGNMENT_REVIEW_REQUIRED_{i}")
+    audio=_seq(qc,"audio_visual_findings")
+    for i,row in enumerate(audio):
+        if not isinstance(row,dict): raise SpecialistInputError("each audio_visual_finding must be an object")
+        if row.get("masks_narration") is True:
+            flags.append(f"AUDIO_MASKS_NARRATION_{i}")
+            hard_stops.append(f"AUDIO_MASKS_NARRATION_{i}")
+    captions=_seq(qc,"caption_findings")
+    for i,row in enumerate(captions):
+        if not isinstance(row,dict): raise SpecialistInputError("each caption_finding must be an object")
+        for key in ("text_match","timing_match","safe_area_pass"):
+            if row.get(key) is not True: flags.append(f"CAPTION_{key.upper()}_FAIL_{i}")
+    technical=_obj(qc,"technical_export")
+    comparisons=(("aspect_ratio","expected_aspect_ratio","actual_aspect_ratio"),
+                 ("runtime","expected_runtime_seconds","actual_runtime_seconds"),
+                 ("resolution","expected_resolution","actual_resolution"),
+                 ("frame_rate","expected_fps","actual_fps"))
+    technical_flags=[]
+    for label,expected_key,actual_key in comparisons:
+        expected=technical.get(expected_key); actual=technical.get(actual_key)
+        if expected is None or actual is None:
+            technical_flags.append(f"{label.upper()}_NOT_VERIFIED")
+        elif isinstance(expected,(int,float)) and isinstance(actual,(int,float)):
+            if abs(expected-actual)>0.05: technical_flags.append(f"{label.upper()}_MISMATCH")
+        elif expected!=actual:
+            technical_flags.append(f"{label.upper()}_MISMATCH")
+    flags.extend(technical_flags)
+    if any(x.endswith("_MISMATCH") for x in technical_flags):
+        hard_stops.extend(technical_flags)
+    hard_stops=list(dict.fromkeys(hard_stops))
     return {"weighted_quality_score":round(total,2),"weights":weights,"hard_stop_findings":hard_stops,
-            "release_recommendation":"BLOCKED_BY_HARD_STOP" if hard_stops else ("REVIEW_REQUIRED" if total<85 else "ELIGIBLE_FOR_HUMAN_ACCEPTANCE"),
-            "hard_stops_cannot_be_averaged_away":True}
+            "derived_qc_flags":flags,"visual_alignment_findings_count":len(visual),
+            "audio_visual_findings_count":len(audio),"caption_findings_count":len(captions),
+            "technical_export_flags":technical_flags,
+            "release_recommendation":"BLOCKED_BY_HARD_STOP" if hard_stops else ("REVIEW_REQUIRED" if flags or total<85 else "ELIGIBLE_FOR_HUMAN_ACCEPTANCE"),
+            "hard_stops_cannot_be_averaged_away":True,
+            "authority_boundary":"supplied transcript and QC observations only; no waveform, frame, rights database or platform review was independently performed"}
 
 def _cap12(e):
     threats=_seq(e,"threats"); controls=_seq(e,"control_evidence")
@@ -373,13 +434,51 @@ def _cap13(e):
             "clearance_status":"NOT_CLEARED" if gaps or not rights else "DOCUMENTED_FOR_HUMAN_LEGAL_REVIEW"}
 
 def _cap14(e):
-    failure=_obj(e,"failure_record"); observation=_nonempty(e,"reproduction_or_observation")
+    failure=_obj(e,"failure_record")
+    observation=_nonempty(e,"reproduction_or_observation")
+    diagnostic=_obj(e,"diagnostic_evidence")
     known={"INPUT","PROCESS","TOOL","INTEGRATION","QUALITY","RIGHTS","SECURITY","UNKNOWN"}
     category=failure.get("category","UNKNOWN")
     if category not in known: raise SpecialistInputError("failure category is not recognised")
-    severity=failure.get("severity","UNASSESSED")
-    return {"category":category,"severity":severity,"reproduction_evidence_supplied":bool(observation),
-            "root_cause":"NOT_ESTABLISHED","retry_policy":"bounded retry only after cause and safety impact are assessed"}
+    required=("stage","model_or_tool","tool_version","prompt_version","expected_behavior",
+              "observed_behavior","root_cause_status","corrective_action")
+    missing=[key for key in required if not diagnostic.get(key)]
+    steps=diagnostic.get("reproduction_steps")
+    refs=diagnostic.get("evidence_references")
+    if not isinstance(steps,list): raise SpecialistInputError("diagnostic_evidence.reproduction_steps must be a list")
+    if not isinstance(refs,list): raise SpecialistInputError("diagnostic_evidence.evidence_references must be a list")
+    root_status=diagnostic.get("root_cause_status")
+    if root_status not in ("NOT_ESTABLISHED","SUSPECTED","CONFIRMED"):
+        raise SpecialistInputError("root_cause_status must be NOT_ESTABLISHED, SUSPECTED or CONFIRMED")
+    if root_status=="CONFIRMED" and (not refs or not diagnostic.get("root_cause_evidence")):
+        missing.append("root_cause_evidence")
+    risk=diagnostic.get("security_or_rights_risk")
+    if not isinstance(risk,bool):
+        raise SpecialistInputError("security_or_rights_risk must be boolean")
+    retest=diagnostic.get("retest_status","NOT_RUN")
+    if retest not in ("NOT_RUN","PASS","FAIL"):
+        raise SpecialistInputError("retest_status must be NOT_RUN, PASS or FAIL")
+    if retest=="PASS" and not diagnostic.get("retest_evidence"):
+        missing.append("retest_evidence")
+    flags=[]
+    if missing: flags.append("DIAGNOSTIC_RECORD_INCOMPLETE")
+    if not steps: flags.append("REPRODUCTION_STEPS_MISSING")
+    if not refs: flags.append("EVIDENCE_REFERENCES_MISSING")
+    if root_status=="CONFIRMED" and missing: flags.append("ROOT_CAUSE_CONFIRMATION_UNSUPPORTED")
+    if risk: flags.append("SECURITY_OR_RIGHTS_REVIEW_REQUIRED")
+    if retest=="FAIL": flags.append("RETEST_FAILED")
+    retry="BLOCKED_PENDING_SECURITY_OR_RIGHTS_REVIEW" if risk else (
+        "NO_AUTOMATIC_RETRY_UNTIL_TRIAGED" if root_status=="NOT_ESTABLISHED" or retest=="FAIL" else
+        "RETEST_BEFORE_ANY_REPEAT_PRODUCTION")
+    return {"category":category,"severity":failure.get("severity","UNASSESSED"),
+            "affected_capability":diagnostic.get("affected_capability","UNSPECIFIED"),
+            "stage":diagnostic.get("stage"),"model_or_tool":diagnostic.get("model_or_tool"),
+            "tool_version":diagnostic.get("tool_version"),"prompt_version":diagnostic.get("prompt_version"),
+            "root_cause_status":root_status,"missing_diagnostic_fields":sorted(set(missing)),
+            "diagnostic_flags":flags,"reproduction_evidence_supplied":bool(observation and steps),
+            "evidence_reference_count":len(refs),"retest_status":retest,
+            "retry_policy":retry,"automatic_retry_authorised":False,
+            "root_cause_boundary":"a confirmed root cause requires traceable supporting evidence; otherwise retain NOT_ESTABLISHED or SUSPECTED"}
 
 def _cap15(e):
     observations=_seq(e,"performance_observations"); version=_nonempty(e,"linked_production_version")
