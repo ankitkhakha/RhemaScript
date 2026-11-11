@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0",
+  "programme": "RAEI Evidence-Based Execution",
+  "status": "in_progress",
+  "overall_readiness": "not_assessed",
+  "domains": {
+    "engineering": {
+      "status": "in_progress",
+      "competency_score": null,
+      "critical_failure": false,
+      "evidence": [],
+      "required_capstones": [
+        "integrated_frontend_backend_database",
+        "authentication_and_role_authorisation",
+        "secure_api_and_validation",
+        "automated_test_suite",
+        "concurrent_transaction_integrity",
+        "failure_recovery_and_audit",
+        "backup_restore_demonstration",
+        "reproducible_build_and_architecture"
+      ]
+    },
+    "whole_bible": {
+      "status": "not_started",
+      "books": [],
+      "required_book_count": 66,
+      "evidence": []
+    },
+    "bible_only_ethics": {
+      "status": "not_started",
+      "cases": [],
+      "required_case_count": 12,
+      "evidence": []
+    },
+    "rhemascript": {
+      "status": "in_progress",
+      "capabilities": [],
+      "required_capability_ids": [
+        "CAP-01", "CAP-02", "CAP-03", "CAP-04", "CAP-05",
+        "CAP-06", "CAP-07", "CAP-08", "CAP-09", "CAP-10",
+        "CAP-11", "CAP-12", "CAP-13", "CAP-14", "CAP-15",
+        "IF-01", "IF-02", "IF-03", "IF-04", "IF-05", "IF-06",
+        "IF-07", "IF-08", "IF-09", "IF-10", "IF-11", "IF-12",
+        "IF-13", "IF-14", "IF-15", "IF-16", "IF-17", "IF-18"
+      ],
+      "evidence": []
+    },
+    "integrated_capstone": {
+      "status": "not_started",
+      "competency_score": null,
+      "critical_failure": false,
+      "evidence": []
+    }
+  },
+  "independent_assurance": {
+    "status": "not_satisfied",
+    "evidence": []
+  },
+  "production_authority": "not_granted",
+  "last_updated": null,
+  "notes": [
+    "Historical exercise claims remain reported_unverified until original artefacts or reproducible results are attached.",
+    "This ledger is a starting baseline, not a readiness certificate."
+  ]
+}
