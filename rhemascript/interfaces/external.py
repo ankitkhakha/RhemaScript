@@ -59,7 +59,7 @@ class UrllibTransport:
         try:
             opener = build_opener(_NoRedirect())
             with opener.open(req, timeout=timeout) as response:
-                return response.status, response.read(8_000_001), dict(response.headers.items())
+                return response.status, response.read(8_000_001), dict(getattr(response, "headers", {}).items())
         except HTTPError as exc:
             return exc.code, exc.read(8_000_001), dict(exc.headers.items())
         except URLError as exc:
