@@ -1,0 +1,14 @@
+"""Guard the remote event-triggered CI workflow contract."""
+import pathlib
+import unittest
+ROOT=pathlib.Path(__file__).resolve().parents[1]
+class RemoteCIWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls): cls.workflow=(ROOT/".github"/"workflows"/"ci.yml").read_text()
+    def test_push_event_is_enabled(self): self.assertRegex(self.workflow,r"(?m)^  push:\s*$")
+    def test_pull_request_event_is_enabled(self): self.assertRegex(self.workflow,r"(?m)^  pull_request:\s*$")
+    def test_manual_dispatch_is_enabled(self): self.assertRegex(self.workflow,r"(?m)^  workflow_dispatch:\s*$")
+    def test_least_privilege_permissions(self): self.assertRegex(self.workflow,r"(?ms)^permissions:\s*\n\s+contents:\s*read\s*$")
+    def test_ci_runner_is_invoked(self): self.assertIn("run: python ci/run_ci.py",self.workflow)
+    def test_job_has_timeout(self): self.assertRegex(self.workflow,r"(?m)^    timeout-minutes: 10$")
+if __name__=="__main__": unittest.main()
