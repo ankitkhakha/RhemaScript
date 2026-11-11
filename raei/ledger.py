@@ -63,7 +63,7 @@ def validate(data):
             evidence_ref = unit.get("evidence_ref")
             if (not isinstance(score, int) or isinstance(score, bool) or not 3 <= score <= 4
                 or not isinstance(evidence_ref, str) or not evidence_ref.strip()
-                or unit.get("evidence_status") != "verified":
+                or unit.get("evidence_status") != "verified"):
                 raise LedgerError(f"passed unit {unit_id} lacks verified evidence or score >= 3")
             if any(data["units"][p]["status"] != "passed" for p in unit.get("prerequisites", [])):
                 raise LedgerError(f"passed unit {unit_id} has incomplete prerequisites")
