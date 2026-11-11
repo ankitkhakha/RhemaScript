@@ -8,6 +8,8 @@ def create_lesson(data, unit_id, objectives, source_refs, practice_prompt, rubri
     if not objectives or not source_refs or not practice_prompt or not rubric:
         raise LedgerError("lesson requires objectives, source references, practice and rubric")
     unit = data["units"][unit_id]
+    if unit["status"] == "passed":
+        raise LedgerError("passed units are immutable; create a versioned unit to extend learning")
     if unit.get("lesson") is not None:
         raise LedgerError("lesson already exists; create a versioned unit to revise it")
     unit["lesson"] = {"objectives": objectives, "source_refs": source_refs,
@@ -17,6 +19,8 @@ def create_lesson(data, unit_id, objectives, source_refs, practice_prompt, rubri
 def record_practice(data, unit_id, artifact_ref, method, result, status="verified"):
     if unit_id not in data["units"]:
         raise LedgerError(f"unknown unit: {unit_id}")
+    if data["units"][unit_id]["status"] == "passed":
+        raise LedgerError("passed units are immutable; create a versioned unit for further practice")
     if data["units"][unit_id].get("lesson") is None:
         raise LedgerError("cannot record practice before lesson is defined")
     if not artifact_ref or not method or not result:
