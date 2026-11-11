@@ -21,8 +21,11 @@ def record_practice(data, unit_id, artifact_ref, method, result, status="verifie
         raise LedgerError(f"unknown unit: {unit_id}")
     if data["units"][unit_id]["status"] == "passed":
         raise LedgerError("passed units are immutable; create a versioned unit for further practice")
-    if data["units"][unit_id].get("lesson") is None:
-        raise LedgerError("cannot record practice before lesson is defined")
+    unit = data["units"][unit_id]
+    if unit.get("lesson") is None and not all(
+        unit.get(key) for key in ("objectives", "source_refs", "practice_prompt", "rubric")
+    ):
+        raise LedgerError("cannot record practice before lesson or seeded curriculum is defined")
     if not all(isinstance(value, str) and value.strip() for value in (artifact_ref, method, result)):
         raise LedgerError("practice requires artifact reference, method and result")
     if status not in {"verified", "reported_unverified", "planned"}:
@@ -40,10 +43,10 @@ def record_rubric_assessment(data, unit_id, criterion_scores, evidence_ref, evid
     unit=data["units"][unit_id]
     if unit["status"] == "passed":
         raise LedgerError("passed units are immutable; create a versioned unit for reassessment")
-    lesson=unit.get("lesson")
-    if lesson is None:
-        raise LedgerError("lesson and rubric must exist before assessment")
-    rubric=lesson["rubric"]
+    lesson = unit.get("lesson")
+    rubric = lesson["rubric"] if lesson is not None else unit.get("rubric")
+    if not rubric:
+        raise LedgerError("lesson or seeded curriculum rubric must exist before assessment")
     if set(criterion_scores) != set(rubric):
         raise LedgerError("criterion scores must match every rubric criterion exactly")
     if any(not isinstance(score,int) or isinstance(score,bool) or not 0 <= score <= 4 for score in criterion_scores.values()):
