@@ -154,17 +154,67 @@ def _cap06(e):
             "causal_inference":"NOT_ESTABLISHED","recommendation":"compare only like-for-like cohorts and production versions"}
 
 def _cap07(e):
-    refs=_seq(e,"visual_reference_set"); shots=_seq(e,"shot_observations")
-    refids={r.get("reference_id") for r in refs if isinstance(r,dict) and r.get("reference_id")}
+    refs=_seq(e,"visual_reference_set")
+    shots=_seq(e,"shot_observations")
+    ref_by_id={}
+    reference_findings=[]
+    for i,ref in enumerate(refs):
+        if not isinstance(ref,dict) or not ref.get("reference_id"):
+            raise SpecialistInputError(f"visual_reference_set[{i}] requires reference_id")
+        rid=ref["reference_id"]
+        if rid in ref_by_id: reference_findings.append({"reference_id":rid,"flag":"DUPLICATE_REFERENCE_ID"})
+        ref_by_id[rid]=ref
+        if not ref.get("version") or not ref.get("description"):
+            reference_findings.append({"reference_id":rid,"flag":"REFERENCE_METADATA_INCOMPLETE"})
+    required_checks=("style_match","subject_match","environment_match","screen_direction_match",
+                     "lighting_match","palette_match","camera_axis_match")
     findings=[]
-    for i,s in enumerate(shots):
-        if not isinstance(s,dict): raise SpecialistInputError("each shot_observation must be an object")
+    sequence_subjects={}
+    sequence_styles={}
+    shot_ids=[]
+    for i,shot in enumerate(shots):
+        if not isinstance(shot,dict):
+            raise SpecialistInputError("each shot_observation must be an object")
+        shot_id=shot.get("shot_id")
+        if not shot_id:
+            raise SpecialistInputError(f"shot_observations[{i}] requires shot_id")
+        shot_ids.append(shot_id)
         flags=[]
-        if s.get("reference_id") not in refids: flags.append("REFERENCE_NOT_FOUND")
-        if not s.get("continuity_observations"): flags.append("CONTINUITY_NOT_OBSERVED")
-        findings.append({"shot_index":i,"flags":flags})
-    return {"reference_count":len(refs),"shot_count":len(shots),"shot_findings":findings,
-            "visual_assessment_boundary":"metadata/observations only; no image analysis performed"}
+        if shot.get("reference_id") not in ref_by_id:
+            flags.append("REFERENCE_NOT_FOUND")
+        checks=shot.get("continuity_observations")
+        if not isinstance(checks,dict):
+            flags.append("CONTINUITY_OBSERVATIONS_MISSING_OR_INVALID")
+            checks={}
+        for check in required_checks:
+            value=checks.get(check)
+            if value is not True:
+                flags.append(f"{check.upper()}_NOT_CONFIRMED" if value is None else f"{check.upper()}_MISMATCH")
+        if shot.get("review_basis") not in ("HUMAN_FRAME_REVIEW","VERIFIED_ANALYSER_OUTPUT"):
+            flags.append("VISUAL_REVIEW_BASIS_NOT_ESTABLISHED")
+        sequence=shot.get("sequence_id")
+        subject=shot.get("subject_identity_id")
+        style=shot.get("style_profile_id")
+        if sequence and subject:
+            prior=sequence_subjects.get(sequence)
+            if prior and prior!=subject and shot.get("intentional_subject_change") is not True:
+                flags.append("UNEXPLAINED_SUBJECT_IDENTITY_CHANGE")
+            sequence_subjects[sequence]=subject
+        if sequence and style:
+            prior=sequence_styles.get(sequence)
+            if prior and prior!=style and shot.get("intentional_style_change") is not True:
+                flags.append("UNEXPLAINED_STYLE_PROFILE_CHANGE")
+            sequence_styles[sequence]=style
+        findings.append({"shot_id":shot_id,"flags":flags,
+                         "review_basis":shot.get("review_basis","NOT_ESTABLISHED")})
+    duplicate_shots=sorted({sid for sid in shot_ids if shot_ids.count(sid)>1})
+    if duplicate_shots:
+        reference_findings.append({"duplicate_shot_ids":duplicate_shots})
+    return {"reference_count":len(refs),"reference_findings":reference_findings,
+            "shot_count":len(shots),"shot_findings":findings,
+            "shots_with_continuity_flags":sum(1 for row in findings if row["flags"]),
+            "continuity_status":"REVIEW_REQUIRED" if reference_findings or any(row["flags"] for row in findings) else "STRUCTURALLY_CONSISTENT_FOR_HUMAN_REVIEW",
+            "visual_assessment_boundary":"checks supplied frame observations and metadata only; no pixels, frames, or video were independently inspected"}
 
 def _cap08(e):
     shots=_seq(e,"shot_plan")
