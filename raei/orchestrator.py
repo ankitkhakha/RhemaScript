@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     practice.add_argument("artifact_ref")
     practice.add_argument("method")
     practice.add_argument("result")
-    practice.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="verified")
+    practice.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="reported_unverified")
     assess = commands.add_parser("assess")
     assess.add_argument("unit_id")
     assess.add_argument("criterion_scores", help="JSON object mapping every rubric criterion to a score from 0 to 4")
