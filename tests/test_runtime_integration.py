@@ -18,7 +18,7 @@ class CapabilityRuntimeTests(unittest.TestCase):
         with self.assertRaises(CapabilityError): CapabilityEngine().execute("CAP-01",{},actor_role="TEST",evidence={})
     def test_complete_evidence_only_ready_for_human_review(self):
         from rhemascript.capabilities.runtime import EVIDENCE_REQUIREMENTS
-        ev={k:"evidence-ref" for k in EVIDENCE_REQUIREMENTS["CAP-01"]}
+        ev={"sources":[{"source_id":"S1","reference":"John 1:1","version":"HINOVBSI"}]}
         self.assertEqual(CapabilityEngine().execute("CAP-01",RECORD,actor_role="TEST",evidence=ev).status,"READY_FOR_HUMAN_REVIEW")
 
 class InterfaceRuntimeTests(unittest.TestCase):
