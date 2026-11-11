@@ -23,6 +23,27 @@ class LearningWorkflowTests(unittest.TestCase):
         record_rubric_assessment(self.data,"U1",{"correctness":3,"reasoning":4},"tests/output.txt","verified")
         self.assertEqual(self.data["units"]["U1"]["status"],"passed")
         validate(self.data)
+    def test_non_object_rubric_scores_rejected(self):
+        self.lesson()
+        record_practice(self.data,"U1","artifact","method","result")
+        for invalid in (None, [], "scores", 3):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(LedgerError):
+                    record_rubric_assessment(self.data,"U1",invalid,"artifact","verified")
+
+    def test_invalid_evidence_status_type_rejected(self):
+        self.lesson()
+        record_practice(self.data,"U1","artifact","method","result")
+        with self.assertRaises(LedgerError):
+            record_rubric_assessment(self.data,"U1",{"correctness":4,"reasoning":4},"artifact",[])
+
+    def test_whitespace_correction_fields_rejected(self):
+        self.lesson()
+        record_practice(self.data,"U1","artifact","method","result")
+        record_rubric_assessment(self.data,"U1",{"correctness":1,"reasoning":2},"artifact","verified")
+        with self.assertRaises(LedgerError):
+            record_correction(self.data,"U1","   ","new-artifact","method","result")
+
     def test_boolean_rubric_score_rejected(self):
         self.lesson()
         record_practice(self.data,"U1","artifact","method","result")
