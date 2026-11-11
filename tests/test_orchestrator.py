@@ -80,6 +80,21 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(unit["practice"][-1]["status"], "reported_unverified")
             self.assertNotEqual(unit["status"], "passed")
 
+    def test_cli_assessment_defaults_evidence_to_reported_unverified(self):
+        from raei.orchestrator import main
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.json"
+            save(path, seed_ledger())
+            self.assertEqual(main(["--ledger", str(path), "practice", "CS-FOUND",
+                                   "evidence/attempt.md", "run exercise", "result inspected",
+                                   "--evidence-status", "verified"]), 0)
+            scores = json.dumps({criterion: 4 for criterion in load(path)["units"]["CS-FOUND"]["rubric"]})
+            self.assertEqual(main(["--ledger", str(path), "assess", "CS-FOUND",
+                                   scores, "evidence/attempt.md"]), 0)
+            unit = load(path)["units"]["CS-FOUND"]
+            self.assertEqual(unit["evidence_status"], "reported_unverified")
+            self.assertEqual(unit["status"], "needs_correction")
+
     def test_cli_correction_command_persists_correction_history(self):
         from raei.orchestrator import main
         with tempfile.TemporaryDirectory() as directory:
