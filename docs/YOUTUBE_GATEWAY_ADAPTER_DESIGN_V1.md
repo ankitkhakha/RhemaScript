@@ -1,6 +1,6 @@
 # YouTube provider gateway adapter — architecture decision record
 
-**Status:** IF-18 client routing implemented; mocked gateway-backed resumable upload, video verification, and thumbnail-write tests pass CI; owner-controlled OAuth and live channel validation not performed.
+**Status:** IF-18 client routing and local JSONL audit sink implemented; mocked gateway-backed resumable upload, video verification, thumbnail-write, and audit-sink tests pass CI; owner-controlled OAuth and live channel validation not performed.
 **Scope:** RhemaScript YouTube Data API v3 and YouTube Analytics API.
 **Cost boundary:** Python standard library only. No paid service, dependency, hosted proxy, or credential relay.
 
@@ -29,7 +29,7 @@ The adapter is implemented as an extension of the existing external gateway boun
 5. **Binary/resumable transport:** Support bounded request/response sizes and explicit response headers. HTTP 308 is a resumable-upload acknowledgement, not a redirect. Validate acknowledged byte ranges and reject regressions, impossible offsets, or no-progress loops.
 6. **Authority:** Read-only channel/analytics calls require approved scope and disclosure. Upload, thumbnail changes, and publication require the existing validated Evidence Pack, all six ordered approved gates, matching final-film evidence, human final acceptance, and separate publishing authorization. The client carries the validated project ID/version and publishing authorization into the gateway call; the gateway independently checks PUBLISH authority for upload-session, upload-chunk, and thumbnail-write operations. Scheduled/public release remains a distinct publishing decision.
 7. **Idempotency:** Read operations may use deterministic request fingerprints. Upload-session creation and binary chunks require protocol-aware idempotency and acknowledgement handling; do not replay a chunk or create a new session blindly after an ambiguous network failure.
-8. **Fail-closed defaults:** No provider binding, no audit sink, no approved interface mapping, no explicit enablement, no valid credentials, or no authority means no network request.
+8. **Fail-closed defaults:** No provider binding, no audit sink, no approved interface mapping, no explicit enablement, no valid credentials, or no authority means no network request. The supplied local JSONL sink requires an existing operator-controlled parent directory and is not a substitute for a separately approved retention/backup policy.
 
 ## Required tests before activation
 
@@ -39,7 +39,7 @@ The adapter is implemented as an extension of the existing external gateway boun
 - Host, port, path, userinfo, fragment, and redirect attacks are rejected.
 - Audit records contain no credentials, query values, session URL, payload, or media bytes.
 - OAuth refresh, GET, resumable session creation, PUT chunks, 308 acknowledgements, final status verification, and Analytics GET all pass through the same configured gateway boundary.
-- CI has passed the gateway-backed resumable-upload, binary chunk/308 acknowledgement, final video verification, and thumbnail-write tests using mocked transports. These tests verify routing, authority checks, and audit redaction; they do not establish live Google account access or real provider behavior.
+- CI has passed the gateway-backed resumable-upload, binary chunk/308 acknowledgement, final video verification, thumbnail-write, path-prefix boundary, and local audit-sink tests using mocked transports. These tests verify routing, authority checks, durable local event writing, and audit redaction; they do not establish live Google account access or real provider behavior.
 - The method-aware gateway now enforces a path-segment boundary: an allowed path prefix matches only the exact path or a child path, not a sibling such as `/youtube/v3/channelsEvil`.
 - Failed and ambiguous chunk requests do not silently restart or skip bytes.
 - Existing generic gateway and local runtime contract tests remain unchanged and pass.
