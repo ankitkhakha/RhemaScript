@@ -38,7 +38,7 @@ class EvidenceStoreTests(unittest.TestCase):
 
     def test_child_assessment_requires_passed_prerequisite(self):
         self.store.create_unit("U1", "Foundations")
-        self.store.create_unit("U2", "Applied")
+        self.store.create_unit("U2", "Applied", ["U1"])
         with self.assertRaises(StoreError):
             self.store.assess("U2", 4, "evidence", "verified", 1)
 
