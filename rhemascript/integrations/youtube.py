@@ -74,6 +74,8 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             ))
         if not state.all_gates_approved:
             raise GateError("all six project gates must be approved")
+        if state.records[-1].evidence_ref != final_film_evidence_ref:
+            raise GateError("final gate evidence reference does not match the approved final film")
         if not final_acceptance_allowed(
             human_director_acceptance=human_director_acceptance
         ):
