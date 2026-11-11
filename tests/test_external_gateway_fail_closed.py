@@ -72,6 +72,62 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
+    def test_method_aware_request_requires_exact_operation_contract(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com", "oauth2.googleapis.com"),
+                operations={"CHANNEL_READ": {
+                    "method": "GET", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/youtube/v3/channels",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "method is not permitted"):
+            gateway.request(
+                "IF-18", "CHANNEL_READ", "https://www.googleapis.com/youtube/v3/channels?mine=true",
+                method="POST", request_id="r1", project_id="p1", source_version="1",
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_method_aware_request_audits_and_preserves_response_headers(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, headers, body))
+                return 308, b"", {"Range": "bytes=0-9"}
+
+        events = []
+        transport = MethodTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"UPLOAD_CHUNK": {
+                    "method": "PUT", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/upload/youtube/v3/videos",
+                }},
+            ),), transport=transport, audit_sink=events.append, enabled=True,
+        )
+        status, body, response_headers = gateway.request(
+            "IF-18", "UPLOAD_CHUNK",
+            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
+            method="PUT", headers={"Authorization": "Bearer secret"},
+            body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
+        )
+        self.assertEqual(status, 308)
+        self.assertEqual(body, b"")
+        self.assertEqual(response_headers["Range"], "bytes=0-9")
+        self.assertEqual(transport.calls[0][1], "PUT")
+        self.assertEqual([event["phase"] for event in events], ["REQUESTED", "COMPLETED"])
+        self.assertNotIn("secret", repr(events))
+        self.assertNotIn("opaque", repr(events))
+        self.assertNotIn("video bytes", repr(events))
+
 
 if __name__ == "__main__":
     unittest.main()
