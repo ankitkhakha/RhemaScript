@@ -224,7 +224,7 @@ class ExternalIntegrationGateway:
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                 or parsed.port not in (None, 443) or parsed.fragment
                 or parsed.hostname.lower() not in {h.lower() for h in hosts}
-                or not parsed.path.startswith(path_prefix)):
+                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))):
             raise ExternalIntegrationError("request URL is outside the provider operation allowlist")
         if not isinstance(body, (bytes, type(None))) or not 0 < max_response_bytes <= 8_000_000:
             raise ExternalIntegrationError("request body or response limit is invalid")
