@@ -17,14 +17,14 @@ def ready_ledger():
         "domains": {
             "engineering": {**passed_domain([evidence(x) for x in ENGINEERING_CAPSTONES]),
                             "required_capstones": ENGINEERING_CAPSTONES},
-            "whole_bible": {"status": "passed", "books": [
+            "whole_bible": {"status": "passed", "competency_score": 3, "evidence": ["books/66-book-review"], "books": [
                 {"book_id": book, "status": "passed", "evidence_status": "verified",
                  "evidence_ref": f"books/{book}", "score": 3} for book in BIBLE_BOOKS]},
-            "bible_only_ethics": {"status": "passed", "cases": [
+            "bible_only_ethics": {"status": "passed", "competency_score": 3, "evidence": ["ethics/case-review"], "cases": [
                 {"case_id": case, "status": "passed", "score": 3, "evidence_ref": f"ethics/{case}",
                  "biblical_context_reviewed": True, "explicit_vs_inference_recorded": True}
                 for case in ETHICS_CASES]},
-            "rhemascript": {"status": "passed", "capabilities": [
+            "rhemascript": {"status": "passed", "competency_score": 3, "evidence": ["rhemascript/capability-review"], "capabilities": [
                 {"capability_id": cap, "status": "passed", "score": 3, "evidence_ref": f"rs/{cap}"}
                 for cap in RHEMA_IDS]},
             "integrated_capstone": {"status": "passed", "competency_score": 3,
@@ -67,7 +67,7 @@ class ReadinessValidatorTests(unittest.TestCase):
 
     def test_missing_engineering_capstone_fails(self):
         data = ready_ledger()
-        data["domains"]["engineering"]["evidence"].pop()
+        data["domains"]["engineering"]["evidence"].pop(0)
         self.assertTrue(any("integrated_frontend_backend_database" in x for x in validate(data)))
 
     def test_integrated_capstone_cannot_pass_without_score(self):
