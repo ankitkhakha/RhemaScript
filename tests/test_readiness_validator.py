@@ -10,7 +10,7 @@ def evidence(identifier):
 
 def passed_domain(evidence_items):
     return {"status": "passed", "competency_score": 3, "critical_failure": False,
-            "evidence": [{"status":"verified","evidence_ref":"domain/evidence","score":3}]}
+            "evidence": evidence_items}
 
 
 def ready_ledger():
