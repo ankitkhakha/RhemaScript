@@ -22,11 +22,11 @@ def ready_ledger():
                 {"book_id": book, "status": "passed", "evidence_status": "verified",
                  "evidence_ref": f"books/{book}", "score": 3} for book in BIBLE_BOOKS]},
             "bible_only_ethics": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"ethics/review","score":3}], "cases": [
-                {"case_id": case, "status": "passed", "score": 3, "evidence_ref": f"ethics/{case}",
+                {"case_id": case, "status": "passed", "score": 3, "evidence_status": "verified", "evidence_ref": f"ethics/{case}",
                  "biblical_context_reviewed": True, "explicit_vs_inference_recorded": True, "uncertainty_recorded": True, "proof_texting_check_passed": True}
                 for case in ETHICS_CASES]},
             "rhemascript": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"rhemascript/review","score":3}], "capabilities": [
-                {"capability_id": cap, "status": "passed", "score": 3, "evidence_ref": f"rs/{cap}"}
+                {"capability_id": cap, "status": "passed", "score": 3, "evidence_status": "verified", "evidence_ref": f"rs/{cap}"}
                 for cap in RHEMA_IDS]},
             "integrated_capstone": {"status": "passed", "competency_score": 3,
                                     "critical_failure": False, "evidence": [{"status":"verified","evidence_ref":"capstone/report.md","score":3}]},
@@ -111,6 +111,21 @@ class ReadinessValidatorTests(unittest.TestCase):
     def test_independent_assurance_requires_inspectable_evidence(self):
         data = ready_ledger()
         data["independent_assurance"]["evidence"] = []
+        self.assertTrue(any("Independent assurance" in x for x in validate(data)))
+
+    def test_ethics_case_requires_verified_evidence_status(self):
+        data = ready_ledger()
+        data["domains"]["bible_only_ethics"]["cases"][0]["evidence_status"] = "reported_unverified"
+        self.assertTrue(any("ETH-TRUTH" in x for x in validate(data)))
+
+    def test_rhemascript_capability_requires_verified_evidence_status(self):
+        data = ready_ledger()
+        data["domains"]["rhemascript"]["capabilities"][0]["evidence_status"] = "planned"
+        self.assertTrue(any("CAP-01" in x for x in validate(data)))
+
+    def test_independent_assurance_requires_verified_evidence_reference(self):
+        data = ready_ledger()
+        data["independent_assurance"]["evidence"][0]["status"] = "reported_unverified"
         self.assertTrue(any("Independent assurance" in x for x in validate(data)))
 
     def test_production_authority_must_remain_not_granted(self):
