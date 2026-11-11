@@ -80,6 +80,25 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(unit["practice"][-1]["status"], "reported_unverified")
             self.assertNotEqual(unit["status"], "passed")
 
+    def test_cli_correction_command_persists_correction_history(self):
+        from raei.orchestrator import main
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.json"
+            save(path, seed_ledger())
+            self.assertEqual(main(["--ledger", str(path), "practice", "CS-FOUND",
+                                   "evidence/attempt.md", "run exercise", "initial result",
+                                   "--evidence-status", "verified"]), 0)
+            scores = json.dumps({criterion: 2 for criterion in load(path)["units"]["CS-FOUND"]["rubric"]})
+            self.assertEqual(main(["--ledger", str(path), "assess", "CS-FOUND",
+                                   scores, "evidence/attempt.md", "--evidence-status", "verified"]), 0)
+            self.assertEqual(main(["--ledger", str(path), "correct", "CS-FOUND",
+                                   "clarified the weak concept", "evidence/revision.md",
+                                   "repeat exercise", "new result inspected"]), 0)
+            unit = load(path)["units"]["CS-FOUND"]
+            self.assertEqual(unit["status"], "in_progress")
+            self.assertEqual(len(unit["corrections"]), 1)
+            self.assertEqual(unit["corrections"][0]["artifact_ref"], "evidence/revision.md")
+
     def test_initialise_refuses_to_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "ledger.json"
