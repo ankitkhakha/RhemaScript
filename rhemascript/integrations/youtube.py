@@ -132,17 +132,22 @@ class YouTubeClient:
         req = Request(url, data=body, headers=headers or {}, method=method)
         try:
             if self._transport:
-                return self._transport(req, self.config.timeout_seconds)
-            with urlopen(req, timeout=self.config.timeout_seconds) as response:
-                return response.status, response.read(8_000_001), dict(response.headers.items())
+                status, raw, response_headers = self._transport(req, self.config.timeout_seconds)
+            else:
+                with urlopen(req, timeout=self.config.timeout_seconds) as response:
+                    status, raw, response_headers = (
+                        response.status, response.read(8_000_001), dict(response.headers.items())
+                    )
+            if not isinstance(status, int) or not isinstance(raw, bytes) or not isinstance(response_headers, dict):
+                raise YouTubeIntegrationError("transport returned an invalid response contract")
+            if len(raw) > 8_000_000:
+                raise YouTubeIntegrationError("YouTube response exceeds the 8 MB safety limit")
+            return status, raw, response_headers
         except HTTPError as exc:
             raw = exc.read(8_000_001)
-            if exc.code == 308:
-                return exc.code, raw, dict(exc.headers.items())
-            detail = raw[:4096].decode("utf-8", "replace")
-            raise YouTubeIntegrationError(
-                f"YouTube request failed ({exc.code}); response: {detail[:1000]}"
-            ) from None
+            if len(raw) > 8_000_000:
+                raise YouTubeIntegrationError("YouTube response exceeds the 8 MB safety limit") from None
+            return exc.code, raw, dict(exc.headers.items())
         except (URLError, TimeoutError, OSError) as exc:
             raise YouTubeIntegrationError("YouTube network request failed") from None
 
@@ -170,6 +175,20 @@ class YouTubeClient:
         self._access_token = token
         return token
 
+    def _authorized_request(self, url: str, *, method: str = "GET",
+                            body: bytes | None = None,
+                            headers: dict[str, str] | None = None):
+        """Retry once after an expired/revoked access token; never retry writes otherwise."""
+        request_headers = dict(headers or {})
+        status, raw, response_headers = self._request(
+            url, method=method, body=body, headers=request_headers
+        )
+        if status != 401 or "Authorization" not in request_headers:
+            return status, raw, response_headers
+        self._access_token = None
+        request_headers["Authorization"] = f"Bearer {self._token()}"
+        return self._request(url, method=method, body=body, headers=request_headers)
+
     def _api(self, path: str, *, params: dict[str, Any] | None = None,
              method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
         if path.startswith("/") or ".." in path.split("/"):
@@ -180,7 +199,7 @@ class YouTubeClient:
         headers = {"Authorization": f"Bearer {self._token()}", "Accept": "application/json"}
         if body is not None:
             headers["Content-Type"] = "application/json"
-        status, raw, _ = self._request(url, method=method, body=body, headers=headers)
+        status, raw, _ = self._authorized_request(url, method=method, body=body, headers=headers)
         if status not in (200, 201):
             raise YouTubeIntegrationError(f"YouTube API returned HTTP {status}")
         try:
@@ -250,7 +269,7 @@ class YouTubeClient:
             "X-Upload-Content-Type": "video/*",
             "X-Upload-Content-Length": str(path.stat().st_size),
         }
-        status, raw, response_headers = self._request(
+        status, raw, response_headers = self._authorized_request(
             f"{UPLOAD_BASE}?{query}", method="POST",
             body=json.dumps(metadata).encode(), headers=headers,
         )
@@ -274,7 +293,7 @@ class YouTubeClient:
                     "Content-Length": str(len(chunk)),
                     "Content-Range": f"bytes {offset}-{end}/{total}",
                 }
-                status, final_raw, chunk_response_headers = self._request(
+                status, final_raw, chunk_response_headers = self._authorized_request(
                     location, method="PUT", body=chunk, headers=chunk_headers,
                 )
                 if status in (200, 201):
@@ -327,7 +346,7 @@ class YouTubeClient:
             raise YouTubeIntegrationError("thumbnail file does not exist")
         mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
         url = f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?{urlencode({'videoId': video_id})}"
-        status, raw, _ = self._request(url, method="POST", body=path.read_bytes(),
+        status, raw, _ = self._authorized_request(url, method="POST", body=path.read_bytes(),
             headers={"Authorization": f"Bearer {self._token()}", "Content-Type": mime})
         if status not in (200, 201):
             raise YouTubeIntegrationError(f"thumbnail upload returned HTTP {status}")
@@ -359,7 +378,7 @@ class YouTubeClient:
 
     def _analytics_api(self, params: dict[str, Any]) -> dict[str, Any]:
         query = urlencode(params)
-        status, raw, _ = self._request(
+        status, raw, _ = self._authorized_request(
             f"{ANALYTICS_BASE}?{query}",
             headers={"Authorization": f"Bearer {self._token()}", "Accept": "application/json"},
         )
