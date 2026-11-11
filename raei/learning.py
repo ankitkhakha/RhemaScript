@@ -47,12 +47,14 @@ def record_rubric_assessment(data, unit_id, criterion_scores, evidence_ref, evid
     rubric = lesson["rubric"] if lesson is not None else unit.get("rubric")
     if not rubric:
         raise LedgerError("lesson or seeded curriculum rubric must exist before assessment")
+    if not isinstance(criterion_scores, dict):
+        raise LedgerError("criterion scores must be an object mapping rubric criteria to scores")
+    if not isinstance(evidence_status, str) or evidence_status not in {"verified", "reported_unverified", "planned"}:
+        raise LedgerError("invalid evidence status")
     if set(criterion_scores) != set(rubric):
         raise LedgerError("criterion scores must match every rubric criterion exactly")
     if any(not isinstance(score,int) or isinstance(score,bool) or not 0 <= score <= 4 for score in criterion_scores.values()):
         raise LedgerError("each criterion score must be an integer from 0 to 4")
-    if evidence_status not in {"verified","reported_unverified","planned"}:
-        raise LedgerError("invalid evidence status")
     if evidence_status == "verified" and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
         raise LedgerError("verified assessment requires an evidence reference")
     if not any(p["status"]=="verified" for p in unit.get("practice",[])):
@@ -74,7 +76,8 @@ def record_correction(data, unit_id, correction_note, new_artifact_ref, method, 
     unit=data["units"][unit_id]
     if unit["status"] not in {"needs_correction","in_progress"}:
         raise LedgerError("correction is only allowed for incomplete or failed units")
-    if not all([correction_note,new_artifact_ref,method,result]):
+    if not all(isinstance(value, str) and value.strip() for value in
+               (correction_note, new_artifact_ref, method, result)):
         raise LedgerError("correction requires explanation, new artefact, method and result")
     unit.setdefault("corrections",[]).append({"note":correction_note,"artifact_ref":new_artifact_ref,
         "method":method,"result":result,"recorded_at":now()})
