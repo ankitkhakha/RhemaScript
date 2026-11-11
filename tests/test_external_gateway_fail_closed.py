@@ -92,6 +92,75 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_upload_chunk_requires_separate_publish_authority_before_transport(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, headers, body))
+                return 308, b"", {"Range": "bytes=0-9"}
+
+        transport = MethodTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        args = {
+            "method": "PUT", "headers": {"Authorization": "Bearer test"},
+            "body": b"chunk", "request_id": "upload-1", "project_id": "RS-1",
+            "source_version": "1.0",
+        }
+        with self.assertRaisesRegex(ExternalIntegrationError, "explicit authority"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                **args,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_upload_chunk_with_publish_authority_preserves_308_acknowledgement(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, headers, body))
+                return 308, b"", {"Range": "bytes=0-127"}
+
+        transport = MethodTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            status, body, response_headers = gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="upload-2", project_id="RS-1",
+                source_version="1.0",
+                authority={"publishing_authorisation": True},
+            )
+        self.assertEqual(status, 308)
+        self.assertEqual(body, b"")
+        self.assertEqual(response_headers["Range"], "bytes=0-127")
+        self.assertEqual(transport.calls[0][1], "PUT")
+
     def test_method_aware_request_audits_and_preserves_response_headers(self):
         class MethodTransport:
             def __init__(self):
