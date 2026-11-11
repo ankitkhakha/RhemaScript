@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from rhemascript.orchestration.creative_production import CreativeProductionOrchestrator, OrchestrationResult
+from rhemascript.registry.system_registry import CAPABILITIES
 
 class EvidencePackError(ValueError):
     pass
@@ -115,7 +116,8 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
             raise EvidencePackError(f"artifact {ident} belongs to a different project")
         if artifact.get("project_version") != project["version"]:
             raise EvidencePackError(f"artifact {ident} is not bound to project version {project['version']}")
-        if artifact.get("artifact_type") not in ARTIFACT_TYPES:
+        artifact_type = artifact.get("artifact_type")
+        if not isinstance(artifact_type, str) or artifact_type not in ARTIFACT_TYPES:
             raise EvidencePackError(f"artifact {ident} has unsupported artifact_type")
         _required_string(artifact.get("version"), f"artifact {ident}.version")
         _required_string(artifact.get("status"), f"artifact {ident}.status")
@@ -128,13 +130,19 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
     cap_evidence = {}
     for ident, item in evidence.items():
         cap = _required_string(item.get("capability_id"), f"evidence {ident}.capability_id")
+        if cap not in CAPABILITIES:
+            raise EvidencePackError(f"evidence {ident} references unknown capability: {cap}")
         payload = item.get("payload")
         if not isinstance(payload, dict):
             raise EvidencePackError(f"evidence {ident}.payload must be an object")
+        if "evidence_refs" in payload:
+            raise EvidencePackError(f"evidence {ident}.payload cannot override reserved evidence_refs")
         refs, artifact_refs = item.get("evidence_refs", []), item.get("artifact_refs", [])
         if not isinstance(refs, list) or any(not isinstance(x, str) or not x.strip() for x in refs):
             raise EvidencePackError(f"evidence {ident}.evidence_refs must contain non-empty strings")
-        if not isinstance(artifact_refs, list) or any(x not in artifacts for x in artifact_refs):
+        if not isinstance(artifact_refs, list) or any(not isinstance(x, str) or not x.strip() for x in artifact_refs):
+            raise EvidencePackError(f"evidence {ident}.artifact_refs must contain non-empty strings")
+        if any(x not in artifacts for x in artifact_refs):
             raise EvidencePackError(f"evidence {ident} contains an unknown artifact reference")
         target = cap_evidence.setdefault(cap, {})
         for key, value in payload.items():
