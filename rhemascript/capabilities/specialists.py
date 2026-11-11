@@ -455,6 +455,10 @@ def _cap14(e):
     risk=diagnostic.get("security_or_rights_risk")
     if not isinstance(risk,bool):
         raise SpecialistInputError("security_or_rights_risk must be boolean")
+    # Rights/security failure categories always require specialist clearance,
+    # even if a caller incorrectly marks the separate risk flag false.
+    if category in ("RIGHTS","SECURITY"):
+        risk=True
     retest=diagnostic.get("retest_status","NOT_RUN")
     if retest not in ("NOT_RUN","PASS","FAIL"):
         raise SpecialistInputError("retest_status must be NOT_RUN, PASS or FAIL")

@@ -94,6 +94,17 @@ class FailureIntelligenceTests(unittest.TestCase):
         self.assertEqual(result["retry_policy"],"BLOCKED_PENDING_SECURITY_OR_RIGHTS_REVIEW")
         self.assertFalse(result["automatic_retry_authorised"])
 
+    def test_cap14_rights_or_security_category_blocks_even_if_risk_flag_is_false(self):
+        result=assess_specialist("CAP-14",failure_evidence(security_or_rights_risk=False))
+        self.assertEqual(result["retry_policy"],"NO_AUTOMATIC_RETRY_UNTIL_TRIAGED")
+        security=failure_evidence(security_or_rights_risk=False)
+        security["failure_record"]["category"]="SECURITY"
+        confirmed=security["diagnostic_evidence"]
+        confirmed["root_cause_status"]="CONFIRMED"
+        confirmed["root_cause_evidence"]="verified security incident evidence"
+        blocked=assess_specialist("CAP-14",security)
+        self.assertEqual(blocked["retry_policy"],"BLOCKED_PENDING_SECURITY_OR_RIGHTS_REVIEW")
+
     def test_cap14_requires_retest_evidence_for_pass(self):
         result=assess_specialist("CAP-14",failure_evidence(retest_status="PASS",retest_evidence=""))
         self.assertIn("retest_evidence",result["missing_diagnostic_fields"])
