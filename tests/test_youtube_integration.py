@@ -60,6 +60,63 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
 
+    def test_resumable_upload_retries_unacknowledged_bytes(self):
+        chunk_size = 256 * 1024
+        payload = bytes((i % 251 for i in range(chunk_size * 2)))
+        put_requests = []
+
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            if request.full_url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                return 200, b"", {"Location": "https://www.googleapis.com/upload/youtube/v3/videos/session"}
+            if request.full_url.endswith("/session") and request.get_method() == "PUT":
+                body = request.data or b""
+                put_requests.append((request.get_header("Content-range"), body))
+                if len(put_requests) == 1:
+                    return 308, b"", {"Range": "bytes=0-131071"}
+                if len(put_requests) == 2:
+                    return 308, b"", {"Range": "bytes=0-393215"}
+                return 201, b'{"id":"video-123"}', {}
+            self.fail("unexpected HTTP request: " + request.full_url)
+
+        config = YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size)
+        client = YouTubeClient(config, transport=transport)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(payload)
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                result = client.upload_video(video.name, title="Test", description="Test",
+                                             publishing_authorisation=True)
+
+        self.assertEqual(result["video_id"], "video-123")
+        self.assertEqual(len(put_requests), 3)
+        self.assertEqual(put_requests[0][1], payload[:chunk_size])
+        self.assertEqual(put_requests[1][1], payload[131072:131072 + chunk_size])
+        self.assertEqual(put_requests[2][1], payload[393216:])
+
+    def test_resumable_upload_rejects_impossible_acknowledgement(self):
+        chunk_size = 256 * 1024
+
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            if request.full_url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                return 200, b"", {"Location": "https://www.googleapis.com/upload/youtube/v3/videos/session"}
+            if request.full_url.endswith("/session"):
+                return 308, b"", {"Range": "bytes=0-999999"}
+            self.fail("unexpected HTTP request")
+
+        client = YouTubeClient(YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size),
+                               transport=transport)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"x" * chunk_size)
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "impossible byte range"):
+                    client.upload_video(video.name, title="Test", description="Test",
+                                        publishing_authorisation=True)
+
     def test_upload_requires_existing_nonempty_file(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "missing or empty"):
