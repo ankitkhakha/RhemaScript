@@ -35,12 +35,26 @@ def _score(value: Any, name: str) -> float:
         raise SpecialistInputError(f"{name} must be a finite number from 0 to 100")
     return float(value)
 
+def _duration(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int,float)) or not math.isfinite(value) or value <= 0:
+        raise SpecialistInputError(f"{name} must be a finite positive number of seconds")
+    return float(value)
+
 def _cap01(e):
     sources=_seq(e,"sources")
-    ids=[s.get("source_id") for s in sources if isinstance(s,dict)]
+    ids=[]
+    missing=[]
+    for i,source in enumerate(sources):
+        if not isinstance(source,dict):
+            raise SpecialistInputError(f"sources[{i}] must be an object")
+        for key in ("source_id","reference","version"):
+            if not isinstance(source.get(key),str) or not source[key].strip():
+                missing.append({"index":i,"field":key})
+        source_id=source.get("source_id")
+        if isinstance(source_id,str) and source_id.strip():
+            ids.append(source_id)
     duplicates=sorted({x for x in ids if ids.count(x)>1})
-    missing=[i for i,s in enumerate(sources) if not isinstance(s,dict) or not s.get("source_id") or not s.get("reference") or not s.get("version")]
-    return {"source_count":len(sources),"duplicate_source_ids":duplicates,"incomplete_source_indexes":missing,
+    return {"source_count":len(sources),"duplicate_source_ids":duplicates,"incomplete_source_fields":missing,
             "provenance_status":"INCOMPLETE" if missing or duplicates else "STRUCTURALLY_COMPLETE",
             "truth_claim":"not assessed; source identity and provenance structure only"}
 
@@ -62,9 +76,21 @@ def _cap02(e):
 
 def _cap03(e):
     script=_seq(e,"script_elements"); mapping=_seq(e,"source_mapping")
-    mapped={m.get("element_id") for m in mapping if isinstance(m,dict) and m.get("element_id") and m.get("source_reference")}
-    unsupported=[s.get("element_id",i) for i,s in enumerate(script) if not isinstance(s,dict) or s.get("element_id") not in mapped]
-    invalid=[i for i,m in enumerate(mapping) if not isinstance(m,dict) or not m.get("source_reference") or not m.get("element_id")]
+    for i,item in enumerate(script):
+        if not isinstance(item,dict):
+            raise SpecialistInputError(f"script_elements[{i}] must be an object")
+        if not isinstance(item.get("element_id"),str) or not item["element_id"].strip():
+            raise SpecialistInputError(f"script_elements[{i}] requires a non-empty element_id")
+    mapped=set()
+    invalid=[]
+    for i,item in enumerate(mapping):
+        if not isinstance(item,dict):
+            raise SpecialistInputError(f"source_mapping[{i}] must be an object")
+        if not isinstance(item.get("element_id"),str) or not item["element_id"].strip() or not isinstance(item.get("source_reference"),str) or not item["source_reference"].strip():
+            invalid.append(i)
+        else:
+            mapped.add(item["element_id"])
+    unsupported=[item["element_id"] for item in script if item["element_id"] not in mapped]
     return {"script_element_count":len(script),"mapped_element_count":len(script)-len(unsupported),
             "unmapped_elements":unsupported,"invalid_mapping_indexes":invalid,
             "integrity_status":"GAPS_FOUND" if unsupported or invalid else "MAPPING_COMPLETE",
@@ -79,6 +105,10 @@ def _cap04(e):
     if missing or extra: raise SpecialistInputError(f"dimension_scores keys mismatch; missing={missing}, extra={extra}")
     total=sum(_score(scores[k],k)*w for k,w in weights.items())/100
     gates=_obj(e,"eligibility_gates")
+    if not gates:
+        raise SpecialistInputError("eligibility_gates must contain explicit gate results; missing gates cannot be treated as passed")
+    if any(not isinstance(key,str) or not key.strip() for key in gates):
+        raise SpecialistInputError("eligibility_gates keys must be non-empty strings")
     failed=sorted(k for k,v in gates.items() if v is not True)
     return {"weighted_score":round(total,2),"weights":weights,"failed_eligibility_gates":failed,
             "recommendation":"INELIGIBLE" if failed else ("PRIORITISE" if total>=75 else "CONSIDER" if total>=55 else "DEFER"),
@@ -94,7 +124,7 @@ def _cap05(e):
         if not isinstance(segment,dict) or not segment.get("segment_id") or not segment.get("text"):
             raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
         start=segment.get("start_seconds"); end=segment.get("end_seconds")
-        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) for x in (start,end)) or start<0 or end<=start:
             raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
         segment_ids.append(segment["segment_id"])
     duplicate_segments=sorted({x for x in segment_ids if segment_ids.count(x)>1})
@@ -218,7 +248,7 @@ def _cap07(e):
 
 def _cap08(e):
     shots=_seq(e,"shot_plan")
-    budget=_score(e.get("runtime_budget_seconds"),"runtime_budget_seconds")
+    budget=_duration(e.get("runtime_budget_seconds"),"runtime_budget_seconds")
     assets=_seq(e,"asset_inventory")
     narration=_seq(e,"approved_narration_segments")
     audio_plan=_obj(e,"audio_caption_plan")
@@ -235,9 +265,9 @@ def _cap08(e):
     asset_ids={a.get("asset_id") for a in assets if isinstance(a,dict) and a.get("asset_id")}
     max_clip=generation.get("max_clip_seconds")
     min_clip=generation.get("min_clip_seconds",0)
-    if isinstance(max_clip,bool) or not isinstance(max_clip,(int,float)) or max_clip<=0:
+    if isinstance(max_clip,bool) or not isinstance(max_clip,(int,float)) or not math.isfinite(max_clip) or max_clip<=0:
         raise SpecialistInputError("generation_constraints.max_clip_seconds must be positive")
-    if isinstance(min_clip,bool) or not isinstance(min_clip,(int,float)) or min_clip<0 or min_clip>max_clip:
+    if isinstance(min_clip,bool) or not isinstance(min_clip,(int,float)) or not math.isfinite(min_clip) or min_clip<0 or min_clip>max_clip:
         raise SpecialistInputError("generation_constraints.min_clip_seconds must be non-negative and <= max_clip_seconds")
     target_ratio=generation.get("target_aspect_ratio")
     if target_ratio not in ("9:16","16:9","1:1"):
@@ -248,7 +278,7 @@ def _cap08(e):
         if not shot.get("shot_id"): raise SpecialistInputError(f"shot_plan[{i}] requires shot_id")
         shot_ids.append(shot["shot_id"])
         duration=shot.get("duration_seconds")
-        if isinstance(duration,bool) or not isinstance(duration,(int,float)) or duration<=0:
+        if isinstance(duration,bool) or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<=0:
             raise SpecialistInputError(f"shot_plan[{i}].duration_seconds must be positive")
         durations.append(float(duration))
         flags=[]
@@ -275,7 +305,7 @@ def _cap08(e):
             units=shot.get("generation_unit_durations")
             if not isinstance(units,list) or not units: flags.append("GENERATION_UNITS_MISSING")
             else:
-                if any(isinstance(x,bool) or not isinstance(x,(int,float)) or x<=0 or x>max_clip or (min_clip and x<min_clip) for x in units):
+                if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) or x<=0 or x>max_clip or (min_clip and x<min_clip) for x in units):
                     flags.append("GENERATION_UNIT_DURATION_UNSUPPORTED")
                 if abs(sum(units)-duration)>0.05: flags.append("GENERATION_UNITS_DO_NOT_MATCH_SHOT_DURATION")
         shot_findings.append({"shot_id":shot["shot_id"],"flags":flags})
@@ -307,7 +337,7 @@ def _cap08(e):
     for i,cue in enumerate(audio_cues):
         if not isinstance(cue,dict): raise SpecialistInputError("each audio_cue must be an object")
         start=cue.get("start_seconds"); end=cue.get("end_seconds")
-        if isinstance(start,bool) or isinstance(end,bool) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or start<0 or end<=start:
+        if isinstance(start,bool) or isinstance(end,bool) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or not math.isfinite(start) or not math.isfinite(end) or start<0 or end<=start:
             audio_flags.append({"index":i,"flag":"INVALID_AUDIO_CUE_TIMING"})
         elif cue.get("overlaps_narration") is True and cue.get("duck_under_narration") is not True:
             audio_flags.append({"index":i,"flag":"AUDIO_MASKING_RISK"})
@@ -429,9 +459,19 @@ def _cap12(e):
 def _cap13(e):
     chain=_seq(e,"provenance_chain"); rights=_obj(e,"rights_basis")
     required=("asset_id","creator_or_source","rights_status","evidence_reference")
-    gaps=[{"index":i,"missing":[k for k in required if not item.get(k)]} for i,item in enumerate(chain) if not isinstance(item,dict) or any(not item.get(k) for k in required)]
-    return {"provenance_entries":len(chain),"provenance_gaps":gaps,"rights_basis_fields":sorted(rights),
-            "clearance_status":"NOT_CLEARED" if gaps or not rights else "DOCUMENTED_FOR_HUMAN_LEGAL_REVIEW"}
+    gaps=[]
+    for i,item in enumerate(chain):
+        if not isinstance(item,dict):
+            gaps.append({"index":i,"missing":list(required),"error":"ENTRY_NOT_OBJECT"})
+            continue
+        missing=[key for key in required if not isinstance(item.get(key),str) or not item[key].strip()]
+        if missing:
+            gaps.append({"index":i,"missing":missing})
+    valid_rights_fields=[key for key,value in rights.items() if isinstance(key,str) and key.strip() and value not in (None,"",[],{})]
+    if not valid_rights_fields:
+        gaps.append({"index":None,"missing":["rights_basis_evidence"]})
+    return {"provenance_entries":len(chain),"provenance_gaps":gaps,"rights_basis_fields":sorted(valid_rights_fields),
+            "clearance_status":"NOT_CLEARED" if gaps else "DOCUMENTED_FOR_HUMAN_LEGAL_REVIEW"}
 
 def _cap14(e):
     failure=_obj(e,"failure_record")
