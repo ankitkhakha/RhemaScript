@@ -144,21 +144,28 @@ Run from the repository root:
 python -m raei.orchestrator --ledger raei-learning-ledger.json init
 python -m raei.orchestrator --ledger raei-learning-ledger.json next
 python -m raei.orchestrator --ledger raei-learning-ledger.json show CS-FOUND
-python -m raei.orchestrator --ledger raei-learning-ledger.json practice CS-FOUND evidence/cs-foundation.md "executed original exercise" "result inspected"
+python -m raei.orchestrator --ledger raei-learning-ledger.json practice CS-FOUND evidence/cs-foundation.md "executed original exercise" "result inspected" --evidence-status verified
 python -m raei.orchestrator --ledger raei-learning-ledger.json assess CS-FOUND '{"accuracy":3,"reasoning":3,"execution":3,"evidence":3}' evidence/cs-foundation.md --evidence-status verified
 python -m raei.orchestrator --ledger raei-learning-ledger.json status
 ```
 
-The `practice` and `assess` commands call the existing `raei.learning`
-functions directly. Seeded curriculum units supply their registered objectives,
-sources, task and rubric; a separate lesson-creation step is not required.
-Both CLI commands default evidence status to `reported_unverified`. Use
-`--evidence-status verified` only after the referenced artefact and result
-have actually been inspected. An assessment can pass only when it has a
-verified practice record, every rubric criterion scores at least 3, and the
-assessment evidence is verified. The correction-recording function remains
-available in `raei.learning`; a correction CLI subcommand is not currently
-implemented. Use the exact rubric criterion names shown by `show UNIT_ID`.
+The `practice`, `assess` and `correct` commands call the existing
+`raei.learning` functions directly. Seeded curriculum units supply their
+registered objectives, sources, task and rubric; a separate lesson-creation
+step is not required. Practice and assessment default evidence status to
+`reported_unverified`. Use `--evidence-status verified` only after the
+referenced artefact and result have actually been inspected. An assessment
+can pass only when it has a verified practice record, every rubric criterion
+scores at least 3, and the assessment evidence is verified. After a failed
+assessment, record a fresh correction with:
+
+```sh
+python -m raei.orchestrator --ledger raei-learning-ledger.json correct CS-FOUND "clarified the weak concept" evidence/cs-foundation-revision.md "repeat exercise" "new result inspected"
+```
+
+The correction command appends to the unit's correction history and returns
+the unit to `in_progress`; it does not itself verify the new artefact or pass
+the unit. Use the exact rubric criterion names shown by `show UNIT_ID`.
 
 Use a normal ASCII filename such as `raei-learning-ledger.json` when running
 the commands. The example command above is illustrative; the CLI refuses to
