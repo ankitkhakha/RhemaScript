@@ -11,7 +11,7 @@ Implemented client operations:
 - Verify upload/video processing and privacy status.
 - Read channel analytics by date range, with optional video filter.
 
-The client is dormant until explicitly instantiated with credentials. No network call occurs on import. Publishing writes fail closed unless the caller supplies `publishing_authorisation=True`; uploaded videos default to `private`. This boolean is an execution control, not a substitute for RhemaScript's six project gates or the human director's separate release decision.
+The client is dormant until explicitly instantiated with credentials. No network call occurs on import. Uploads fail closed unless the caller supplies all six ordered, approved RhemaScript project gate records, matching project identity/version, the final-film evidence reference matching the sixth gate, explicit human-director final acceptance, and separate publishing authorisation. The client validates these using the existing `ProjectGateState`, `GateRecord`, and authority functions; it does not create or infer approvals. Uploaded videos default to `private`.
 
 ## Zero-cost setup boundary
 
@@ -41,10 +41,17 @@ client = YouTubeClient(YouTubeConfig.from_environment())
 channel = client.channel()
 
 # Keep private unless the human director explicitly authorises publication.
+# Supply real, ordered gate records and the final-film evidence reference
+# from the approved RhemaScript project evidence pack.
 uploaded = client.upload_video(
     "approved-final.mp4",
     title="Approved title",
     description="Approved description",
+    project_id="RS-PROJECT-ID",
+    project_version="APPROVED-VERSION",
+    final_film_evidence_ref="EVIDENCE-REF-FOR-FINAL-FILM",
+    gate_records=approved_six_gate_records,
+    human_director_acceptance=True,
     tags=["RhemaScript", "Bible"],
     privacy_status="private",
     publishing_authorisation=True,
