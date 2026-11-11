@@ -102,3 +102,6 @@ The lab receives a preconstructed trusted principal; it does not implement authe
 
 
 The API security lab also includes `raei.api_auth`, a strict local HMAC bearer-token verification exercise with algorithm pinning, signature verification, issuer/audience/time/role validation and negative tests. Run `python -m unittest tests.test_api_auth -v`. This is a learning boundary, not production-grade JWT/OIDC infrastructure; real issuance belongs to a trusted identity provider and production deployments require maintained libraries, key lifecycle and security review.
+
+
+The API security learning suite now covers outbound destination allowlisting/SSRF policy, upstream JSON response validation and a fail-closed security configuration audit. Run `python -m unittest tests.test_outbound_security tests.test_security_config -v`. The URL validator is not a network client and does not itself mitigate DNS rebinding, redirects or connection-time peer changes; those controls remain mandatory for any real outbound HTTP integration.
