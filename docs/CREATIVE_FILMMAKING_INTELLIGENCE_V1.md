@@ -1,6 +1,6 @@
 # RhemaScript Creative Filmmaking Intelligence V1.0
 **Change date:** 2026-11-11  
-**Status:** Adopted operating specification; runtime capability enhancements remain pending implementation  
+**Status:** Adopted operating specification; initial evidence-bound capability enhancements and human-governed orchestration implemented; advanced analyser and live-provider integrations remain pending  
 **Applies to:** RhemaScript universal creative-production workflow, with RS-PWW-001 as the first application  
 **Authority:** Existing RhemaScript governance, source-to-final integrity chain, six project approval gates, and separate approval/execution/final-acceptance/publishing authorities remain unchanged.
 
@@ -221,13 +221,19 @@ Record failures with category, reproduction evidence, affected asset/prompt/mode
 
 The repository has 15 capability contracts and deterministic, evidence-bound specialist assessments. CAP-09 now includes an initial dated Gemini Omni Flash 1.2 registry and fail-closed preflight for documented Gemini Apps/Google Flow operations. It checks supplied official evidence, model/interface/operation compatibility, duration, aspect ratio, documented resolution, plan tier, user-confirmed region and UI settings, and selected source clip/reference limits for Flow Extend. It does not query Google, inspect a user's Flow interface, independently verify account entitlements/region, or authorise generation. The registry now records the retired Veo Extend workflow (2026-11-05) and Gemini Omni Flash 1.1's scheduled retirement (2026-12-05), with date-aware fail-closed lifecycle flags. It still requires manual maintenance and broader model/operation coverage. CAP-05 now checks supplied approved narration against human-experience mappings, visual metaphors, biblical boundaries and story beats, including A-roll/B-roll purpose. CAP-08 now checks narration-to-shot mapping, asset-first review, generation-unit durations, exact caption text/timing and audio masking risks. These are deterministic checks over supplied evidence, not autonomous creative direction, waveform inspection or visual analysis. CAP-11 now checks supplied final-transcript fidelity, visual-alignment findings, audio masking, caption text/timing/safe-area, technical export values and explicit rights/source/platform states. CAP-14 now records structured tool/prompt/version diagnostics, root-cause confidence, reproduction evidence, corrective action, retest and retry restrictions. CAP-07 now checks structured reference metadata and supplied frame-review observations for style, subject, environment, screen direction, lighting, palette, camera axis and unexplained identity/style changes across a sequence. It still does not itself inspect image/video pixels or frames; automated visual analysis remains a separate capability requiring a verified analyser.
 
-This document is adopted as the operating specification. The following code work remains separate and must be implemented and tested before claiming executable intelligence:
-1. Add a versioned provider/model/operation capability registry with source URLs, checked-at timestamps, expiry/reverification policy and plan/region/interface conditions.
-2. Extend CAP-09 to preflight exact model-operation-duration-aspect-ratio-reference compatibility and fail closed on stale or conflicting evidence.
-3. Extend CAP-05/CAP-08 initial evidence checks with deeper story/shot semantic consistency, full edit continuity and cross-capability linkage; initial narration, A-roll/B-roll, caption/audio and generation-unit checks are now implemented.
-4. Extend CAP-07 with a clearly bounded visual-observation intake/analysis interface; do not claim automated visual understanding until a verified analyser exists.
-5. Extend CAP-11/CAP-14 initial QC and failure records with cross-capability evidence linkage, frame/audio inspection integrations and broader tool-mismatch/continuity failure taxonomies; initial transcript, caption, audio masking, export, root-cause and retry checks are now implemented.
-6. Add tests for unsupported operations, retired models/workflows, stale capability evidence, missing portrait selection, plan/region uncertainty, generation-unit limits, narration duplication and human approval gates.
+This document is adopted as the operating specification. The initial executable implementation is now present in the repository:
+1. CAP-09 has a dated, evidence-bound Gemini/Flow capability registry and fail-closed operation preflight, including initial model/workflow lifecycle tracking.
+2. CAP-05 and CAP-08 validate narration-to-human-experience/story mapping, A-roll/B-roll purpose, asset-first evidence, generation-unit feasibility, caption fidelity/timing and audio masking risks.
+3. CAP-07 validates supplied reference metadata and human/reviewer frame observations for visual continuity. It does not independently inspect pixels or video frames.
+4. CAP-11 and CAP-14 validate supplied final-transcript/QC evidence and structured production-failure diagnostics, including hard stops and retry restrictions.
+5. A Creative Production Orchestrator sequences the existing CAP-01..CAP-15 assessments, reports missing dependencies, records project/version/evidence traceability, and validates the existing six-gate sequence. It does not approve gates or execute production actions.
+6. Cross-capability synthetic tests cover the creative-to-QC evidence flow, model lifecycle, orchestration dependencies and gate safeguards.
+
+Remaining engineering work is explicitly bounded:
+- Expand the model/operation registry and maintain its official-source evidence and lifecycle entries.
+- Implement and validate a real frame/audio analyser before claiming automated visual or waveform inspection.
+- Deepen semantic story-to-shot, edit-continuity and source-to-final linkage checks.
+- Add approved provider sandboxes and independent assurance before claiming production integrations or release readiness.
 
 No live Google connection, account inspection, media generation, external platform write, spending, publishing or deployment is performed by this specification.
 
