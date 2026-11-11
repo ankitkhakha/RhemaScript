@@ -67,7 +67,6 @@ def next_unit(data: dict[str, Any]) -> dict[str, Any] | None:
             and all(units[p]["status"] == "passed" for p in unit.get("prerequisites", []))
         ]
         if candidates:
-            candidates.sort(key=lambda unit: unit["id"])
             return candidates[0]
     return None
 
