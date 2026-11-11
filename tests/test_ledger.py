@@ -33,6 +33,16 @@ class LedgerTests(unittest.TestCase):
         add_unit(self.data, "A", "Foundations", [])
         with self.assertRaises(LedgerError):
             record_assessment(self.data, "A", 5, "ref", "verified")
+    def test_boolean_score_rejected(self):
+        add_unit(self.data, "A", "Foundations", [])
+        with self.assertRaises(LedgerError):
+            record_assessment(self.data, "A", True, "ref", "verified")
+
+    def test_whitespace_evidence_rejected(self):
+        add_unit(self.data, "A", "Foundations", [])
+        with self.assertRaises(LedgerError):
+            record_assessment(self.data, "A", 4, "   ", "verified")
+
     def test_event_tampering_detected(self):
         add_unit(self.data, "A", "Foundations", [])
         self.data["events"][1]["details"]["title"] = "Tampered"
