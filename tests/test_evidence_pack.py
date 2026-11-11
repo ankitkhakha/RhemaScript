@@ -42,4 +42,18 @@ class EvidencePackTests(unittest.TestCase):
         self.assertEqual(result.run_id,"RS-MANIFEST-001:1.0")
         self.assertFalse(result.generation_action_performed); self.assertFalse(result.external_action_performed); self.assertFalse(result.publishing_performed)
 
+
+    def test_unknown_capability_id_rejected(self):
+        p=pack(); p["evidence_records"][0]["capability_id"]="CAP-99"
+        with self.assertRaisesRegex(EvidencePackError,"unknown capability"): validate_evidence_pack(p)
+    def test_non_string_artifact_type_rejected_without_type_error(self):
+        p=pack(); p["artifacts"][0]["artifact_type"]={"unexpected":"object"}
+        with self.assertRaisesRegex(EvidencePackError,"unsupported artifact_type"): validate_evidence_pack(p)
+    def test_non_string_artifact_reference_rejected_without_type_error(self):
+        p=pack(); p["evidence_records"][0]["artifact_refs"]=[["not","hashable"]]
+        with self.assertRaisesRegex(EvidencePackError,"artifact_refs must contain"): validate_evidence_pack(p)
+    def test_payload_cannot_override_audit_evidence_references(self):
+        p=pack(); p["evidence_records"][0]["payload"]["evidence_refs"]=["forged"]
+        with self.assertRaisesRegex(EvidencePackError,"reserved evidence_refs"): validate_evidence_pack(p)
+
 if __name__=="__main__": unittest.main()
