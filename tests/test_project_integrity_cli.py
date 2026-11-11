@@ -5,19 +5,43 @@ from pathlib import Path
 from unittest.mock import patch
 
 from raei.execution.project_integrity_cli import load_record, main
-from tests.test_project_integrity import ready_project
+from raei.execution.validate_project_integrity import CHAIN, GATES
+
+
+def synthetic_record():
+    return {
+        "record_type": "rhemascript_project_readiness",
+        "source_to_final_chain": [
+            {"stage": stage, "status": "present", "evidence_ref": f"fixture/{stage}"}
+            for stage in CHAIN
+        ],
+        "approval_gates": [
+            {"gate": gate, "decision": "approved",
+             "approval_evidence_ref": f"fixture/approval/{gate}",
+             "approver": "synthetic-fixture"}
+            for gate in GATES
+        ],
+        "authorities": {
+            "generation_authorisation": "not_authorised",
+            "publishing_authorisation": "not_authorised",
+            "deployment_authorisation": "not_authorised",
+            "merge_authorisation": "not_authorised",
+        },
+        "generation_executed": False,
+        "publishing_executed": False,
+        "production_authority": "not_granted",
+    }
 
 
 class ProjectIntegrityCliTests(unittest.TestCase):
     def test_valid_synthetic_record_returns_success_without_authority(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "synthetic-project.json"
-            path.write_text(json.dumps(ready_project()), encoding="utf-8")
+            path.write_text(json.dumps(synthetic_record()), encoding="utf-8")
             with patch("builtins.print") as output:
                 code = main([str(path), "--json"])
         self.assertEqual(code, 0)
-        rendered = output.call_args.args[0]
-        report = json.loads(rendered)
+        report = json.loads(output.call_args.args[0])
         self.assertEqual(report["result"], "PROJECT_TRACEABILITY_COMPLETE")
         self.assertEqual(report["production_authority"], "not_granted")
         self.assertFalse(report["generation_executed"])
