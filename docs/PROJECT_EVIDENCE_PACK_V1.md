@@ -36,3 +36,13 @@ Evidence payloads for the same CAP are merged only when repeated keys have ident
 ## Limits
 
 References are caller-supplied identifiers; remote files are not fetched or verified. No binary media storage, durable database, signature service, retention engine or immutable audit store is added. Human approval authenticity still depends on the existing gate-record process and review. No frame or waveform inspection is implemented.
+
+
+## Canonical schema and starter template
+
+- JSON Schema: `schemas/project-evidence-pack-v1.schema.json` (Draft 2020-12).
+- Starter manifest: `templates/project-evidence-pack-v1.template.json`.
+- The starter is a valid empty DRAFT project manifest and passes the runtime evidence-pack validator.
+- Replace sample project identifiers and add version-bound artefacts/evidence as the project progresses.
+- The JSON Schema describes the manifest structure; the Python runtime validator remains authoritative for cross-record checks such as project/version binding, reference resolution, provenance acyclicity and complete source-to-final linkage.
+- Do not place generation authorisation in the manifest. Existing gate records are supplied as records; the separate execution-authorisation input remains outside the evidence pack.
