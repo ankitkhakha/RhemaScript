@@ -1,0 +1,47 @@
+# YouTube provider gateway adapter — architecture decision record
+
+**Status:** Proposed adapter contract; provider activation blocked pending an approved interface mapping.
+**Scope:** RhemaScript YouTube Data API v3 and YouTube Analytics API.
+**Cost boundary:** Python standard library only. No paid service, dependency, hosted proxy, or credential relay.
+
+## Existing authority and interface facts
+
+- The canonical registry defines the interface identifiers IF-01 through IF-18, but does not assign provider meanings to those identifiers.
+- The local `InterfaceGateway` is a synthetic runtime adapter and must remain local-only.
+- `ExternalIntegrationGateway` is the provider-neutral external boundary. It is disabled by default, requires an explicit provider binding, HTTPS host allowlisting, disclosure checks, consequential-operation authority, credential injection, an audit sink, and idempotency.
+- Its current `invoke` contract is JSON POST only. It cannot represent YouTube's OAuth form POST, authenticated GET requests, resumable session POST, binary PUT chunks, response headers, or HTTP 308 upload acknowledgements.
+- The YouTube client currently has its own stdlib transport. Therefore the gateway does not yet control or audit YouTube network traffic.
+
+## Decision
+
+Do not assign YouTube to an arbitrary IF identifier. Do not route a dummy JSON request through the gateway and call that integration. Do not change the local runtime interface adapters or their synthetic contract.
+
+The YouTube transport adapter must be configured with an explicitly approved interface identifier. It must reject missing, unknown, unbound, or disabled interface configuration before making any network request. No interface ID is selected by this proposal.
+
+## Required adapter contract
+
+The adapter may be implemented only as an extension of the existing external gateway boundary; it must not create a second gateway or bypass the existing controls.
+
+1. **Method and operation allowlist:** Every operation must declare its HTTP method, permitted host, permitted path family, content type, and whether it is consequential. Arbitrary URLs and caller-selected methods are rejected.
+2. **Google endpoint allowlist:** OAuth token endpoint, YouTube Data API, YouTube Analytics API, and Google-issued resumable session endpoints must be individually constrained to HTTPS and exact approved hosts. Reject userinfo, nonstandard ports, fragments, and redirects. Do not forward credentials across redirects.
+3. **Secret handling:** OAuth client secret, refresh token, access token, resumable session URL, and video bytes must never enter audit records, exception text, source control, CI output, or idempotency canonical JSON. Credentials are resolved locally at request time. The OAuth refresh-token form body must be treated as secret-bearing opaque bytes.
+4. **Audit:** Emit REQUESTED, COMPLETED, and FAILED records for each network step, with interface ID, provider, project/request correlation, operation name, method, host, status, byte counts, and a non-reversible request fingerprint. Do not log query values, authorization headers, session URL, payload, or body bytes.
+5. **Binary/resumable transport:** Support bounded request/response sizes and explicit response headers. HTTP 308 is a resumable-upload acknowledgement, not a redirect. Validate acknowledged byte ranges and reject regressions, impossible offsets, or no-progress loops.
+6. **Authority:** Read-only channel/analytics calls require approved scope and disclosure. Upload, thumbnail changes, and publication require the existing validated Evidence Pack, all six ordered approved gates, matching final-film evidence, human final acceptance, and separate publishing authorization. Scheduled/public release remains a distinct publishing decision.
+7. **Idempotency:** Read operations may use deterministic request fingerprints. Upload-session creation and binary chunks require protocol-aware idempotency and acknowledgement handling; do not replay a chunk or create a new session blindly after an ambiguous network failure.
+8. **Fail-closed defaults:** No provider binding, no audit sink, no approved interface mapping, no explicit enablement, no valid credentials, or no authority means no network request.
+
+## Required tests before activation
+
+- Unknown or missing interface mapping fails before transport.
+- Gateway disabled and missing audit sink fail before transport.
+- Every supported HTTP method and operation is allowlisted.
+- Host, port, path, userinfo, fragment, and redirect attacks are rejected.
+- Audit records contain no credentials, query values, session URL, payload, or media bytes.
+- OAuth refresh, GET, resumable session creation, PUT chunks, 308 acknowledgements, final status verification, and Analytics GET all pass through the same configured gateway boundary.
+- Failed and ambiguous chunk requests do not silently restart or skip bytes.
+- Existing generic gateway and local runtime contract tests remain unchanged and pass.
+
+## Approval and activation boundary
+
+This record does not amend the canonical registry, assign IF-01..IF-18, enable external integration, authorize OAuth, connect a channel, upload media, or publish content. The interface mapping must be explicitly approved through the existing RhemaScript governance before a provider binding can be configured. The YouTube integration remains a dormant prototype until the adapter and its tests are complete and the owner completes local OAuth setup.
