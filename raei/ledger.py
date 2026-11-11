@@ -29,7 +29,7 @@ def empty_ledger():
 def event_hash(event):
     return digest({k: v for k, v in event.items() if k != "hash"})
 
-def verify_chain(events):
+def verify_chain(events, units):
     previous = "GENESIS"
     for index, event in enumerate(events):
         if event.get("sequence") != index + 1:
@@ -39,13 +39,15 @@ def verify_chain(events):
         if event.get("hash") != event_hash(event):
             raise LedgerError(f"event hash mismatch at position {index + 1}")
         previous = event["hash"]
+    if events and events[-1].get("state_hash") != digest(units):
+        raise LedgerError("current ledger state does not match the final recorded event")
 
 def validate(data):
     if data.get("schema_version") != SCHEMA:
         raise LedgerError("unsupported schema version")
     if not isinstance(data.get("units"), dict) or not isinstance(data.get("events"), list):
         raise LedgerError("units must be an object and events must be an array")
-    verify_chain(data["events"])
+    verify_chain(data["events"], data["units"])
     for unit_id, unit in data["units"].items():
         if not unit_id or unit.get("id") != unit_id:
             raise LedgerError(f"invalid unit identity: {unit_id!r}")
@@ -66,7 +68,8 @@ def append_event(data, action, unit_id, details):
     events = data["events"]
     event = {"sequence": len(events) + 1, "timestamp": now(), "action": action,
              "unit_id": unit_id, "details": details,
-             "previous_hash": events[-1]["hash"] if events else "GENESIS"}
+             "previous_hash": events[-1]["hash"] if events else "GENESIS",
+             "state_hash": digest(data["units"])}
     event["hash"] = event_hash(event)
     events.append(event)
 
