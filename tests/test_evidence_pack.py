@@ -1,0 +1,45 @@
+import unittest
+from rhemascript.evidence import EvidencePackError, run_evidence_pack, validate_evidence_pack
+
+PROJECT = {"record_id":"RS-EVIDENCE-001","record_type":"SYNTHETIC_PROJECT","schema_version":"1.0","project_id":"RS-PROJECT-001","status":"DRAFT","classification":"OPERATIONAL","version":"1.0"}
+
+def pack():
+    return {"manifest_id":"RS-MANIFEST-001","schema_version":"1.0","project_record":dict(PROJECT),
+      "artifacts":[{"artifact_id":"SRC-1","project_id":PROJECT["project_id"],"project_version":"1.0","artifact_type":"BIBLICAL_SOURCE","version":"1","status":"VERIFIED","evidence_refs":["bible:ref"]}],
+      "evidence_records":[{"evidence_id":"EV-1","capability_id":"CAP-01","payload":{"sources":[{"source_ref":"bible:ref"}]},"evidence_refs":["bible:ref"],"artifact_refs":["SRC-1"]}],
+      "source_to_final_links":[]}
+
+class EvidencePackTests(unittest.TestCase):
+    def test_valid_pack_compiles_capability_evidence(self):
+        result=validate_evidence_pack(pack())
+        self.assertEqual(result.capability_evidence["CAP-01"]["sources"],[{"source_ref":"bible:ref"}])
+        self.assertIn("artifact:SRC-1",result.capability_evidence["CAP-01"]["evidence_refs"])
+    def test_duplicate_artifact_id_rejected(self):
+        p=pack(); p["artifacts"].append(dict(p["artifacts"][0]))
+        with self.assertRaisesRegex(EvidencePackError,"duplicate artifact_id"): validate_evidence_pack(p)
+    def test_project_version_mismatch_rejected(self):
+        p=pack(); p["artifacts"][0]["project_version"]="2.0"
+        with self.assertRaisesRegex(EvidencePackError,"not bound"): validate_evidence_pack(p)
+    def test_unknown_artifact_reference_rejected(self):
+        p=pack(); p["evidence_records"][0]["artifact_refs"]=["NOPE"]
+        with self.assertRaisesRegex(EvidencePackError,"unknown artifact"): validate_evidence_pack(p)
+    def test_provenance_cycle_rejected(self):
+        p=pack(); p["artifacts"].append({"artifact_id":"A","project_id":PROJECT["project_id"],"project_version":"1.0","artifact_type":"ASSET","version":"1","status":"DRAFT"})
+        p["source_to_final_links"]=[{"from_artifact_id":"SRC-1","to_artifact_id":"A","relationship":"derived_from"},{"from_artifact_id":"A","to_artifact_id":"SRC-1","relationship":"derived_from"}]
+        with self.assertRaisesRegex(EvidencePackError,"cycle"): validate_evidence_pack(p)
+    def test_final_film_requires_complete_connected_chain(self):
+        p=pack(); previous="SRC-1"
+        for i,kind in enumerate(("APPROVED_SCRIPT","APPROVED_NARRATION","STORYBOARD","AUDIO_VISUAL_PLAN","PROMPT","ASSET","EDITED_FILM"),1):
+            ident=f"A-{i}"; p["artifacts"].append({"artifact_id":ident,"project_id":PROJECT["project_id"],"project_version":"1.0","artifact_type":kind,"version":"1","status":"APPROVED" if kind.startswith("APPROVED_") else "VERIFIED"})
+            p["source_to_final_links"].append({"from_artifact_id":previous,"to_artifact_id":ident,"relationship":"derived_from"}); previous=ident
+        validate_evidence_pack(p); p["source_to_final_links"].pop()
+        with self.assertRaisesRegex(EvidencePackError,"disconnected"): validate_evidence_pack(p)
+    def test_script_approval_not_inferred(self):
+        p=pack(); p["artifacts"].append({"artifact_id":"S","project_id":PROJECT["project_id"],"project_version":"1.0","artifact_type":"APPROVED_SCRIPT","version":"1","status":"DRAFT"})
+        with self.assertRaisesRegex(EvidencePackError,"approval status"): validate_evidence_pack(p)
+    def test_run_does_not_perform_actions(self):
+        _, result=run_evidence_pack(pack(),actor_role="TEST_HARNESS")
+        self.assertEqual(result.run_id,"RS-MANIFEST-001:1.0")
+        self.assertFalse(result.generation_action_performed); self.assertFalse(result.external_action_performed); self.assertFalse(result.publishing_performed)
+
+if __name__=="__main__": unittest.main()
