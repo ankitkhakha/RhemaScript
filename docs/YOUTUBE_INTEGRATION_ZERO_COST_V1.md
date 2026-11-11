@@ -30,7 +30,7 @@ Environment variables:
 - `RHEMASCRIPT_YOUTUBE_CLIENT_SECRET`
 - `RHEMASCRIPT_YOUTUBE_REFRESH_TOKEN`
 
-The refresh token must be obtained through Google's OAuth flow by the channel owner. This repository does not automate consent or capture account credentials.
+The refresh token must be obtained through Google's OAuth flow by the channel owner. This repository does not automate consent or capture account credentials. Access-token HTTP 401 responses trigger one refresh-and-retry attempt; other failures are not blindly retried. API responses are bounded to 8 MB, with oversized responses rejected.
 
 ## Minimal use
 
