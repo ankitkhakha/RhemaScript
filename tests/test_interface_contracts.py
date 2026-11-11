@@ -73,5 +73,20 @@ class InterfaceContractTests(unittest.TestCase):
         self.assertEqual(first.idempotency_key, second.idempotency_key)
 
 
+    def test_whitespace_and_case_do_not_bypass_generation_authority(self):
+        gateway = InterfaceGateway()
+        with self.assertRaises(InterfaceError):
+            gateway.invoke("IF-01", request(operation="  gEnErAtE  "))
+
+    def test_explicit_generation_authority_is_required_even_with_whitespace(self):
+        gateway = InterfaceGateway()
+        with self.assertRaises(InterfaceError):
+            gateway.invoke(
+                "IF-01",
+                request(operation=" GENERATE "),
+                authority={"generation_authorisation": False},
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
