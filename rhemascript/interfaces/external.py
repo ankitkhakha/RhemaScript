@@ -8,7 +8,7 @@ from hashlib import sha256
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import threading
 
@@ -45,12 +45,19 @@ class Transport(Protocol):
     def send(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, bytes]: ...
 
 
+class _NoRedirect(HTTPRedirectHandler):
+    """Reject redirects so provider credentials never follow an untrusted hop."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class UrllibTransport:
-    """Small stdlib HTTPS transport. No redirects are followed by this adapter."""
+    """Small stdlib HTTPS transport. Redirects are rejected, never followed."""
     def send(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, bytes]:
         req = Request(url, data=body, headers=headers, method="POST")
         try:
-            with urlopen(req, timeout=timeout) as response:
+            opener = build_opener(_NoRedirect())
+            with opener.open(req, timeout=timeout) as response:
                 return response.status, response.read(2_000_001)
         except HTTPError as exc:
             return exc.code, exc.read(2_000_001)
