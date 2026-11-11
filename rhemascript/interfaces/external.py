@@ -233,9 +233,12 @@ class ExternalIntegrationGateway:
                      task_need=task_need, approved_scope=approved_scope)
         except DisclosureError:
             raise ExternalIntegrationError("disclosure denied") from None
-        if operation.upper() in self.CONSEQUENT_OPERATIONS:
+        authority_operation = "PUBLISH" if operation.upper() in {
+            "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
+        } else operation.upper()
+        if authority_operation in self.CONSEQUENT_OPERATIONS or authority_operation == "PUBLISH":
             try:
-                authorise_action(operation.upper(), authority or {})
+                authorise_action(authority_operation, authority or {})
             except AuthorityError:
                 raise ExternalIntegrationError("consequential operation lacks explicit authority") from None
 
