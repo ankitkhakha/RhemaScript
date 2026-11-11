@@ -40,3 +40,22 @@ python -m unittest tests.test_integrity -v
 ```
 
 A valid report means the supplied records are structurally complete and internally linked. It does not prove that an artefact is biblically accurate, visually correct, approved by the rightful authority or safe to publish; those require inspection under the existing RhemaScript controls.
+
+
+## RhemaScript project record lifecycle
+
+`raei.project_record` creates a metadata-only project record and appends immutable-by-copy stage revision events. Stage changes invalidate the approval gate for that stage and every downstream gate, requiring fresh approval evidence. Each downstream stage must name its immediate predecessor artefact. The lifecycle helper does not approve gates, authorize or perform generation, or publish.
+
+Example:
+
+```python
+from raei.project_record import create_project_record, revise_stage
+
+project = create_project_record("RS-LOCAL-PRACTICAL-001")
+project = revise_stage(
+    project, "biblical_source", "bible-source-v1",
+    "Matthew 14:22-33", "Initial contextual source record",
+)
+```
+
+The example is a local learning record, not a RhemaScript production project or proof of biblical verification.
