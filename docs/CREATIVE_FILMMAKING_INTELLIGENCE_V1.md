@@ -1,6 +1,6 @@
 # RhemaScript Creative Filmmaking Intelligence V1.0
 **Change date:** 2026-11-11  
-**Status:** Proposed operating specification; submitted for repository review  
+**Status:** Adopted operating specification; runtime capability enhancements remain pending implementation  
 **Applies to:** RhemaScript universal creative-production workflow, with RS-PWW-001 as the first application  
 **Authority:** Existing RhemaScript governance, source-to-final integrity chain, six project approval gates, and separate approval/execution/final-acceptance/publishing authorities remain unchanged.
 
@@ -221,7 +221,7 @@ Record failures with category, reproduction evidence, affected asset/prompt/mode
 
 The existing repository currently has 15 capability contracts and deterministic, evidence-bound specialist assessments. The current CAP-09 handler validates supplied tool-evidence records but does not query Google, inspect a user's Flow interface, or independently verify model-operation compatibility. CAP-07 currently assesses supplied references/observations; it does not itself perform image/video analysis. CAP-05 and CAP-08 perform bounded structural checks; they do not autonomously create a film.
 
-This document establishes the operating specification. The following code work remains separate and must be implemented and tested before claiming executable intelligence:
+This document is adopted as the operating specification. The following code work remains separate and must be implemented and tested before claiming executable intelligence:
 1. Add a versioned provider/model/operation capability registry with source URLs, checked-at timestamps, expiry/reverification policy and plan/region/interface conditions.
 2. Extend CAP-09 to preflight exact model-operation-duration-aspect-ratio-reference compatibility and fail closed on stale or conflicting evidence.
 3. Extend CAP-05/CAP-08 evidence contracts for narration-to-shot mapping, A-roll/B-roll purpose, audio/caption timing, edit continuity and generation-unit feasibility.
