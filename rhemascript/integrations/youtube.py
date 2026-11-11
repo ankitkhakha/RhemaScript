@@ -300,12 +300,15 @@ class YouTubeClient:
         final-film evidence matching the last gate, final human acceptance, and
         separate publishing authorisation. The safe default is private.
         """
-        _authorise_project_publish(
+        project_id, project_version = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
+        self._gateway_project_id = project_id
+        self._gateway_source_version = project_version
+        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
         path = Path(file_path)
         if not path.is_file() or path.stat().st_size == 0:
             raise YouTubeIntegrationError("video file is missing or empty")
@@ -404,12 +407,15 @@ class YouTubeClient:
                       final_film_evidence_ref: str,
                       human_director_acceptance: bool,
                       publishing_authorisation: bool = False) -> dict[str, Any]:
-        _authorise_project_publish(
+        project_id, project_version = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
+        self._gateway_project_id = project_id
+        self._gateway_source_version = project_version
+        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
         path = Path(image_path)
         if not path.is_file():
             raise YouTubeIntegrationError("thumbnail file does not exist")
