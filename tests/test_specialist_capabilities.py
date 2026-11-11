@@ -1,7 +1,7 @@
 import unittest
 from rhemascript.capabilities.specialists import assess_specialist, SpecialistInputError, SPECIALISTS
 from rhemascript.capabilities import CapabilityEngine, CapabilityError
-from tests.test_runtime_integration import RECORD
+RECORD={"record_id":"RSN-SYN-001","record_type":"SYNTHETIC_PROJECT","schema_version":"1.0","project_id":"RSN-PRJ-SYN-001","status":"DRAFT","classification":"OPERATIONAL","version":"1.0"}
 
 class SpecialistCapabilityTests(unittest.TestCase):
     def test_all_fifteen_have_distinct_specialist_handlers(self):
