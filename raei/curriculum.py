@@ -96,7 +96,7 @@ def build_registry():
     for domain_units in by_domain.values():
         for index, item in enumerate(domain_units):
             item["prerequisites"] = [domain_units[index - 1]["id"]] if index else []
-    final_domain_units = [items[-1]["id"] for items in by_domain.values()]
+    final_domain_units = [items[-1]["id"] for domain, items in by_domain.items() if domain != "integrated"]
     units[-1]["prerequisites"] = final_domain_units
 
     ids=[u["id"] for u in units]
