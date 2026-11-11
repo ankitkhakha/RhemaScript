@@ -20,6 +20,21 @@ class CurriculumRegistryTests(unittest.TestCase):
         self.assertTrue(all(u["status"] == "not_started" for u in units))
         self.assertTrue(all(u["evidence_required"] for u in units))
 
+    def test_prerequisites_enforce_order_within_each_domain(self):
+        units = build_registry()
+        for domain in {u["domain"] for u in units}:
+            ordered = [u for u in units if u["domain"] == domain]
+            self.assertEqual([], ordered[0]["prerequisites"])
+            for previous, current in zip(ordered, ordered[1:]):
+                self.assertEqual([previous["id"]], current["prerequisites"])
+
+    def test_integrated_capstone_requires_all_domain_final_units(self):
+        units = build_registry()
+        final_ids = [u["id"] for domain in ("engineering", "whole_bible", "bible_only_ethics", "rhemascript")
+                     for u in units if u["domain"] == domain][-4:]
+        capstone = next(u for u in units if u["id"] == "INTEGRATED-CAPSTONE")
+        self.assertEqual(set(final_ids), set(capstone["prerequisites"]))
+
     def test_summary_discloses_scope_and_status(self):
         summary = registry_summary()
         self.assertEqual(66, summary["bible_book_count"])
