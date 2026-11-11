@@ -240,6 +240,42 @@ class EvidenceStore:
             previous = row["event_hash"]
         return True
 
+    def backup_to(self, destination: str | Path) -> None:
+        """Create a consistent SQLite backup using SQLite's online backup API."""
+        destination_path = Path(destination)
+        if destination_path.resolve() == Path(self.path).resolve():
+            raise StoreError("backup destination must differ from the live database")
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        source = self._connect()
+        target = sqlite3.connect(str(destination_path), timeout=10)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+
+    @staticmethod
+    def restore_from(backup: str | Path, destination: str | Path) -> "EvidenceStore":
+        """Restore a backup to a new path; refuse to overwrite an existing database."""
+        backup_path, destination_path = Path(backup), Path(destination)
+        if not backup_path.is_file():
+            raise StoreError(f"backup file does not exist: {backup_path}")
+        if destination_path.exists():
+            raise StoreError("restore destination already exists; refusing to overwrite")
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        source = sqlite3.connect(str(backup_path), timeout=10)
+        target = sqlite3.connect(str(destination_path), timeout=10)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+        restored = EvidenceStore(destination_path)
+        if not restored.verify_event_chain():
+            destination_path.unlink(missing_ok=True)
+            raise StoreError("restored database failed audit-chain verification")
+        return restored
+
     def event_count(self) -> int:
         with self._connect() as db:
             return int(db.execute("SELECT COUNT(*) FROM events").fetchone()[0])
