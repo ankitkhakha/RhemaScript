@@ -291,7 +291,9 @@ class YouTubeClient:
         if status not in (200, 201) or not location:
             raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
         parsed = urlparse(location)
-        if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}\n                or parsed.username or parsed.password or parsed.port not in (None, 443)\n                or parsed.fragment):
+        if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
+                or parsed.username or parsed.password or parsed.port not in (None, 443)
+                or parsed.fragment):
             raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
 
         total = path.stat().st_size
