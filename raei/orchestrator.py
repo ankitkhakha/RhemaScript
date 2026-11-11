@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     assess.add_argument("unit_id")
     assess.add_argument("criterion_scores", help="JSON object mapping every rubric criterion to a score from 0 to 4")
     assess.add_argument("evidence_ref")
-    assess.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="verified")
+    assess.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="reported_unverified")
     assess.add_argument("--note", default="")
     correction = commands.add_parser("correct")
     correction.add_argument("unit_id")
