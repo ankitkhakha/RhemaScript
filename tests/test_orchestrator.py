@@ -24,7 +24,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(["CS-FOUND"], data["units"]["PROG-CORE"]["prerequisites"])
         self.assertEqual(["BIBLE-01"], data["units"]["BIBLE-02"]["prerequisites"])
         self.assertEqual(["ETH-TRUTH"], data["units"]["ETH-STEWARD"]["prerequisites"])
-        self.assertEqual(["QC-COMPLIANCE"], data["units"]["RS-CIE"]["prerequisites"])
+        self.assertEqual(["IF-18"], data["units"]["RS-CIE"]["prerequisites"])
         self.assertEqual(4, len(data["units"]["INTEGRATED-CAPSTONE"]["prerequisites"]))
         self.assertNotIn("INTEGRATED-CAPSTONE", data["units"]["INTEGRATED-CAPSTONE"]["prerequisites"])
 
