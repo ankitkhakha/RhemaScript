@@ -1,8 +1,11 @@
 import sys
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from raei.ledger import empty_ledger, add_unit, record_assessment, validate, LedgerError, append_event
+from raei.ledger import empty_ledger, add_unit, record_assessment, validate, LedgerError, append_event, main, load
 
 class LedgerTests(unittest.TestCase):
     def setUp(self):
@@ -58,6 +61,17 @@ class LedgerTests(unittest.TestCase):
         record_assessment(self.data, "A", 3, "test-output", "verified")
         with self.assertRaises(LedgerError):
             record_assessment(self.data, "A", 4, "new-output", "verified")
+    def test_cli_assessment_defaults_to_unverified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "ledger.json")
+            with patch("sys.stdout"):
+                self.assertEqual(main(["--ledger", path, "init"]), 0)
+                self.assertEqual(main(["--ledger", path, "add-unit", "A", "Foundations"]), 0)
+                self.assertEqual(main(["--ledger", path, "assess", "A", "4", "claimed-evidence"]), 0)
+            data = load(path)
+            self.assertEqual(data["units"]["A"]["evidence_status"], "reported_unverified")
+            self.assertEqual(data["units"]["A"]["status"], "needs_correction")
+
     def test_cycle_and_self_dependency_rejected(self):
         with self.assertRaises(LedgerError):
             add_unit(self.data, "A", "Bad", ["A"])
