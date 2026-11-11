@@ -18,6 +18,8 @@ import os
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
+from rhemascript.interfaces.external import ExternalIntegrationGateway, ProviderBinding
+
 
 YOUTUBE_INTERFACE_ID = "IF-18"
 
@@ -127,13 +129,42 @@ class YouTubeConfig:
             raise YouTubeIntegrationError("chunk_size must be a multiple of 256 KiB")
 
 
+def youtube_provider_binding() -> ProviderBinding:
+    """Explicit Google endpoint/method contract for RhemaScript IF-18."""
+    return ProviderBinding(
+        interface_id=YOUTUBE_INTERFACE_ID,
+        provider_name="youtube",
+        endpoint="https://www.googleapis.com",
+        allowed_hosts=("oauth2.googleapis.com", "www.googleapis.com",
+                       "youtube.googleapis.com", "youtubeanalytics.googleapis.com"),
+        operations={
+            "OAUTH_TOKEN": {"method": "POST", "hosts": ("oauth2.googleapis.com",), "path_prefix": "/token"},
+            "CHANNEL_READ": {"method": "GET", "hosts": ("www.googleapis.com",), "path_prefix": "/youtube/v3/channels"},
+            "VIDEO_READ": {"method": "GET", "hosts": ("www.googleapis.com",), "path_prefix": "/youtube/v3/videos"},
+            "ANALYTICS_READ": {"method": "GET", "hosts": ("youtubeanalytics.googleapis.com",), "path_prefix": "/v2/reports"},
+            "UPLOAD_SESSION": {"method": "POST", "hosts": ("www.googleapis.com",), "path_prefix": "/upload/youtube/v3/videos"},
+            "UPLOAD_CHUNK": {"method": "PUT", "hosts": ("www.googleapis.com", "youtube.googleapis.com"), "path_prefix": "/upload/youtube/v3/videos"},
+            "THUMBNAIL_WRITE": {"method": "POST", "hosts": ("www.googleapis.com",), "path_prefix": "/upload/youtube/v3/thumbnails/set"},
+        },
+    )
+
+
 class YouTubeClient:
     """Small standard-library client; no paid SDK, server, or third-party package."""
 
-    def __init__(self, config: YouTubeConfig, *, transport=None):
+    def __init__(self, config: YouTubeConfig, *, transport=None,
+                 gateway: ExternalIntegrationGateway | None = None,
+                 project_id: str = "YOUTUBE-ACCOUNT",
+                 source_version: str = "1.0"):
         config.validate()
+        if gateway is not None and transport is not None:
+            raise YouTubeIntegrationError("choose gateway or test transport, not both")
         self.config = config
         self._transport = transport
+        self._gateway = gateway
+        self._gateway_project_id = project_id
+        self._gateway_source_version = source_version
+        self._gateway_authority: dict[str, bool] = {}
         self._access_token: str | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
@@ -146,14 +177,34 @@ class YouTubeClient:
             raise YouTubeIntegrationError("request URL is outside the official HTTPS Google host allowlist")
         req = Request(url, data=body, headers=headers or {}, method=method)
         try:
-            if self._transport:
+            if self._gateway is not None:
+                path = parsed.path
+                if parsed.hostname == "oauth2.googleapis.com":
+                    operation = "OAUTH_TOKEN"
+                elif parsed.hostname == "youtubeanalytics.googleapis.com":
+                    operation = "ANALYTICS_READ"
+                elif path.startswith("/upload/youtube/v3/thumbnails/set"):
+                    operation = "THUMBNAIL_WRITE"
+                elif path.startswith("/upload/youtube/v3/videos") and method.upper() == "PUT":
+                    operation = "UPLOAD_CHUNK"
+                elif path.startswith("/upload/youtube/v3/videos") and method.upper() == "POST":
+                    operation = "UPLOAD_SESSION"
+                elif path.startswith("/youtube/v3/channels"):
+                    operation = "CHANNEL_READ"
+                elif path.startswith("/youtube/v3/videos"):
+                    operation = "VIDEO_READ"
+                else:
+                    raise YouTubeIntegrationError("request has no approved IF-18 operation")
+                status, raw, response_headers = self._gateway.request(
+                    YOUTUBE_INTERFACE_ID, operation, url, method=method,
+                    headers=headers or {}, body=body, request_id=str(uuid.uuid4()),
+                    project_id=self._gateway_project_id, source_version=self._gateway_source_version,
+                    authority=self._gateway_authority,
+                )
+            elif self._transport:
                 status, raw, response_headers = self._transport(req, self.config.timeout_seconds)
             else:
-                opener = build_opener(_NoRedirect())
-                with opener.open(req, timeout=self.config.timeout_seconds) as response:
-                    status, raw, response_headers = (
-                        response.status, response.read(8_000_001), dict(response.headers.items())
-                    )
+                raise YouTubeIntegrationError("live YouTube traffic requires an explicitly configured IF-18 gateway")
             if not isinstance(status, int) or not isinstance(raw, bytes) or not isinstance(response_headers, dict):
                 raise YouTubeIntegrationError("transport returned an invalid response contract")
             if len(raw) > 8_000_000:
