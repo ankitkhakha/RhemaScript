@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   test:
-    name: Contract and synthetic integration tests
+    name: Full contract and synthetic integration CI
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -26,22 +26,5 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install test dependencies
-        run: python -m pip install --upgrade pip pytest
-      - name: Validate bootstrap structure
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          required = [Path("README.md"), Path(".github/workflows/ci.yml")]
-          missing = [str(p) for p in required if not p.exists()]
-          if missing:
-              raise SystemExit(f"Missing required CI files: {missing}")
-          print("RhemaScript CI bootstrap structure: PASS")
-          PY
-      - name: Run tests
-        run: |
-          if [ -d tests ]; then
-            python -m pytest -q
-          else
-            echo "No tests directory yet; bootstrap structure validation completed."
-          fi
+      - name: Run full local CI suite
+        run: python ci/run_ci.py
