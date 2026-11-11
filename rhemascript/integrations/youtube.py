@@ -220,11 +220,21 @@ class YouTubeClient:
                     acknowledged = (chunk_response_headers.get("Range") or chunk_response_headers.get("range"))
                     if acknowledged and "-" in acknowledged:
                         try:
-                            offset = int(acknowledged.rsplit("-", 1)[1]) + 1
+                            acknowledged_end = int(acknowledged.rsplit("-", 1)[1])
                         except ValueError:
                             raise YouTubeIntegrationError("upload server returned an invalid byte range") from None
+                        # The server may acknowledge only part of the submitted chunk.
+                        # Never skip unacknowledged bytes or accept an impossible offset.
+                        if acknowledged_end < offset or acknowledged_end > end:
+                            raise YouTubeIntegrationError("upload server acknowledged an impossible byte range")
+                        next_offset = acknowledged_end + 1
                     else:
-                        offset = end + 1
+                        # A 308 without Range means no byte range was acknowledged.
+                        next_offset = offset
+                    if next_offset <= offset:
+                        raise YouTubeIntegrationError("upload made no forward progress; refusing an upload loop")
+                    offset = next_offset
+                    video.seek(offset)
                 else:
                     raise YouTubeIntegrationError(f"resumable upload returned HTTP {status}")
         try:
