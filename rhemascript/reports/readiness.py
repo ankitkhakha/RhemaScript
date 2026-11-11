@@ -73,3 +73,24 @@ def build_readiness_report(result: OrchestrationResult) -> dict[str, Any]:
             else "Not ready; resolve listed evidence, dependency and governance gaps."
         ),
     }
+
+
+def run_project_assessment(
+    pack: dict[str, Any],
+    *,
+    actor_role: str,
+    generation_authorisation: bool = False,
+    run_id: str | None = None,
+    orchestrator: Any = None,
+) -> tuple[Any, OrchestrationResult, dict[str, Any]]:
+    """Validate a project pack, assess it, and return its read-only readiness report."""
+    from rhemascript.evidence import run_evidence_pack
+
+    validated, result = run_evidence_pack(
+        pack,
+        actor_role=actor_role,
+        generation_authorisation=generation_authorisation,
+        run_id=run_id,
+        orchestrator=orchestrator,
+    )
+    return validated, result, build_readiness_report(result)
