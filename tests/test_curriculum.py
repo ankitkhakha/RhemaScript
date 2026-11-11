@@ -24,16 +24,19 @@ class CurriculumRegistryTests(unittest.TestCase):
         units = build_registry()
         for domain in {u["domain"] for u in units}:
             ordered = [u for u in units if u["domain"] == domain]
+            if domain == "integrated":
+                continue
             self.assertEqual([], ordered[0]["prerequisites"])
             for previous, current in zip(ordered, ordered[1:]):
                 self.assertEqual([previous["id"]], current["prerequisites"])
 
     def test_integrated_capstone_requires_all_domain_final_units(self):
         units = build_registry()
-        final_ids = [u["id"] for domain in ("engineering", "whole_bible", "bible_only_ethics", "rhemascript")
-                     for u in units if u["domain"] == domain][-4:]
+        final_ids = [next(u["id"] for u in reversed(units) if u["domain"] == domain)
+                     for domain in ("engineering", "whole_bible", "bible_only_ethics", "rhemascript")]
         capstone = next(u for u in units if u["id"] == "INTEGRATED-CAPSTONE")
         self.assertEqual(set(final_ids), set(capstone["prerequisites"]))
+        self.assertNotIn("INTEGRATED-CAPSTONE", capstone["prerequisites"])
 
     def test_summary_discloses_scope_and_status(self):
         summary = registry_summary()
