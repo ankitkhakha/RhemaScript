@@ -6,12 +6,46 @@ from unittest.mock import patch
 
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
+    youtube_provider_binding,
 )
 
 
 class YouTubeIntegrationTests(unittest.TestCase):
     def test_youtube_uses_dedicated_external_interface_18(self):
         self.assertEqual(YOUTUBE_INTERFACE_ID, "IF-18")
+
+    def test_provider_binding_declares_if18_google_protocol_allowlist(self):
+        binding = youtube_provider_binding()
+        self.assertEqual(binding.interface_id, "IF-18")
+        self.assertEqual(binding.provider_name, "youtube")
+        self.assertEqual(binding.operations["OAUTH_TOKEN"]["method"], "POST")
+        self.assertEqual(binding.operations["UPLOAD_CHUNK"]["method"], "PUT")
+        self.assertIn("youtubeanalytics.googleapis.com",
+                      binding.operations["ANALYTICS_READ"]["hosts"])
+
+    def test_client_routes_oauth_and_channel_reads_through_gateway(self):
+        class Gateway:
+            def __init__(self):
+                self.calls = []
+            def request(self, interface_id, operation, url, **kwargs):
+                self.calls.append((interface_id, operation, url, kwargs))
+                if operation == "OAUTH_TOKEN":
+                    return 200, b'{"access_token":"gateway-token"}', {}
+                if operation == "CHANNEL_READ":
+                    if kwargs["headers"].get("Authorization") != "Bearer gateway-token":
+                        raise AssertionError("missing gateway access token")
+                    return 200, b'{"items":[{"id":"channel-gateway"}]}', {}
+                raise AssertionError("unexpected gateway operation")
+
+        gateway = Gateway()
+        client = YouTubeClient(self.config(), gateway=gateway,
+                               project_id="RS-GATEWAY-TEST", source_version="2.0")
+        result = client.channel()
+        self.assertEqual(result["id"], "channel-gateway")
+        self.assertEqual([call[0:2] for call in gateway.calls],
+                         [("IF-18", "OAUTH_TOKEN"), ("IF-18", "CHANNEL_READ")])
+        self.assertEqual(gateway.calls[0][3]["project_id"], "RS-GATEWAY-TEST")
+        self.assertEqual(gateway.calls[0][3]["source_version"], "2.0")
 
     def config(self):
         return YouTubeConfig("client-id", "client-secret", "refresh-token")
