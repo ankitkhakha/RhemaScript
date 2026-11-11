@@ -16,6 +16,7 @@ from .ledger import (
     LedgerError, append_event, empty_ledger, load, report, save,
     validate,
 )
+from .learning import record_practice, record_rubric_assessment
 
 DOMAIN_ORDER = (
     "engineering",
@@ -117,6 +118,18 @@ def main(argv: list[str] | None = None) -> int:
     show = commands.add_parser("show")
     show.add_argument("unit_id")
     commands.add_parser("status")
+    practice = commands.add_parser("practice")
+    practice.add_argument("unit_id")
+    practice.add_argument("artifact_ref")
+    practice.add_argument("method")
+    practice.add_argument("result")
+    practice.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="verified")
+    assess = commands.add_parser("assess")
+    assess.add_argument("unit_id")
+    assess.add_argument("criterion_scores", help="JSON object mapping every rubric criterion to a score from 0 to 4")
+    assess.add_argument("evidence_ref")
+    assess.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="verified")
+    assess.add_argument("--note", default="")
     args = parser.parse_args(argv)
 
     try:
@@ -131,6 +144,26 @@ def main(argv: list[str] | None = None) -> int:
                 if args.unit_id not in data["units"]:
                     raise LedgerError(f"unknown unit: {args.unit_id}")
                 result = execution_brief(data["units"][args.unit_id])
+            elif args.command == "practice":
+                record_practice(data, args.unit_id, args.artifact_ref, args.method, args.result,
+                                status=args.evidence_status)
+                save(args.ledger, data)
+                result = {"recorded": "practice", "unit_id": args.unit_id,
+                          "status": data["units"][args.unit_id]["status"]}
+            elif args.command == "assess":
+                try:
+                    scores = json.loads(args.criterion_scores)
+                except json.JSONDecodeError as exc:
+                    raise LedgerError(f"criterion_scores must be valid JSON: {exc}") from exc
+                if not isinstance(scores, dict):
+                    raise LedgerError("criterion_scores must be a JSON object")
+                record_rubric_assessment(data, args.unit_id, scores, args.evidence_ref,
+                                         args.evidence_status, args.note)
+                save(args.ledger, data)
+                result = {"recorded": "assessment", "unit_id": args.unit_id,
+                          "status": data["units"][args.unit_id]["status"],
+                          "score": data["units"][args.unit_id]["score"],
+                          "criterion_scores": data["units"][args.unit_id]["criterion_scores"]}
             else:
                 result = report(data)
         print(json.dumps(result, ensure_ascii=False, indent=2))
