@@ -96,7 +96,9 @@ def validate(data: Any) -> list[str]:
         for case_id in ETHICS_CASES:
             item = records.get(case_id, {})
             if (item.get("status") != "passed" or not _score_ok(item.get("score"))
-                or not isinstance(item.get("evidence_ref"), str) or not item.get("evidence_ref", "").strip()
+                or not _verified_evidence({"status": item.get("evidence_status"),
+                                           "evidence_ref": item.get("evidence_ref"),
+                                           "score": item.get("score")})
                 or item.get("biblical_context_reviewed") is not True
                 or item.get("explicit_vs_inference_recorded") is not True
                 or item.get("uncertainty_recorded") is not True
@@ -111,8 +113,12 @@ def validate(data: Any) -> list[str]:
         records = _unique_records(rs.get("capabilities", []), "capability_id", "rhemascript.capabilities", errors)
         for cap in RHEMA_IDS:
             item = records.get(cap, {})
-            if item.get("status") != "passed" or not _score_ok(item.get("score")) or not isinstance(item.get("evidence_ref"), str) or not item.get("evidence_ref", "").strip():
-                errors.append(f"RhemaScript capability not passed with evidence: {cap}")
+            if item.get("status") != "passed" or not _verified_evidence({
+                "status": item.get("evidence_status"),
+                "evidence_ref": item.get("evidence_ref"),
+                "score": item.get("score"),
+            }):
+                errors.append(f"RhemaScript capability not passed with verified evidence: {cap}")
         extra = set(records) - set(RHEMA_IDS)
         if extra:
             errors.append("Unknown RhemaScript capability IDs: " + ", ".join(sorted(extra)))
@@ -128,8 +134,13 @@ def validate(data: Any) -> list[str]:
             errors.append("Integrated capstone requires verified inspectable evidence with score 3 or 4")
 
     assurance = data.get("independent_assurance")
-    if not _record(assurance) or assurance.get("status") != "satisfied" or not isinstance(assurance.get("evidence"), list) or not assurance["evidence"]:
-        errors.append("Independent assurance remains unsatisfied or lacks evidence")
+    assurance_evidence = assurance.get("evidence") if _record(assurance) else None
+    if (not _record(assurance) or assurance.get("status") != "satisfied"
+        or not isinstance(assurance_evidence, list) or not assurance_evidence
+        or not all(_record(item) and item.get("status") == "verified"
+                   and isinstance(item.get("evidence_ref"), str)
+                   and bool(item["evidence_ref"].strip()) for item in assurance_evidence)):
+        errors.append("Independent assurance remains unsatisfied or lacks verified inspectable evidence")
     if data.get("production_authority") != "not_granted":
         errors.append("Production authority must remain not_granted in this learning validator")
     return errors
