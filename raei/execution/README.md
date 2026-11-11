@@ -129,3 +129,28 @@ Integrity Chain stages, the ordered six approval gates, evidence references and
 explicit authority decisions. It requires generation and publishing to remain
 unexecuted and production authority to remain `not_granted`. Synthetic fixtures
 are test data only; they are not project approvals or evidence of real production.
+
+
+## RAEI execution orchestrator
+
+The orchestrator seeds the full registry into the existing hash-chained ledger,
+attaches each unit's lesson objectives, sources, practical task and rubric, and
+selects the next incomplete unit. It connects to the existing practice,
+assessment and correction functions; it does not fabricate scores or evidence.
+
+Run from the repository root:
+
+```sh
+python -m raei.orchestrator --ledger raei-learning-ledger.json init
+python -m raei.orchestrator --ledger raei-learning-ledger.json next
+python -m raei.orchestrator --ledger raei-learning-ledger.json show CS-FOUND
+python -m raei.orchestrator --ledger raei-learning-ledger.json practice CS-FOUND evidence/cs-foundation.md "executed original exercise" "result inspected"
+python -m raei.orchestrator --ledger raei-learning-ledger.json assess CS-FOUND '{"accuracy":3,"reasoning":3,"execution":3,"evidence":3}' evidence/cs-foundation.md
+python -m raei.orchestrator --ledger raei-learning-ledger.json status
+```
+
+Use a normal ASCII filename such as `raei-learning-ledger.json` when running
+the commands. The example command above is illustrative; the CLI refuses to
+overwrite an existing ledger unless `init --force` is explicitly supplied.
+An assessment pass requires every rubric criterion to be at least 3 and a
+verified practice record. Reported or planned work cannot pass.
