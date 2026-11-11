@@ -96,6 +96,13 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
+    def test_final_gate_must_reference_the_approved_final_film(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        context = self.publish_context()
+        context["evidence_pack"]["gate_records"][-1]["evidence_ref"] = "evidence:OTHER-FILM"
+        with self.assertRaisesRegex(YouTubeIntegrationError, "does not match the approved final film"):
+            client.upload_video("/not/read.mp4", title="Approved", description="Test", **context)
+
     def test_thumbnail_write_rejects_out_of_order_gate_records(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
