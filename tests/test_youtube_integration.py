@@ -5,11 +5,14 @@ from datetime import date
 from unittest.mock import patch
 
 from rhemascript.integrations.youtube import (
-    YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
+    YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
 )
 
 
 class YouTubeIntegrationTests(unittest.TestCase):
+    def test_youtube_uses_dedicated_external_interface_18(self):
+        self.assertEqual(YOUTUBE_INTERFACE_ID, "IF-18")
+
     def config(self):
         return YouTubeConfig("client-id", "client-secret", "refresh-token")
 
