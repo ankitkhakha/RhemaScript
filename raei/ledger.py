@@ -59,7 +59,11 @@ def validate(data):
             if prerequisite not in data["units"]:
                 raise LedgerError(f"unknown prerequisite {prerequisite!r} for {unit_id}")
         if unit.get("status") == "passed":
-            if not unit.get("evidence_ref") or unit.get("evidence_status") != "verified" or unit.get("score", 0) < 3:
+            score = unit.get("score")
+            evidence_ref = unit.get("evidence_ref")
+            if (not isinstance(score, int) or isinstance(score, bool) or not 3 <= score <= 4
+                or not isinstance(evidence_ref, str) or not evidence_ref.strip()
+                or unit.get("evidence_status") != "verified":
                 raise LedgerError(f"passed unit {unit_id} lacks verified evidence or score >= 3")
             if any(data["units"][p]["status"] != "passed" for p in unit.get("prerequisites", [])):
                 raise LedgerError(f"passed unit {unit_id} has incomplete prerequisites")
@@ -122,7 +126,7 @@ def record_assessment(data, unit_id, score, evidence_ref, evidence_status, note=
     unit = data["units"][unit_id]
     if unit["status"] == "passed":
         raise LedgerError("passed units are immutable; create a new versioned unit for reassessment")
-    if not isinstance(score, int) or not 0 <= score <= 4:
+    if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
         raise LedgerError("score must be an integer from 0 to 4")
     if evidence_status not in {"verified", "reported_unverified", "planned"}:
         raise LedgerError("invalid evidence status")
