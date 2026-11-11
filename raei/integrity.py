@@ -42,6 +42,28 @@ def validate_project_chain(project):
             errors.append("missing source reference: " + stage)
         if record.get("status") != "present":
             errors.append("stage is not evidenced as present: " + stage)
+        revision = record.get("revision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            errors.append("invalid positive revision number: " + stage)
+
+    # Each downstream artefact must explicitly identify the immediately preceding
+    # approved-chain artefact it was derived from.
+    for index, stage in enumerate(STAGES[1:], start=1):
+        record = stages.get(stage)
+        previous = stages.get(STAGES[index - 1])
+        if not isinstance(record, dict) or not isinstance(previous, dict):
+            continue
+        upstream = record.get("upstream_refs")
+        if not isinstance(upstream, list) or previous.get("artifact_ref") not in upstream:
+            errors.append("missing immediate predecessor dependency: " + stage)
+
+    # A repeated artifact reference across stages makes provenance ambiguous.
+    artifact_refs = [
+        stages[stage].get("artifact_ref") for stage in STAGES
+        if isinstance(stages.get(stage), dict) and stages[stage].get("artifact_ref")
+    ]
+    if len(artifact_refs) != len(set(artifact_refs)):
+        errors.append("duplicate artifact reference across source-to-final stages")
 
     for gate in GATES:
         record = approvals.get(gate)
