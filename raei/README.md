@@ -72,3 +72,16 @@ python -m unittest tests.test_store -v
 ```
 
 The test suite uses temporary local databases. It makes no network calls and does not connect to a production RhemaScript database. A passing test demonstrates behaviour of this prototype under the tested cases; it is not a production security review, backup/restore certification, or proof of all concurrency failure modes. SQLite WAL and hash-linked events are operational mechanisms, not digital signatures or proof of operator identity.
+
+
+## Authorization and API-contract practical
+
+`raei.api_contracts` adds a small deny-by-default role/action/resource policy exercise and strict request-payload validators for unit creation and assessment. Unknown fields, malformed identifiers, duplicate/self prerequisites, boolean-as-integer scores, invalid versions, and unreferenced claims of verified evidence are rejected.
+
+Run:
+
+```sh
+python -m unittest tests.test_api_contracts -v
+```
+
+The policy consumes a preconstructed principal; it does not authenticate users, issue credentials, manage sessions, or replace a production identity provider. The example role rules are illustrative and do not grant access to RhemaScript production systems. A production implementation would need a separately authorised threat model, identity lifecycle, secure secret handling, transport protections, audit review and deployment approval.
