@@ -101,7 +101,7 @@ class ReadinessValidatorTests(unittest.TestCase):
         data = ready_ledger()
         data["domains"]["engineering"]["required_capstones"] = []
         data["domains"]["engineering"]["evidence"].pop(0)
-        self.assertTrue(any("integrated_frontend_backend_database" in x for x in validate(data))))
+        self.assertTrue(any("integrated_frontend_backend_database" in x for x in validate(data)))
 
     def test_ethics_requires_uncertainty_and_proof_texting_review(self):
         data = ready_ledger()
