@@ -6,7 +6,7 @@ Greenfield, Scripture-centred content intelligence and production operating syst
 
 See [Creative Filmmaking Intelligence V1.0](docs/CREATIVE_FILMMAKING_INTELLIGENCE_V1.md) for the integrated biblical, human-experience, creative-story, filmmaking, AI-tool, production, and quality-learning operating model, including the Gemini/Google Flow capability snapshot verified 2026-11-11.
 
-This document is an operating specification under repository review. It does not claim that live Google integrations, account-specific capability checks, automated visual analysis, or media generation have been implemented.
+This operating specification is adopted in main. It does not claim that live Google integrations, account-specific capability checks, automated visual analysis, or media generation have been implemented; those remain separately tracked implementation work.
 
 ## Local CI
 
