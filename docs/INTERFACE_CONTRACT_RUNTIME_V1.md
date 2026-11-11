@@ -26,4 +26,4 @@ The gateway continues to apply existing disclosure and authority checks. The ada
 
 ## Validation
 
-A focused unittest module covers valid envelopes, key-order-independent fingerprints, unknown interfaces, missing/blank fields, malformed payloads, non-JSON values, NaN rejection, gateway integration and in-process replay. Run the repository CI with python ci/run_ci.py after checking out this branch. No test pass is claimed until that command has actually run.
+A focused unittest module covers valid envelopes, key-order-independent fingerprints, unknown interfaces, missing/blank fields, malformed payloads, non-JSON values, NaN rejection, gateway integration, in-process replay, and normalization/explicit-true authorization checks for all four registered consequential operations (GENERATE, PUBLISH, SPEND, EXTERNAL_WRITE). Run the repository CI with python ci/run_ci.py after checking out this branch. No test pass is claimed until that command has actually run.
