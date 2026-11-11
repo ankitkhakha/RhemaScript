@@ -38,6 +38,11 @@ class LedgerTests(unittest.TestCase):
         self.data["events"][1]["details"]["title"] = "Tampered"
         with self.assertRaises(LedgerError):
             validate(self.data)
+    def test_unrecorded_unit_state_tampering_detected(self):
+        add_unit(self.data, "A", "Foundations", [])
+        self.data["units"]["A"]["title"] = "Tampered title"
+        with self.assertRaises(LedgerError):
+            validate(self.data)
     def test_passed_unit_is_immutable(self):
         add_unit(self.data, "A", "Foundations", [])
         record_assessment(self.data, "A", 3, "test-output", "verified")
