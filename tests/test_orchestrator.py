@@ -24,6 +24,7 @@ class OrchestratorTests(unittest.TestCase):
         self.assertEqual(["ETH-TRUTH"], data["units"]["ETH-STEWARD"]["prerequisites"])
         self.assertEqual(["QC-COMPLIANCE"], data["units"]["RS-CIE"]["prerequisites"])
         self.assertEqual(4, len(data["units"]["INTEGRATED-CAPSTONE"]["prerequisites"]))
+        self.assertNotIn("INTEGRATED-CAPSTONE", data["units"]["INTEGRATED-CAPSTONE"]["prerequisites"])
 
     def test_next_task_uses_canonical_domain_and_registry_order(self):
         data = seed_ledger()
