@@ -89,6 +89,18 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["id"], "channel-1")
         self.assertEqual(calls, {"tokens": 2, "channel": 2})
 
+    def test_request_rejects_non_google_hosts_before_transport(self):
+        calls = []
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        with self.assertRaisesRegex(YouTubeIntegrationError, "official HTTPS Google host allowlist"):
+            client._request("https://attacker.example/collect", method="POST", body=b"secret")
+        self.assertEqual(calls, [])
+
+    def test_request_rejects_nonstandard_google_port_before_transport(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("transport must not run"))
+        with self.assertRaisesRegex(YouTubeIntegrationError, "official HTTPS Google host allowlist"):
+            client._request("https://www.googleapis.com:8443/youtube/v3/channels")
+
     def test_oversized_transport_response_is_rejected(self):
         client = YouTubeClient(self.config(), transport=lambda *args: (200, b"x" * 8_000_001, {}))
         with self.assertRaisesRegex(YouTubeIntegrationError, "8 MB safety limit"):
