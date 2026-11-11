@@ -38,6 +38,8 @@ def record_rubric_assessment(data, unit_id, criterion_scores, evidence_ref, evid
     if unit_id not in data["units"]:
         raise LedgerError(f"unknown unit: {unit_id}")
     unit=data["units"][unit_id]
+    if unit["status"] == "passed":
+        raise LedgerError("passed units are immutable; create a versioned unit for reassessment")
     lesson=unit.get("lesson")
     if lesson is None:
         raise LedgerError("lesson and rubric must exist before assessment")
