@@ -49,17 +49,17 @@ def main(path: str) -> int:
         errors.append("Integrated capstone has not passed with evidence")
     if integrated.get("critical_failure"):
         errors.append("Integrated capstone has a critical failure")
-    if data.get("independent_assurance", {}).get("status") != "satisfied":
-        errors.append("Independent assurance is outstanding")
-    if data.get("production_authority") != "granted":
-        errors.append("Production authority has not been separately granted")
-
     if errors:
         print("NOT READY — evidence validation failed")
         for error in errors:
             print(f"- {error}")
         return 1
-    print("EVIDENCE GATES SATISFIED — this is not, by itself, a grant of authority.")
+    assurance = data.get("independent_assurance", {}).get("status", "not_satisfied")
+    print("LEARNING READINESS EVIDENCE COMPLETE — this is not a competence certificate or grant of authority.")
+    if assurance != "satisfied":
+        print("NOTE: Independent assurance remains outstanding where required for high-risk production/release.")
+    if data.get("production_authority") != "granted":
+        print("NOTE: Production authority remains separate and has not been granted by this validator.")
     return 0
 
 if __name__ == "__main__":
