@@ -7,6 +7,7 @@ external actions. Missing/ambiguous evidence is reported rather than fabricated.
 from __future__ import annotations
 from typing import Any
 import math
+from .tool_registry import assess_tool_preflight
 
 class SpecialistInputError(ValueError):
     """Raised when supplied specialist evidence has an invalid shape."""
@@ -129,13 +130,14 @@ def _cap08(e):
             "feasibility":"GAPS_FOUND" if total>budget or missing else "NUMERICALLY_WITHIN_BUDGET"}
 
 def _cap09(e):
-    platform=_nonempty(e,"target_platform"); records=_seq(e,"verified_tool_evidence")
-    accepted={"VERIFIED_CURRENT","VERIFIED_HISTORICAL","USER_REPORTED","UNVERIFIED","DISPUTED","SUPERSEDED","UNAVAILABLE"}
-    invalid=[i for i,r in enumerate(records) if not isinstance(r,dict) or r.get("knowledge_state") not in accepted or not r.get("checked_at")]
-    current=[r for r in records if isinstance(r,dict) and r.get("knowledge_state")=="VERIFIED_CURRENT"]
-    return {"target_platform":platform,"evidence_count":len(records),"invalid_records":invalid,
-            "current_verified_count":len(current),"platform_claims_allowed":bool(current) and not invalid,
-            "warning":"historical or user-reported claims are not current verification"}
+    platform=_nonempty(e,"target_platform")
+    records=_seq(e,"verified_tool_evidence")
+    preflight=assess_tool_preflight(e)
+    return {"target_platform":platform,"evidence_count":len(records),
+            "current_verified_count":len(preflight["matching_evidence_indexes"]),
+            "platform_claims_allowed":preflight["preflight_status"]=="COMPATIBLE_FOR_HUMAN_REVIEW",
+            "tool_preflight":preflight,
+            "warning":"preflight is a dated registry/evidence assessment, not a live account check or generation authorisation"}
 
 def _cap10(e):
     assets=_seq(e,"asset_manifest"); rights=_obj(e,"rights_provenance")

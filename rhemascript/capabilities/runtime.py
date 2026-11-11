@@ -25,7 +25,7 @@ EVIDENCE_REQUIREMENTS = {
  'CAP-06': ('observations','measurement_window'),
  'CAP-07': ('visual_reference_set','shot_observations'),
  'CAP-08': ('shot_plan','runtime_budget_seconds','asset_inventory'),
- 'CAP-09': ('target_platform','verified_tool_evidence'),
+ 'CAP-09': ('target_platform','generation_request','verified_tool_evidence'),
  'CAP-10': ('asset_manifest','rights_provenance'),
  'CAP-11': ('quality_dimensions','hard_stop_findings'),
  'CAP-12': ('threats','control_evidence'),
