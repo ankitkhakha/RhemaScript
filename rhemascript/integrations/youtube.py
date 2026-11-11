@@ -19,6 +19,8 @@ import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
 
+YOUTUBE_INTERFACE_ID = "IF-18"
+
 API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3/videos"
 ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2/reports"
