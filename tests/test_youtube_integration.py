@@ -71,6 +71,29 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with self.assertRaises(YouTubeIntegrationError):
                 YouTubeConfig.from_environment()
 
+    def test_expired_access_token_is_refreshed_once(self):
+        calls = {"tokens": 0, "channel": 0}
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                calls["tokens"] += 1
+                return 200, b'{"access_token":"fresh-token"}', {}
+            if request.full_url.startswith("https://www.googleapis.com/youtube/v3/channels"):
+                calls["channel"] += 1
+                if calls["channel"] == 1:
+                    return 401, b'{"error":"invalid_token"}', {}
+                self.assertEqual(request.get_header("Authorization"), "Bearer fresh-token")
+                return 200, b'{"items":[{"id":"channel-1"}]}', {}
+            self.fail("unexpected request")
+        client = YouTubeClient(self.config(), transport=transport)
+        result = client.channel()
+        self.assertEqual(result["id"], "channel-1")
+        self.assertEqual(calls, {"tokens": 2, "channel": 2})
+
+    def test_oversized_transport_response_is_rejected(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: (200, b"x" * 8_000_001, {}))
+        with self.assertRaisesRegex(YouTubeIntegrationError, "8 MB safety limit"):
+            client.channel()
+
     def test_invalid_chunk_size_rejected(self):
         with self.assertRaises(YouTubeIntegrationError):
             YouTubeConfig("id", "secret", "refresh", chunk_size=1000).validate()
