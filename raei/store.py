@@ -147,8 +147,8 @@ class EvidenceStore:
                 raise StoreError("unit cannot depend on itself")
             for prerequisite in prerequisites:
                 row = db.execute("SELECT status FROM units WHERE unit_id=?", (prerequisite,)).fetchone()
-                if row is None or row["status"] != "passed":
-                    raise StoreError(f"prerequisite is missing or not passed: {prerequisite}")
+                if row is None:
+                    raise StoreError(f"prerequisite does not exist: {prerequisite}")
             now = _timestamp()
             db.execute(
                 "INSERT INTO units(unit_id,title,status,created_at,updated_at) VALUES(?,?,'not_started',?,?)",
