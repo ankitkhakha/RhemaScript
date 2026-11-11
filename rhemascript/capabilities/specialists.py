@@ -85,16 +85,66 @@ def _cap04(e):
             "score_is_not_a_prediction":True}
 
 def _cap05(e):
-    beats=_seq(e,"beats"); constraints=_obj(e,"narrative_constraints")
-    ids=[b.get("beat_id") for b in beats if isinstance(b,dict)]
-    missing=[i for i,b in enumerate(beats) if not isinstance(b,dict) or not b.get("purpose")]
-    duplicate=sorted({x for x in ids if ids.count(x)>1})
+    beats=_seq(e,"beats")
+    constraints=_obj(e,"narrative_constraints")
+    narration=_seq(e,"approved_narration_segments")
+    human_map=_seq(e,"human_experience_map")
+    segment_ids=[]
+    for i,segment in enumerate(narration):
+        if not isinstance(segment,dict) or not segment.get("segment_id") or not segment.get("text"):
+            raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
+        start=segment.get("start_seconds"); end=segment.get("end_seconds")
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+            raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
+        segment_ids.append(segment["segment_id"])
+    duplicate_segments=sorted({x for x in segment_ids if segment_ids.count(x)>1})
+    narration_set=set(segment_ids)
+    mapped_segments=set()
+    human_map_flags=[]
+    for i,item in enumerate(human_map):
+        if not isinstance(item,dict):
+            raise SpecialistInputError("each human_experience_map entry must be an object")
+        flags=[]
+        if item.get("segment_id") not in narration_set: flags.append("UNKNOWN_NARRATION_SEGMENT")
+        for key in ("human_tension","emotional_intention","audience_response","visual_metaphor","biblical_boundary"):
+            if not item.get(key): flags.append(f"MISSING_{key.upper()}")
+        if item.get("segment_id") in narration_set: mapped_segments.add(item["segment_id"])
+        human_map_flags.append({"index":i,"flags":flags})
+    beat_ids=[b.get("beat_id") for b in beats if isinstance(b,dict)]
+    duplicate_beats=sorted({x for x in beat_ids if x and beat_ids.count(x)>1})
+    beat_flags=[]
+    covered_segments=set()
+    for i,beat in enumerate(beats):
+        if not isinstance(beat,dict): raise SpecialistInputError("each beat must be an object")
+        flags=[]
+        if not beat.get("purpose"): flags.append("MISSING_PURPOSE")
+        refs=beat.get("narration_segment_ids",[])
+        if not isinstance(refs,list) or not refs: flags.append("NO_NARRATION_MAPPING")
+        else:
+            unknown=[x for x in refs if x not in narration_set]
+            if unknown: flags.append("UNKNOWN_NARRATION_SEGMENT")
+            covered_segments.update(x for x in refs if x in narration_set)
+        shot_type=beat.get("shot_type")
+        if shot_type not in ("A_ROLL","B_ROLL","TRANSITION"): flags.append("INVALID_SHOT_TYPE")
+        if shot_type=="B_ROLL" and not beat.get("broll_purpose"): flags.append("BROLL_PURPOSE_MISSING")
+        if shot_type=="A_ROLL" and not beat.get("subject_action"): flags.append("AROLL_SUBJECT_ACTION_MISSING")
+        if shot_type=="TRANSITION" and not beat.get("transition_purpose"): flags.append("TRANSITION_PURPOSE_MISSING")
+        if not beat.get("visual_concept"): flags.append("VISUAL_CONCEPT_MISSING")
+        beat_flags.append({"beat_index":i,"flags":flags})
+    uncovered=sorted(narration_set-covered_segments)
+    unmapped_human=sorted(narration_set-mapped_segments)
     duration=e.get("target_duration_seconds")
     if duration is not None and (isinstance(duration,bool) or not isinstance(duration,(int,float)) or duration<=0):
         raise SpecialistInputError("target_duration_seconds must be positive")
-    return {"beat_count":len(beats),"missing_purpose_indexes":missing,"duplicate_beat_ids":duplicate,
+    structural_issues=bool(duplicate_segments or duplicate_beats or uncovered or unmapped_human or
+        any(x["flags"] for x in human_map_flags) or any(x["flags"] for x in beat_flags))
+    return {"approved_narration_segment_count":len(narration),"human_experience_map_count":len(human_map),
+            "human_experience_map_findings":human_map_flags,"unmapped_human_experience_segments":unmapped_human,
+            "beat_count":len(beats),"beat_findings":beat_flags,"duplicate_segment_ids":duplicate_segments,
+            "duplicate_beat_ids":duplicate_beats,"narration_segments_without_visual_coverage":uncovered,
             "target_duration_seconds":duration,"constraints_supplied":sorted(constraints),
-            "simulation_status":"STRUCTURAL_ISSUES" if missing or duplicate else "STRUCTURE_VALID_FOR_EDITORIAL_REVIEW"}
+            "simulation_status":"STRUCTURAL_ISSUES" if structural_issues else "STRUCTURE_VALID_FOR_EDITORIAL_REVIEW",
+            "interpretive_boundary":"human-experience links and visual metaphors are creative proposals, not biblical facts"}
 
 def _cap06(e):
     rows=_seq(e,"observations"); window=_nonempty(e,"measurement_window")
@@ -117,17 +167,101 @@ def _cap07(e):
             "visual_assessment_boundary":"metadata/observations only; no image analysis performed"}
 
 def _cap08(e):
-    shots=_seq(e,"shot_plan"); budget=_score(e.get("runtime_budget_seconds"),"runtime_budget_seconds")
-    durations=[]
-    for i,s in enumerate(shots):
-        if not isinstance(s,dict): raise SpecialistInputError("each shot must be an object")
-        durations.append(_score(s.get("duration_seconds"),f"shot[{i}].duration_seconds"))
-    total=sum(durations)
+    shots=_seq(e,"shot_plan")
+    budget=_score(e.get("runtime_budget_seconds"),"runtime_budget_seconds")
     assets=_seq(e,"asset_inventory")
-    missing=[s.get("required_asset_id") for s in shots if s.get("required_asset_id") and s.get("required_asset_id") not in {a.get("asset_id") for a in assets if isinstance(a,dict)}]
+    narration=_seq(e,"approved_narration_segments")
+    audio_plan=_obj(e,"audio_caption_plan")
+    generation=_obj(e,"generation_constraints")
+    narration_by_id={}
+    for i,segment in enumerate(narration):
+        if not isinstance(segment,dict) or not segment.get("segment_id") or not isinstance(segment.get("text"),str):
+            raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
+        narration_by_id[segment["segment_id"]]=segment
+    durations=[]; shot_findings=[]; required_assets=set()
+    asset_ids={a.get("asset_id") for a in assets if isinstance(a,dict) and a.get("asset_id")}
+    max_clip=generation.get("max_clip_seconds")
+    min_clip=generation.get("min_clip_seconds",0)
+    if isinstance(max_clip,bool) or not isinstance(max_clip,(int,float)) or max_clip<=0:
+        raise SpecialistInputError("generation_constraints.max_clip_seconds must be positive")
+    if isinstance(min_clip,bool) or not isinstance(min_clip,(int,float)) or min_clip<0 or min_clip>max_clip:
+        raise SpecialistInputError("generation_constraints.min_clip_seconds must be non-negative and <= max_clip_seconds")
+    shot_ids=[]
+    for i,shot in enumerate(shots):
+        if not isinstance(shot,dict): raise SpecialistInputError("each shot must be an object")
+        if not shot.get("shot_id"): raise SpecialistInputError(f"shot_plan[{i}] requires shot_id")
+        shot_ids.append(shot["shot_id"])
+        duration=shot.get("duration_seconds")
+        if isinstance(duration,bool) or not isinstance(duration,(int,float)) or duration<=0:
+            raise SpecialistInputError(f"shot_plan[{i}].duration_seconds must be positive")
+        durations.append(float(duration))
+        flags=[]
+        shot_type=shot.get("shot_type")
+        if shot_type not in ("A_ROLL","B_ROLL","TRANSITION"): flags.append("INVALID_SHOT_TYPE")
+        if shot_type=="B_ROLL" and not shot.get("broll_purpose"): flags.append("BROLL_PURPOSE_MISSING")
+        if not shot.get("purpose") or not shot.get("visual_action"): flags.append("SHOT_PURPOSE_OR_ACTION_MISSING")
+        segment_refs=shot.get("narration_segment_ids",[])
+        if not isinstance(segment_refs,list) or not segment_refs: flags.append("NO_NARRATION_MAPPING")
+        else:
+            unknown=[x for x in segment_refs if x not in narration_by_id]
+            if unknown: flags.append("UNKNOWN_NARRATION_SEGMENT")
+        asset_ref=shot.get("required_asset_id")
+        if asset_ref:
+            required_assets.add(asset_ref)
+            if asset_ref not in asset_ids: flags.append("REQUIRED_ASSET_NOT_FOUND")
+        if shot.get("generation_required") is True:
+            if shot.get("asset_reviewed") is not True: flags.append("ASSET_FIRST_REVIEW_MISSING")
+            if not shot.get("new_generation_justification"): flags.append("GENERATION_JUSTIFICATION_MISSING")
+            units=shot.get("generation_unit_durations")
+            if not isinstance(units,list) or not units: flags.append("GENERATION_UNITS_MISSING")
+            else:
+                if any(isinstance(x,bool) or not isinstance(x,(int,float)) or x<=0 or x>max_clip or (min_clip and x<min_clip) for x in units):
+                    flags.append("GENERATION_UNIT_DURATION_UNSUPPORTED")
+                if abs(sum(units)-duration)>0.05: flags.append("GENERATION_UNITS_DO_NOT_MATCH_SHOT_DURATION")
+        shot_findings.append({"shot_id":shot["shot_id"],"flags":flags})
+    duplicate_shots=sorted({x for x in shot_ids if shot_ids.count(x)>1})
+    total=sum(durations)
+    missing=sorted(required_assets-asset_ids)
+
+    caption_rows=_seq(audio_plan,"caption_segments")
+    caption_by_id={}
+    caption_flags=[]
+    for i,row in enumerate(caption_rows):
+        if not isinstance(row,dict) or not row.get("segment_id"):
+            raise SpecialistInputError(f"caption_segments[{i}] requires segment_id")
+        if row["segment_id"] in caption_by_id: caption_flags.append("DUPLICATE_CAPTION_SEGMENT")
+        caption_by_id[row["segment_id"]]=row
+    missing_captions=sorted(set(narration_by_id)-set(caption_by_id))
+    extra_captions=sorted(set(caption_by_id)-set(narration_by_id))
+    text_mismatches=[]; timing_mismatches=[]
+    for sid,source in narration_by_id.items():
+        caption=caption_by_id.get(sid)
+        if not caption: continue
+        if caption.get("text")!=source.get("text"): text_mismatches.append(sid)
+        for key in ("start_seconds","end_seconds"):
+            if isinstance(caption.get(key),bool) or not isinstance(caption.get(key),(int,float)) or abs(caption[key]-source.get(key,0))>0.5:
+                timing_mismatches.append(sid); break
+    audio_flags=[]
+    audio_cues=_seq(audio_plan,"audio_cues")
+    for i,cue in enumerate(audio_cues):
+        if not isinstance(cue,dict): raise SpecialistInputError("each audio_cue must be an object")
+        start=cue.get("start_seconds"); end=cue.get("end_seconds")
+        if isinstance(start,bool) or isinstance(end,bool) or not isinstance(start,(int,float)) or not isinstance(end,(int,float)) or start<0 or end<=start:
+            audio_flags.append({"index":i,"flag":"INVALID_AUDIO_CUE_TIMING"})
+        elif cue.get("overlaps_narration") is True and cue.get("duck_under_narration") is not True:
+            audio_flags.append({"index":i,"flag":"AUDIO_MASKING_RISK"})
+    issues=bool(total>budget or missing or duplicate_shots or any(x["flags"] for x in shot_findings) or
+        missing_captions or extra_captions or text_mismatches or timing_mismatches or caption_flags or audio_flags)
     return {"planned_runtime_seconds":round(total,2),"runtime_budget_seconds":budget,
-            "runtime_over_budget":total>budget,"missing_required_assets":missing,
-            "feasibility":"GAPS_FOUND" if total>budget or missing else "NUMERICALLY_WITHIN_BUDGET"}
+            "runtime_over_budget":total>budget,"duplicate_shot_ids":duplicate_shots,
+            "shot_findings":shot_findings,"missing_required_assets":missing,
+            "asset_first_reviewed_shots":sum(1 for x in shots if isinstance(x,dict) and x.get("generation_required") is True and x.get("asset_reviewed") is True),
+            "generation_unit_max_seconds":max_clip,"missing_caption_segments":missing_captions,
+            "extra_caption_segments":extra_captions,"caption_text_mismatches":text_mismatches,
+            "caption_timing_mismatches":sorted(set(timing_mismatches)),"caption_flags":caption_flags,
+            "audio_findings":audio_flags,"narration_master_id":audio_plan.get("narration_master_id"),
+            "feasibility":"GAPS_FOUND" if issues else "STRUCTURALLY_FEASIBLE_FOR_HUMAN_REVIEW",
+            "authority_boundary":"timing/text checks do not verify audio waveform, spoken performance, or actual rendered video"}
 
 def _cap09(e):
     platform=_nonempty(e,"target_platform")
