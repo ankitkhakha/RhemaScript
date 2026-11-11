@@ -118,6 +118,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
             method="PUT", headers={"Authorization": "Bearer secret"},
             body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
+            authority={"publishing_authorisation": True},
         )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
