@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
