@@ -79,6 +79,29 @@ def _official_google_source(url: Any) -> bool:
         return False
     return url.startswith("https://support.google.com/") or url.startswith("https://support.google.com/labs/")
 
+
+# Model/workflow lifecycle facts are separate from operation compatibility.
+# A retired workflow must not be mistaken for a retired underlying model.
+MODEL_LIFECYCLE = (
+    {"interface":"flow_web","model":"gemini-omni-flash-1.1","status":"SUNSET_SCHEDULED",
+     "retirement_date":"2026-12-05","replacement":"gemini-omni-flash-1.2",
+     "source_url":FLOW_SOURCE},
+)
+RETIRED_WORKFLOWS = (
+    {"interface":"flow_web","operation":"veo_extend","retired_on":"2026-11-05",
+     "replacement":"omni_extend","source_url":FLOW_SOURCE},
+)
+
+def lifecycle_status(interface: str, model: str, operation: str, *, as_of: date) -> dict[str, Any]:
+    for item in MODEL_LIFECYCLE:
+        if item["interface"]==_normal(interface) and item["model"]==_normal(model):
+            retired=date.fromisoformat(item["retirement_date"])
+            return {**item,"status":"RETIRED" if as_of>=retired else item["status"]}
+    for item in RETIRED_WORKFLOWS:
+        if item["interface"]==_normal(interface) and item["operation"]==_normal(operation):
+            return {**item,"status":"RETIRED"}
+    return {"status":"UNLISTED"}
+
 def find_capability(provider: str, interface: str, model: str, operation: str) -> OperationCapability | None:
     key = (_normal(provider), _normal(interface), _normal(model), _normal(operation))
     for item in CAPABILITY_REGISTRY:
@@ -107,7 +130,13 @@ def assess_tool_preflight(evidence: dict[str, Any], *, as_of: date | None = None
         flags.append("MISSING_REQUEST_FIELDS")
 
     capability = None
+    lifecycle = {"status":"UNASSESSED"}
     if not missing:
+        lifecycle = lifecycle_status(request["interface"], request["model"], request["operation"], as_of=today)
+        if lifecycle["status"] == "RETIRED":
+            flags.append("MODEL_OR_WORKFLOW_RETIRED")
+        elif lifecycle["status"] == "SUNSET_SCHEDULED":
+            flags.append("MODEL_RETIREMENT_SCHEDULED")
         capability = find_capability(request["provider"], request["interface"], request["model"], request["operation"])
         if capability is None:
             flags.append("UNSUPPORTED_OR_UNREGISTERED_OPERATION")
@@ -199,6 +228,7 @@ def assess_tool_preflight(evidence: dict[str, Any], *, as_of: date | None = None
         } if capability else None,
         "matching_evidence_indexes": matching_evidence,
         "stale_evidence_indexes": stale_evidence,
+        "model_lifecycle": lifecycle,
         "generation_authorised": False,
         "account_or_region_independently_verified": False,
         "assessment_boundary": "registry and supplied evidence assessment only; no live Google connection, account inspection, or generation",
