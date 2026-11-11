@@ -315,9 +315,8 @@ class YouTubeClient:
                       human_director_acceptance: bool,
                       publishing_authorisation: bool = False) -> dict[str, Any]:
         _authorise_project_publish(
-            project_id=project_id, project_version=project_version,
+            evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
-            gate_records=gate_records,
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
