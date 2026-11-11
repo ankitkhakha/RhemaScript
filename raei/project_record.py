@@ -61,9 +61,10 @@ def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstre
         raise IntegrityError("upstream_refs must exactly match the immediate predecessor")
 
     prior = stages.get(stage, {})
-    revision = prior.get("revision", 0) + 1
-    if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+    previous_revision = prior.get("revision", 0)
+    if not isinstance(previous_revision, int) or isinstance(previous_revision, bool) or previous_revision < 0:
         raise IntegrityError("existing stage revision is invalid")
+    revision = previous_revision + 1
     stages[stage] = {
         "status": "present",
         "artifact_ref": artifact_ref,
