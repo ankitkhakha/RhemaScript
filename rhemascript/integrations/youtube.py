@@ -80,7 +80,10 @@ class YouTubeClient:
             with urlopen(req, timeout=self.config.timeout_seconds) as response:
                 return response.status, response.read(8_000_001), dict(response.headers.items())
         except HTTPError as exc:
-            detail = exc.read(4096).decode("utf-8", "replace")
+            raw = exc.read(8_000_001)
+            if exc.code == 308:
+                return exc.code, raw, dict(exc.headers.items())
+            detail = raw[:4096].decode("utf-8", "replace")
             raise YouTubeIntegrationError(
                 f"YouTube request failed ({exc.code}); response: {detail[:1000]}"
             ) from None
@@ -214,7 +217,14 @@ class YouTubeClient:
                 if status in (200, 201):
                     offset = total
                 elif status == 308:
-                    offset = end + 1
+                    acknowledged = (_header_value(_, "Range") if isinstance(_, dict) else None)
+                    if acknowledged and "-" in acknowledged:
+                        try:
+                            offset = int(acknowledged.rsplit("-", 1)[1]) + 1
+                        except ValueError:
+                            raise YouTubeIntegrationError("upload server returned an invalid byte range") from None
+                    else:
+                        offset = end + 1
                 else:
                     raise YouTubeIntegrationError(f"resumable upload returned HTTP {status}")
         try:
