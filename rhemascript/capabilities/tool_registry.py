@@ -58,9 +58,6 @@ CAPABILITY_REGISTRY: tuple[OperationCapability, ...] = (
     OperationCapability("google", "gemini_app", GEMINI_APP_MODEL, "video_to_video_edit", 3, 10,
         ("9:16", "16:9"), (), ("PLUS", "PRO", "ULTRA"),
         (GEMINI_SOURCE,), "Upload one video; supported edit length up to 10s or 15s for Ultra."),
-    OperationCapability("google", "gemini_app", GEMINI_APP_MODEL, "multi_turn_edit", 3, 10,
-        ("9:16", "16:9"), (), ("PLUS", "PRO", "ULTRA"),
-        (GEMINI_SOURCE,), "Conversation-based iterative editing; reference limits apply."),
 )
 
 def _normal(value: Any) -> str:
