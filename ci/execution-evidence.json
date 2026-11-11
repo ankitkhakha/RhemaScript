@@ -1,0 +1,25 @@
+{
+  "system": "RhemaScript NEW SYSTEM",
+  "work_package": "Full contract runtime baseline transfer to GitHub",
+  "branch": "ci/full-system-baseline",
+  "local_execution": {
+    "command": "python ci/run_ci.py",
+    "exit_code": 0,
+    "tests_passed": 48,
+    "tests_failed": 0,
+    "capabilities_registered_and_exercised": 15,
+    "interfaces_registered_and_exercised": 18,
+    "synthetic_e2e": "PASS"
+  },
+  "scope_limitations": [
+    "Capability layer is evidence-gated contract infrastructure, not complete specialist domain logic.",
+    "Interface adapters are local contract endpoints; no external platform integrations or writes occur.",
+    "Synthetic E2E validates contract orchestration, not production business outcomes."
+  ],
+  "remote_execution": {
+    "push_run": "PENDING_OBSERVATION",
+    "pull_request_run": "NOT_YET_TRIGGERED",
+    "manual_dispatch_run": "NOT_YET_TRIGGERED"
+  },
+  "deployment": "NOT_STARTED"
+}
