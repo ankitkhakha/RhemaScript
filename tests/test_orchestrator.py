@@ -63,11 +63,22 @@ class OrchestratorTests(unittest.TestCase):
             path = Path(directory) / "ledger.json"
             save(path, seed_ledger())
             self.assertEqual(main(["--ledger", str(path), "practice", "CS-FOUND",
-                                   "evidence/cs-found.md", "original exercise", "result inspected"]), 0)
+                                   "evidence/cs-found.md", "original exercise", "result inspected", "--evidence-status", "verified"]), 0)
             scores = json.dumps({criterion: 3 for criterion in load(path)["units"]["CS-FOUND"]["rubric"]})
             self.assertEqual(main(["--ledger", str(path), "assess", "CS-FOUND",
-                                   scores, "evidence/cs-found.md"]), 0)
+                                   scores, "evidence/cs-found.md", "--evidence-status", "verified"]), 0)
             self.assertEqual(load(path)["units"]["CS-FOUND"]["status"], "passed")
+
+    def test_cli_defaults_evidence_to_reported_unverified(self):
+        from raei.orchestrator import main
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.json"
+            save(path, seed_ledger())
+            self.assertEqual(main(["--ledger", str(path), "practice", "CS-FOUND",
+                                   "evidence/cs-found.md", "planned exercise", "not independently inspected"]), 0)
+            unit = load(path)["units"]["CS-FOUND"]
+            self.assertEqual(unit["practice"][-1]["status"], "reported_unverified")
+            self.assertNotEqual(unit["status"], "passed")
 
     def test_initialise_refuses_to_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as directory:
