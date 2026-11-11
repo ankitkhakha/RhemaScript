@@ -2,8 +2,10 @@ import unittest
 from raei.integrity import STAGES, GATES, IntegrityError, validate_project_chain
 
 def complete_project():
-    stages = {name: {"status":"present","artifact_ref":name+"-v1","source_ref":"source:"+name}
+    stages = {name: {"status":"present","artifact_ref":name+"-v1","source_ref":"source:"+name,"revision":1}
               for name in STAGES}
+    for index, name in enumerate(STAGES[1:], start=1):
+        stages[name]["upstream_refs"] = [stages[STAGES[index-1]]["artifact_ref"]]
     gate_stage = {
         "creative_direction":"biblical_source","biblical_accuracy":"approved_script",
         "visual_development":"storyboard","production_plan_prompt":"clip_prompt",
@@ -28,6 +30,23 @@ class IntegrityChainTests(unittest.TestCase):
         result=validate_project_chain(project)
         self.assertFalse(result["valid"])
         self.assertTrue(any("artifact reference: approved_narration" in e for e in result["errors"]))
+
+    def test_missing_predecessor_dependency_is_rejected(self):
+        project=complete_project()
+        project["stages"]["approved_script"]["upstream_refs"]=[]
+        result=validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("predecessor dependency: approved_script" in e for e in result["errors"]))
+
+    def test_invalid_revision_is_rejected(self):
+        project=complete_project()
+        project["stages"]["storyboard"]["revision"]=0
+        self.assertFalse(validate_project_chain(project)["valid"])
+
+    def test_duplicate_stage_artifact_reference_is_rejected(self):
+        project=complete_project()
+        project["stages"]["edited_film"]["artifact_ref"]=project["stages"]["asset"]["artifact_ref"]
+        self.assertFalse(validate_project_chain(project)["valid"])
 
     def test_unapproved_gate_is_rejected(self):
         project=complete_project()
