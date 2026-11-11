@@ -36,7 +36,7 @@ def validate_project_chain(project):
         if not isinstance(record, dict):
             errors.append("missing stage: " + stage)
             continue
-        if not record.get("artifact_ref"):
+        if not isinstance(record.get("artifact_ref"), str) or not record.get("artifact_ref").strip():
             errors.append("missing artifact reference: " + stage)
         if not record.get("source_ref"):
             errors.append("missing source reference: " + stage)
@@ -76,8 +76,45 @@ def validate_project_chain(project):
             errors.append("missing approval evidence: " + gate)
         linked_stage = GATE_STAGE[gate]
         stage_record = stages.get(linked_stage, {})
-        if record.get("artifact_ref") and record.get("artifact_ref") != stage_record.get("artifact_ref"):
+        if record.get("artifact_ref") != stage_record.get("artifact_ref"):
             errors.append("approval does not reference current stage artefact: " + gate)
+
+    history = project.get("revision_history", [])
+    if not isinstance(history, list):
+        errors.append("revision_history must be a list")
+    else:
+        observed = {stage: [] for stage in STAGES}
+        for event in history:
+            if not isinstance(event, dict) or event.get("stage") not in STAGES:
+                errors.append("revision history contains malformed or unknown stage event")
+                continue
+            observed[event["stage"]].append(event)
+        for stage in STAGES:
+            events = observed[stage]
+            stage_record = stages.get(stage)
+            if not events:
+                if isinstance(stage_record, dict) and stage_record.get("revision", 1) != 1:
+                    errors.append("revision history missing events for revised stage: " + stage)
+                continue
+            expected_revision = 1
+            previous_ref = None
+            for event in events:
+                if event.get("revision") != expected_revision:
+                    errors.append("non-contiguous revision history: " + stage)
+                    break
+                if event.get("previous_artifact_ref") != previous_ref:
+                    errors.append("broken previous-artifact link in revision history: " + stage)
+                    break
+                if not event.get("artifact_ref") or not event.get("source_ref") or not event.get("change_reason"):
+                    errors.append("incomplete revision history event: " + stage)
+                    break
+                previous_ref = event["artifact_ref"]
+                expected_revision += 1
+            if isinstance(stage_record, dict) and (
+                stage_record.get("revision") != len(events)
+                or stage_record.get("artifact_ref") != previous_ref
+            ):
+                errors.append("revision history does not match current stage snapshot: " + stage)
 
     generation = project.get("generation")
     if not isinstance(generation, dict):
