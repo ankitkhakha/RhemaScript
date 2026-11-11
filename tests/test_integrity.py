@@ -75,6 +75,38 @@ class IntegrityChainTests(unittest.TestCase):
         project["published"]=True
         self.assertFalse(validate_project_chain(project)["valid"])
 
+
+    def test_approval_must_explicitly_reference_current_artifact(self):
+        project=complete_project()
+        project["approvals"]["biblical_accuracy"]["artifact_ref"]=None
+        result=validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("current stage artefact: biblical_accuracy" in e for e in result["errors"]))
+
+    def test_revision_history_must_be_contiguous(self):
+        project=complete_project()
+        project["revision_history"]=[
+            {"stage":"biblical_source","revision":1,"previous_artifact_ref":None,
+             "artifact_ref":"biblical_source-v1","source_ref":"source:biblical_source","change_reason":"Initial"},
+            {"stage":"biblical_source","revision":3,"previous_artifact_ref":"biblical_source-v1",
+             "artifact_ref":"biblical_source-v3","source_ref":"source:biblical_source","change_reason":"Correction"},
+        ]
+        project["stages"]["biblical_source"]["revision"]=3
+        project["stages"]["biblical_source"]["artifact_ref"]="biblical_source-v3"
+        result=validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("non-contiguous revision history" in e for e in result["errors"]))
+
+    def test_revision_history_must_match_current_snapshot(self):
+        project=complete_project()
+        project["revision_history"]=[
+            {"stage":"biblical_source","revision":1,"previous_artifact_ref":None,
+             "artifact_ref":"stale-source","source_ref":"bible:ref","change_reason":"Initial"}
+        ]
+        result=validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("does not match current stage snapshot" in e for e in result["errors"]))
+
     def test_missing_project_identity_is_rejected(self):
         with self.assertRaises(IntegrityError):
             validate_project_chain({"stages":{},"approvals":{}})
