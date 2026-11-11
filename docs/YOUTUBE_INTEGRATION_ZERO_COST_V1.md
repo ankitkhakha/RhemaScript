@@ -36,9 +36,21 @@ The refresh token must be obtained through Google's OAuth flow by the channel ow
 
 ```python
 from rhemascript.integrations import YouTubeClient, YouTubeConfig
+from rhemascript.integrations.youtube import youtube_provider_binding
+from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
 
-client = YouTubeClient(YouTubeConfig.from_environment())
-channel = client.channel()
+# Configure an approved local audit sink before enabling external traffic.
+# This example intentionally does not enable the gateway or perform OAuth.
+gateway = ExternalIntegrationGateway(
+    bindings=(youtube_provider_binding(),),
+    transport=UrllibTransport(),
+    credential_resolver=lambda provider: {},
+    audit_sink=approved_local_audit_sink,
+    enabled=False,  # remain disabled until the owner explicitly enables it
+)
+client = YouTubeClient(YouTubeConfig.from_environment(), gateway=gateway)
+# Only after owner-controlled configuration and authorization:
+# channel = client.channel()
 
 # Keep private unless the human director explicitly authorises publication.
 # Supply the validated project Evidence Pack, including its six gate records
@@ -65,10 +77,12 @@ A real channel connection and upload cannot be verified until the owner configur
 
 The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. Before production use, add a local encrypted secret store if the deployment environment provides one; this implementation intentionally reads secrets from environment variables only.
 
-## External gateway integration status — not complete
+## External gateway integration status
 
-The YouTube client in this revision uses its own standard-library HTTP transport. It is **not yet routed through** `rhemascript/interfaces/external.py` and is not registered against any of the generic IF-01..IF-18 interfaces. The existing provider-neutral gateway supports a single JSON POST operation, whereas YouTube requires OAuth token exchange, JSON API calls, resumable-upload session creation, binary PUT chunks, and follow-up status requests. Assigning an arbitrary IF identifier or sending a dummy gateway request would not provide a valid security or audit boundary.
+The YouTube client is now routed through the existing provider-neutral external gateway when an IF-18 gateway is explicitly supplied. The provider binding declares the supported Google hosts, API path families, and HTTP methods for OAuth, channel/video reads, analytics, resumable upload sessions, upload chunks, and thumbnail writes. The client refuses live traffic if neither an explicitly configured gateway nor an injected offline test transport is supplied.
 
-Accordingly, this client must be treated as an isolated, opt-in integration prototype until an approved YouTube interface mapping and provider-specific contract are established through RhemaScript's existing interface governance. A future adapter must preserve the gateway's disabled-by-default behavior, HTTPS host allowlisting, injected credentials, disclosure checks, consequential-operation authority checks, audit events, response limits, and idempotency semantics. It must also validate Google-issued resumable session URLs before following them and audit every consequential network step without exposing OAuth tokens, upload-session URLs, or video bytes in audit records.
+The gateway extension preserves the original JSON POST invoke contract and adds a separate method-aware request path for OAuth and resumable protocols. Each provider request is audited without recording query values, authorization headers, OAuth body contents, upload-session URLs, or media bytes. Upload-session, upload-chunk, and thumbnail operations are checked against the separate PUBLISH authority at the gateway boundary. The YouTube client independently validates the Evidence Pack, all six ordered gates, final-film evidence, and human final acceptance before any publishing write.
 
-No claim is made here that the original external gateway currently controls or audits YouTube requests. The existing project gates and publishing checks in the YouTube client are necessary but do not replace that missing provider-transport integration. No live OAuth or channel test has been performed.
+Automated CI has passed for the base IF-18 gateway routing and fail-closed tests. The resumable-upload-through-gateway end-to-end test has been added and its CI run is pending. Thumbnail-through-gateway end-to-end coverage and live owner-controlled OAuth/channel verification remain outstanding.
+
+Do not set enabled=True until the owner has reviewed the provider binding, configured a suitable local audit sink and OAuth environment, and explicitly chosen to enable external requests. No OAuth consent, channel connection, live upload, thumbnail change, analytics query, public release, merge, or deployment has been performed. A passing CI run validates mocked contracts only; it does not validate account permissions, quota, billing status, or real Google responses.
