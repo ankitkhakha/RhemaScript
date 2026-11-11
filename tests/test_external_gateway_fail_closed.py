@@ -93,6 +93,35 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_method_aware_request_rejects_path_prefix_sibling(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append(url)
+                return 200, b"{}", {}
+
+        transport = MethodTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"CHANNEL_READ": {
+                "method": "GET", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/youtube/v3/channels",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "outside the provider operation allowlist"):
+            gateway.request(
+                "IF-18", "CHANNEL_READ",
+                "https://www.googleapis.com/youtube/v3/channelsEvil?mine=true",
+                method="GET", request_id="r1", project_id="p1", source_version="1",
+            )
+        self.assertEqual(transport.calls, [])
+
     def test_upload_chunk_requires_separate_publish_authority_before_transport(self):
         class MethodTransport:
             def __init__(self):
