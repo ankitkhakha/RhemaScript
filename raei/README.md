@@ -99,3 +99,6 @@ python -m unittest discover -s tests -v
 ```
 
 The lab receives a preconstructed trusted principal; it does not implement authentication, OAuth/OIDC, token validation, TLS, a network server or distributed rate limiting. The lab is not a production service or security certification. The learner must explain and test these missing controls before the competency can be assessed.
+
+
+The API security lab also includes `raei.api_auth`, a strict local HMAC bearer-token verification exercise with algorithm pinning, signature verification, issuer/audience/time/role validation and negative tests. Run `python -m unittest tests.test_api_auth -v`. This is a learning boundary, not production-grade JWT/OIDC infrastructure; real issuance belongs to a trusted identity provider and production deployments require maintained libraries, key lifecycle and security review.
