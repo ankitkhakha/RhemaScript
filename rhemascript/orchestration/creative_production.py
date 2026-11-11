@@ -7,6 +7,7 @@ write externally, publish, or replace the Human Director.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from rhemascript.capabilities.runtime import CapabilityEngine, CapabilityResult
@@ -52,6 +53,10 @@ PHASES = (
 )
 
 OPTIONAL_CAPABILITIES = frozenset(("CAP-06", "CAP-14", "CAP-15"))
+REQUIRED_GENERATION_CAPABILITIES = (
+    "CAP-01", "CAP-02", "CAP-03", "CAP-05", "CAP-07", "CAP-08",
+    "CAP-09", "CAP-10", "CAP-11", "CAP-12", "CAP-13",
+)
 
 
 class OrchestrationError(ValueError):
@@ -137,7 +142,7 @@ class CreativeProductionOrchestrator:
             raise OrchestrationError("gate_records must be a list")
 
         project_id = project_record["project_id"]
-        resolved_run_id = run_id or f"{project_id}:{project_record['version']}"
+        resolved_run_id = run_id or f"{project_id}:{project_record['version']}:{datetime.now(timezone.utc).isoformat()}"
         gate_state, gate_status = self._gate_state(project_id, gate_records)
 
         results: dict[str, dict[str, Any]] = {}
@@ -226,7 +231,16 @@ class CreativeProductionOrchestrator:
                 "capabilities": list(capability_ids),
             })
 
-        preconditions = gate_state.all_gates_approved and generation_authorisation is True
+        missing_generation_capabilities = [
+            cid for cid in REQUIRED_GENERATION_CAPABILITIES
+            if results.get(cid, {}).get("status") != "ASSESSED_FOR_HUMAN_REVIEW"
+        ]
+        critical_assessments_complete = not missing_generation_capabilities
+        preconditions = (
+            gate_state.all_gates_approved
+            and generation_authorisation is True
+            and critical_assessments_complete
+        )
         if gate_status["gate_status"] == "BLOCKED":
             overall = "GOVERNANCE_BLOCKED"
         elif any(row["status"] in ("NOT_ASSESSED", "BLOCKED_DEPENDENCY") for row in results.values()):
@@ -243,6 +257,8 @@ class CreativeProductionOrchestrator:
             gate_status={
                 **gate_status,
                 "separate_generation_authorisation_present": generation_authorisation,
+                "required_generation_capabilities_complete": critical_assessments_complete,
+                "missing_generation_capabilities": missing_generation_capabilities,
                 "generation_preconditions_met": preconditions,
             },
             blocked_dependencies=tuple(blocked),
