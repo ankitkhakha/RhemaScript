@@ -7,7 +7,6 @@ external actions. Missing/ambiguous evidence is reported rather than fabricated.
 from __future__ import annotations
 from typing import Any
 import math
-from datetime import date
 from .tool_registry import assess_tool_preflight
 
 class SpecialistInputError(ValueError):
