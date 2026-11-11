@@ -31,10 +31,11 @@ class EvidenceStoreTests(unittest.TestCase):
         result = self.store.assess("U1", 4, "claim-only", "reported_unverified", 1)
         self.assertEqual(result["status"], "needs_correction")
 
-    def test_prerequisite_must_be_passed_before_child_creation(self):
+    def test_pending_prerequisite_can_be_registered_for_later_assessment(self):
         self.store.create_unit("U1", "Foundations")
-        with self.assertRaises(StoreError):
-            self.store.create_unit("U2", "Applied", ["U1"])
+        result = self.store.create_unit("U2", "Applied", ["U1"])
+        self.assertEqual(result["status"], "not_started")
+        self.assertEqual(self.store.get_unit("U2")["prerequisites"], ["U1"])
 
     def test_child_assessment_requires_passed_prerequisite(self):
         self.store.create_unit("U1", "Foundations")
