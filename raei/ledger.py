@@ -158,7 +158,7 @@ def main(argv=None):
     add.add_argument("id"); add.add_argument("title"); add.add_argument("--requires", action="append", default=[])
     assess = commands.add_parser("assess")
     assess.add_argument("id"); assess.add_argument("score", type=int); assess.add_argument("evidence_ref")
-    assess.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="verified")
+    assess.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="reported_unverified")
     assess.add_argument("--note", default="")
     commands.add_parser("report")
     args = parser.parse_args(argv)
