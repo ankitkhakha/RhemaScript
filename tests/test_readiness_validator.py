@@ -9,7 +9,8 @@ def evidence(identifier):
 
 
 def passed_domain(evidence_items):
-    return {"status": "passed", "competency_score": 3, "critical_failure": False, "evidence": evidence_items}
+    return {"status": "passed", "competency_score": 3, "critical_failure": False,
+            "evidence": [{"status":"verified","evidence_ref":"domain/evidence","score":3}]}
 
 
 def ready_ledger():
@@ -17,20 +18,20 @@ def ready_ledger():
         "domains": {
             "engineering": {**passed_domain([evidence(x) for x in ENGINEERING_CAPSTONES]),
                             "required_capstones": ENGINEERING_CAPSTONES},
-            "whole_bible": {"status": "passed", "competency_score": 3, "evidence": ["books/66-book-review"], "books": [
+            "whole_bible": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"books/review","score":3}], "books": [
                 {"book_id": book, "status": "passed", "evidence_status": "verified",
                  "evidence_ref": f"books/{book}", "score": 3} for book in BIBLE_BOOKS]},
-            "bible_only_ethics": {"status": "passed", "competency_score": 3, "evidence": ["ethics/case-review"], "cases": [
+            "bible_only_ethics": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"ethics/review","score":3}], "cases": [
                 {"case_id": case, "status": "passed", "score": 3, "evidence_ref": f"ethics/{case}",
-                 "biblical_context_reviewed": True, "explicit_vs_inference_recorded": True}
+                 "biblical_context_reviewed": True, "explicit_vs_inference_recorded": True, "uncertainty_recorded": True, "proof_texting_check_passed": True}
                 for case in ETHICS_CASES]},
-            "rhemascript": {"status": "passed", "competency_score": 3, "evidence": ["rhemascript/capability-review"], "capabilities": [
+            "rhemascript": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"rhemascript/review","score":3}], "capabilities": [
                 {"capability_id": cap, "status": "passed", "score": 3, "evidence_ref": f"rs/{cap}"}
                 for cap in RHEMA_IDS]},
             "integrated_capstone": {"status": "passed", "competency_score": 3,
-                                    "critical_failure": False, "evidence": ["capstone/report.md"]},
+                                    "critical_failure": False, "evidence": [{"status":"verified","evidence_ref":"capstone/report.md","score":3}]},
         },
-        "independent_assurance": {"status": "not_satisfied"},
+        "independent_assurance": {"status": "satisfied", "evidence": ["independent-assurance/report"]},
         "production_authority": "not_granted",
     }
 
@@ -39,7 +40,7 @@ class ReadinessValidatorTests(unittest.TestCase):
     def test_complete_synthetic_fixture_passes_evidence_gate(self):
         data = ready_ledger()
         self.assertEqual(validate(data), [])
-        self.assertEqual(report(data)["result"], "LEARNING_READINESS_EVIDENCE_COMPLETE")
+        self.assertEqual(report(data)["result"], "LEARNING_EVIDENCE_COMPLETE_PENDING_AUTHORITY_REVIEW")
         self.assertEqual(report(data)["production_authority"], "not_granted")
 
     def test_empty_ledger_fails_closed(self):
@@ -93,3 +94,29 @@ class ReadinessValidatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_absent_evidence_score_is_not_defaulted_to_three(self):
+        data = ready_ledger()
+        data["domains"]["engineering"]["evidence"][0].pop("score")
+        self.assertTrue(any("integrated_frontend_backend_database" in x for x in validate(data)))
+
+    def test_input_cannot_remove_mandatory_engineering_capstones(self):
+        data = ready_ledger()
+        data["domains"]["engineering"]["required_capstones"] = []
+        self.assertEqual(len([x for x in validate(data) if x.startswith("Engineering capstone lacks")]),
+                         len(ENGINEERING_CAPSTONES))
+
+    def test_ethics_requires_uncertainty_and_proof_texting_review(self):
+        data = ready_ledger()
+        del data["domains"]["bible_only_ethics"]["cases"][0]["proof_texting_check_passed"]
+        self.assertTrue(any("ETH-TRUTH" in x for x in validate(data)))
+
+    def test_independent_assurance_requires_inspectable_evidence(self):
+        data = ready_ledger()
+        data["independent_assurance"]["evidence"] = []
+        self.assertTrue(any("Independent assurance" in x for x in validate(data)))
+
+    def test_production_authority_must_remain_not_granted(self):
+        data = ready_ledger()
+        data["production_authority"] = "granted"
+        self.assertTrue(any("Production authority" in x for x in validate(data)))
