@@ -73,18 +73,35 @@ class InterfaceContractTests(unittest.TestCase):
         self.assertEqual(first.idempotency_key, second.idempotency_key)
 
 
-    def test_whitespace_and_case_do_not_bypass_generation_authority(self):
-        gateway = InterfaceGateway()
-        with self.assertRaises(InterfaceError):
-            gateway.invoke("IF-01", request(operation="  gEnErAtE  "))
+    def test_whitespace_and_case_do_not_bypass_consequential_authority(self):
+        required = {
+            "GENERATE": "generation_authorisation",
+            "PUBLISH": "publishing_authorisation",
+            "SPEND": "spending_authorisation",
+            "EXTERNAL_WRITE": "external_action_authorisation",
+        }
+        for operation, authority_key in required.items():
+            with self.subTest(operation=operation):
+                gateway = InterfaceGateway()
+                with self.assertRaises(InterfaceError):
+                    gateway.invoke(
+                        "IF-01",
+                        request(operation=f"  {operation.lower()}  "),
+                    )
+                with self.assertRaises(InterfaceError):
+                    gateway.invoke(
+                        "IF-01",
+                        request(operation=f" {operation} "),
+                        authority={authority_key: False},
+                    )
 
-    def test_explicit_generation_authority_is_required_even_with_whitespace(self):
+    def test_consequential_action_requires_exact_true_authority(self):
         gateway = InterfaceGateway()
         with self.assertRaises(InterfaceError):
             gateway.invoke(
                 "IF-01",
-                request(operation=" GENERATE "),
-                authority={"generation_authorisation": False},
+                request(operation="GENERATE"),
+                authority={"generation_authorisation": 1},
             )
 
 
