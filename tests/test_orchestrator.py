@@ -17,6 +17,14 @@ class OrchestratorTests(unittest.TestCase):
         self.assertTrue(all(u["status"] == "not_started" for u in data["units"].values()))
         self.assertFalse(data["events"][-1]["details"]["mastery_claim"])
 
+    def test_seeded_ledger_carries_prerequisites_into_assessment_contract(self):
+        data = seed_ledger()
+        self.assertEqual(["CS-FOUND"], data["units"]["PROG-CORE"]["prerequisites"])
+        self.assertEqual(["BIBLE-01"], data["units"]["BIBLE-02"]["prerequisites"])
+        self.assertEqual(["ETH-TRUTH"], data["units"]["ETH-STEWARD"]["prerequisites"])
+        self.assertEqual(["IF-18"], data["units"]["RS-CIE"]["prerequisites"])
+        self.assertEqual(4, len(data["units"]["INTEGRATED-CAPSTONE"]["prerequisites"]))
+
     def test_next_task_uses_canonical_domain_and_registry_order(self):
         data = seed_ledger()
         unit = next_unit(data)
