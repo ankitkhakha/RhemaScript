@@ -87,6 +87,18 @@ def build_registry():
          "Report limitations, unresolved assurance and authority boundaries"],
         ["All passed prerequisite units and their inspectable evidence"],
         "Simulate one end-to-end RhemaScript project from biblical source to final-film readiness without media generation or publication.",rubric))
+    # Enforce the declared programme sequence in the ledger itself. A UI/domain
+    # ordering is not a prerequisite control: direct assessment calls must also
+    # be unable to bypass earlier units.
+    by_domain = {}
+    for item in units:
+        by_domain.setdefault(item["domain"], []).append(item)
+    for domain_units in by_domain.values():
+        for index, item in enumerate(domain_units):
+            item["prerequisites"] = [domain_units[index - 1]["id"]] if index else []
+    final_domain_units = [items[-1]["id"] for items in by_domain.values()]
+    units[-1]["prerequisites"] = final_domain_units
+
     ids=[u["id"] for u in units]
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate curriculum unit identifier")
