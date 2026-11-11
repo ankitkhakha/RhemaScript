@@ -51,6 +51,15 @@ class LearningWorkflowTests(unittest.TestCase):
         record_rubric_assessment(self.data,"U1",{"correctness":3,"reasoning":3},"artifact","verified")
         with self.assertRaises(LedgerError):
             create_lesson(self.data,"U1",["new"],["source"],"practice",{"criterion":"pass"})
+    def test_passed_unit_rejects_rubric_reassessment(self):
+        self.lesson()
+        record_practice(self.data,"U1","artifact","method","result")
+        record_rubric_assessment(self.data,"U1",{"correctness":3,"reasoning":3},"artifact","verified")
+        with self.assertRaises(LedgerError):
+            record_rubric_assessment(self.data,"U1",{"correctness":4,"reasoning":4},"new-artifact","verified")
+        self.assertEqual(self.data["units"]["U1"]["score"],3)
+        validate(self.data)
+
     def test_correction_requires_failed_or_incomplete_state(self):
         self.lesson()
         with self.assertRaises(LedgerError):
