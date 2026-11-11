@@ -84,3 +84,20 @@ python -m unittest tests.test_api_contracts tests.test_api_security_lab tests.te
 ```
 
 The token issuer helper exists only to create local test tokens. Real token issuance and identity lifecycle belong to a trusted identity provider. The HMAC secret is injected and must be managed outside source control. This deliberately small implementation is for learning and must not replace a maintained, security-reviewed OIDC/JWT library in production. It does not implement key rotation, asymmetric signatures, revocation, refresh tokens, discovery, TLS, or secure secret storage. Do not put a production secret in tests or repository files.
+
+
+## SSRF, upstream response and security configuration practicals
+
+- `raei.outbound_security.validate_outbound_url` enforces HTTPS, exact hostname allowlisting, port 443 only, no URL credentials, no fragments, and rejects IP-literal and local hostnames.
+- `validate_upstream_json` requires JSON content type, caps body size, rejects invalid UTF-8/JSON, duplicate keys and non-object roots.
+- `raei.security_config.audit_security_config` checks explicit safe defaults for debug, TLS, cookie flags, SameSite, CSRF, CORS, trusted proxy hops, session-secret length and baseline response security headers.
+- Tests: `tests/test_outbound_security.py` and `tests/test_security_config.py`.
+
+Run:
+
+```sh
+python -m unittest tests.test_outbound_security tests.test_security_config -v
+python -m unittest discover -s tests -v
+```
+
+**Important boundary:** URL validation is only a pre-request policy check. It does not resolve DNS, pin the resolved address, verify the connected peer, or validate redirect targets. A real HTTP client must disable redirects or revalidate every redirect and enforce public-address checks at connection time to mitigate DNS rebinding and resolution races. The exercise performs no network requests. The configuration audit is a teaching checklist, not a framework-specific deployment scanner.
