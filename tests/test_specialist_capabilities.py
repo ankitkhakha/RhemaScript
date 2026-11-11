@@ -18,7 +18,19 @@ class SpecialistCapabilityTests(unittest.TestCase):
     def test_quality_hard_stop_cannot_be_averaged_away(self):
         scores={"biblical_integrity":100,"script_narration":100,"narrative":100,"visual":100,"audio":100,
         "technical":100,"rights_provenance":100,"security_compliance":100,"audience_suitability":100}
-        result=assess_specialist("CAP-11",{"quality_dimensions":scores,"hard_stop_findings":["RIGHTS_UNCLEARED"]})
+        qc={
+            "approved_narration_text":"The Lord is faithful.",
+            "final_transcript_text":"The Lord is faithful.",
+            "transcript_source":"HUMAN_TRANSCRIPT",
+            "biblical_integrity_status":"PASS","source_integrity_status":"PASS",
+            "rights_status":"CLEARED","platform_compliance_status":"PASS",
+            "visual_alignment_findings":[],"audio_visual_findings":[],"caption_findings":[],
+            "technical_export":{"expected_aspect_ratio":"9:16","actual_aspect_ratio":"9:16",
+                "expected_runtime_seconds":30,"actual_runtime_seconds":30,
+                "expected_resolution":"1080x1920","actual_resolution":"1080x1920",
+                "expected_fps":30,"actual_fps":30},
+        }
+        result=assess_specialist("CAP-11",{"quality_dimensions":scores,"hard_stop_findings":["RIGHTS_UNCLEARED"],"qc_evidence":qc})
         self.assertEqual(result["release_recommendation"],"BLOCKED_BY_HARD_STOP")
 
     def test_script_mapping_reports_unmapped_story_element(self):

@@ -27,10 +27,10 @@ EVIDENCE_REQUIREMENTS = {
  'CAP-08': ('shot_plan','runtime_budget_seconds','asset_inventory','approved_narration_segments','audio_caption_plan','generation_constraints'),
  'CAP-09': ('target_platform','generation_request','verified_tool_evidence'),
  'CAP-10': ('asset_manifest','rights_provenance'),
- 'CAP-11': ('quality_dimensions','hard_stop_findings'),
+ 'CAP-11': ('quality_dimensions','hard_stop_findings','qc_evidence'),
  'CAP-12': ('threats','control_evidence'),
  'CAP-13': ('rights_basis','provenance_chain'),
- 'CAP-14': ('failure_record','reproduction_or_observation'),
+ 'CAP-14': ('failure_record','reproduction_or_observation','diagnostic_evidence'),
  'CAP-15': ('performance_observations','linked_production_version'),
 }
 
