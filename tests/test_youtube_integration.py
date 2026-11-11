@@ -57,6 +57,24 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
+    def test_thumbnail_write_requires_full_project_authority(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        context = self.publish_context(authorised=False)
+        with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+            client.set_thumbnail("video-123", "/not/read.png", **{
+                key: value for key, value in context.items()
+                if key != "publishing_authorisation"
+            }, publishing_authorisation=False)
+
+    def test_thumbnail_write_rejects_out_of_order_gate_records(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        context = self.publish_context()
+        context["gate_records"][0], context["gate_records"][1] = (
+            context["gate_records"][1], context["gate_records"][0]
+        )
+        with self.assertRaisesRegex(YouTubeIntegrationError, "expected gate"):
+            client.set_thumbnail("video-123", "/not/read.png", **context)
+
     def test_invalid_video_metadata_is_rejected_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
