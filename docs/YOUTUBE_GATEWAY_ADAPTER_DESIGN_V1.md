@@ -1,6 +1,6 @@
 # YouTube provider gateway adapter — architecture decision record
 
-**Status:** IF-18 client routing implemented; automated gateway verification in progress; owner-controlled OAuth and live channel validation not performed.
+**Status:** IF-18 client routing implemented; mocked gateway-backed resumable upload, video verification, and thumbnail-write tests pass CI; owner-controlled OAuth and live channel validation not performed.
 **Scope:** RhemaScript YouTube Data API v3 and YouTube Analytics API.
 **Cost boundary:** Python standard library only. No paid service, dependency, hosted proxy, or credential relay.
 
@@ -39,7 +39,8 @@ The adapter is implemented as an extension of the existing external gateway boun
 - Host, port, path, userinfo, fragment, and redirect attacks are rejected.
 - Audit records contain no credentials, query values, session URL, payload, or media bytes.
 - OAuth refresh, GET, resumable session creation, PUT chunks, 308 acknowledgements, final status verification, and Analytics GET all pass through the same configured gateway boundary.
-- The current automated suite has passed the base IF-18 client-routing test. Explicit upload-chunk authority/308 tests have been added and await CI confirmation; full end-to-end gateway-backed resumable upload and thumbnail tests remain outstanding.
+- CI has passed the gateway-backed resumable-upload, binary chunk/308 acknowledgement, final video verification, and thumbnail-write tests using mocked transports. These tests verify routing, authority checks, and audit redaction; they do not establish live Google account access or real provider behavior.
+- The method-aware gateway now enforces a path-segment boundary: an allowed path prefix matches only the exact path or a child path, not a sibling such as `/youtube/v3/channelsEvil`.
 - Failed and ambiguous chunk requests do not silently restart or skip bytes.
 - Existing generic gateway and local runtime contract tests remain unchanged and pass.
 
