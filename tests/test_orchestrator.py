@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,7 +7,8 @@ from raei.curriculum import BIBLE_BOOKS
 from raei.orchestrator import (
     DOMAIN_ORDER, execution_brief, initialise, next_unit, seed_ledger,
 )
-from raei.ledger import LedgerError, load
+from raei.ledger import LedgerError, load, save
+from raei.learning import record_practice, record_rubric_assessment
 
 
 class OrchestratorTests(unittest.TestCase):
@@ -45,6 +47,27 @@ class OrchestratorTests(unittest.TestCase):
             saved = load(path)
             self.assertEqual(result["unit_count"], len(saved["units"]))
             self.assertEqual(saved["units"]["CS-FOUND"]["status"], "not_started")
+
+    def test_seeded_curriculum_connects_to_original_learning_functions(self):
+        data = seed_ledger()
+        unit = data["units"]["CS-FOUND"]
+        record_practice(data, "CS-FOUND", "evidence/cs-found.md", "original exercise", "result inspected")
+        scores = {criterion: 3 for criterion in unit["rubric"]}
+        record_rubric_assessment(data, "CS-FOUND", scores, "evidence/cs-found.md", "verified")
+        self.assertEqual(unit["status"], "passed")
+        self.assertEqual(unit["score"], 3)
+
+    def test_cli_practice_and_assess_commands_persist_seeded_unit(self):
+        from raei.orchestrator import main
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.json"
+            save(path, seed_ledger())
+            self.assertEqual(main(["--ledger", str(path), "practice", "CS-FOUND",
+                                   "evidence/cs-found.md", "original exercise", "result inspected"]), 0)
+            scores = json.dumps({criterion: 3 for criterion in load(path)["units"]["CS-FOUND"]["rubric"]})
+            self.assertEqual(main(["--ledger", str(path), "assess", "CS-FOUND",
+                                   scores, "evidence/cs-found.md"]), 0)
+            self.assertEqual(load(path)["units"]["CS-FOUND"]["status"], "passed")
 
     def test_initialise_refuses_to_overwrite_without_force(self):
         with tempfile.TemporaryDirectory() as directory:
