@@ -98,7 +98,9 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
     if missing:
         raise EvidencePackError("missing required fields: " + ", ".join(sorted(missing)))
     manifest_id = _required_string(pack["manifest_id"], "manifest_id")
-    _required_string(pack["schema_version"], "schema_version")
+    schema_version = _required_string(pack["schema_version"], "schema_version")
+    if schema_version != "1.0":
+        raise EvidencePackError(f"unsupported schema_version: {schema_version}")
     project = pack["project_record"]
     if not isinstance(project, dict):
         raise EvidencePackError("project_record must be an object")
