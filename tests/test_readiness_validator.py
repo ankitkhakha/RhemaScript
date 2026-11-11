@@ -31,7 +31,7 @@ def ready_ledger():
             "integrated_capstone": {"status": "passed", "competency_score": 3,
                                     "critical_failure": False, "evidence": [{"status":"verified","evidence_ref":"capstone/report.md","score":3}]},
         },
-        "independent_assurance": {"status": "satisfied", "evidence": ["independent-assurance/report"]},
+        "independent_assurance": {"status": "satisfied", "evidence": [{"evidence_ref":"independent-assurance/report","status":"verified"}]},
         "production_authority": "not_granted",
     }
 
@@ -92,9 +92,6 @@ class ReadinessValidatorTests(unittest.TestCase):
         self.assertTrue(validate(data))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
     def test_absent_evidence_score_is_not_defaulted_to_three(self):
         data = ready_ledger()
         data["domains"]["engineering"]["evidence"][0].pop("score")
@@ -120,3 +117,7 @@ if __name__ == "__main__":
         data = ready_ledger()
         data["production_authority"] = "granted"
         self.assertTrue(any("Production authority" in x for x in validate(data)))
+
+
+if __name__ == "__main__":
+    unittest.main()
