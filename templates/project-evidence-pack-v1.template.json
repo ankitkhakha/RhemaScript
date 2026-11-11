@@ -1,0 +1,17 @@
+{
+  "manifest_id": "RS-PROJECT-001-MANIFEST",
+  "schema_version": "1.0",
+  "project_record": {
+    "record_id": "RS-PROJECT-001-RECORD",
+    "record_type": "RHEMASCRIPT_PROJECT",
+    "schema_version": "1.0",
+    "project_id": "RS-PROJECT-001",
+    "status": "DRAFT",
+    "classification": "OPERATIONAL",
+    "version": "1.0"
+  },
+  "artifacts": [],
+  "evidence_records": [],
+  "source_to_final_links": [],
+  "gate_records": []
+}
