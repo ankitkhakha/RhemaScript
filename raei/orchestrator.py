@@ -16,7 +16,7 @@ from .ledger import (
     LedgerError, append_event, empty_ledger, load, report, save,
     validate,
 )
-from .learning import record_practice, record_rubric_assessment
+from .learning import record_practice, record_rubric_assessment, record_correction
 
 DOMAIN_ORDER = (
     "engineering",
@@ -130,6 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     assess.add_argument("evidence_ref")
     assess.add_argument("--evidence-status", choices=["verified", "reported_unverified", "planned"], default="verified")
     assess.add_argument("--note", default="")
+    correction = commands.add_parser("correct")
+    correction.add_argument("unit_id")
+    correction.add_argument("correction_note")
+    correction.add_argument("new_artifact_ref")
+    correction.add_argument("method")
+    correction.add_argument("result")
     args = parser.parse_args(argv)
 
     try:
@@ -164,6 +170,13 @@ def main(argv: list[str] | None = None) -> int:
                           "status": data["units"][args.unit_id]["status"],
                           "score": data["units"][args.unit_id]["score"],
                           "criterion_scores": data["units"][args.unit_id]["criterion_scores"]}
+            elif args.command == "correct":
+                record_correction(data, args.unit_id, args.correction_note,
+                                  args.new_artifact_ref, args.method, args.result)
+                save(args.ledger, data)
+                result = {"recorded": "correction", "unit_id": args.unit_id,
+                          "status": data["units"][args.unit_id]["status"],
+                          "correction_count": len(data["units"][args.unit_id]["corrections"])}
             else:
                 result = report(data)
         print(json.dumps(result, ensure_ascii=False, indent=2))
