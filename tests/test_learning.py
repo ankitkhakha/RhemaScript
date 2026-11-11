@@ -23,6 +23,23 @@ class LearningWorkflowTests(unittest.TestCase):
         record_rubric_assessment(self.data,"U1",{"correctness":3,"reasoning":4},"tests/output.txt","verified")
         self.assertEqual(self.data["units"]["U1"]["status"],"passed")
         validate(self.data)
+    def test_boolean_rubric_score_rejected(self):
+        self.lesson()
+        record_practice(self.data,"U1","artifact","method","result")
+        with self.assertRaises(LedgerError):
+            record_rubric_assessment(self.data,"U1",{"correctness":True,"reasoning":4},"artifact","verified")
+
+    def test_whitespace_practice_reference_rejected(self):
+        self.lesson()
+        with self.assertRaises(LedgerError):
+            record_practice(self.data,"U1","   ","method","result")
+
+    def test_whitespace_assessment_reference_rejected(self):
+        self.lesson()
+        record_practice(self.data,"U1","artifact","method","result")
+        with self.assertRaises(LedgerError):
+            record_rubric_assessment(self.data,"U1",{"correctness":4,"reasoning":4},"   ","verified")
+
     def test_every_rubric_criterion_must_be_scored(self):
         self.lesson()
         record_practice(self.data,"U1","artifact","method","result")
