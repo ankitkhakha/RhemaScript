@@ -1,6 +1,6 @@
 # YouTube provider gateway adapter — architecture decision record
 
-**Status:** Proposed adapter contract; provider activation blocked pending an approved interface mapping.
+**Status:** Interface mapping selected by owner-delegated engineering decision; adapter implementation and verification remain in progress.
 **Scope:** RhemaScript YouTube Data API v3 and YouTube Analytics API.
 **Cost boundary:** Python standard library only. No paid service, dependency, hosted proxy, or credential relay.
 
@@ -14,9 +14,9 @@
 
 ## Decision
 
-Do not assign YouTube to an arbitrary IF identifier. Do not route a dummy JSON request through the gateway and call that integration. Do not change the local runtime interface adapters or their synthetic contract.
+**YouTube is assigned to `IF-18` as its dedicated external provider interface.** The owner delegated the interface selection to engineering on 2026-11-12, and engineering selected IF-18 to isolate the YouTube provider boundary from the other generic interfaces. This is a provider mapping for `ExternalIntegrationGateway` only; it does not change the local `InterfaceGateway`, its synthetic adapters, or the canonical registry's interface tuple.
 
-The YouTube transport adapter must be configured with an explicitly approved interface identifier. It must reject missing, unknown, unbound, or disabled interface configuration before making any network request. No interface ID is selected by this proposal.
+Do not route a dummy JSON request through the gateway and call that integration. Do not change local runtime interface adapters or their synthetic contract. The YouTube transport adapter must reject missing, unknown, unbound, or disabled IF-18 configuration before making any network request. No other IF identifier is to be treated as YouTube.
 
 ## Required adapter contract
 
@@ -33,7 +33,7 @@ The adapter may be implemented only as an extension of the existing external gat
 
 ## Required tests before activation
 
-- Unknown or missing interface mapping fails before transport.
+- Any interface other than the explicitly mapped `IF-18`, and missing IF-18 binding, fail before transport.
 - Gateway disabled and missing audit sink fail before transport.
 - Every supported HTTP method and operation is allowlisted.
 - Host, port, path, userinfo, fragment, and redirect attacks are rejected.
@@ -44,4 +44,4 @@ The adapter may be implemented only as an extension of the existing external gat
 
 ## Approval and activation boundary
 
-This record does not amend the canonical registry, assign IF-01..IF-18, enable external integration, authorize OAuth, connect a channel, upload media, or publish content. The interface mapping must be explicitly approved through the existing RhemaScript governance before a provider binding can be configured. The YouTube integration remains a dormant prototype until the adapter and its tests are complete and the owner completes local OAuth setup.
+This record assigns only the YouTube external provider mapping to IF-18 under the owner's delegated engineering decision. It does not amend authority masters, enable external integration, authorize OAuth, connect a channel, upload media, or publish content. The YouTube integration remains dormant until the gateway adapter and its tests are complete and the owner completes local OAuth setup.
