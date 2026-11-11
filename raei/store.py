@@ -198,12 +198,12 @@ class EvidenceStore:
                 raise StoreError(f"prerequisite is not passed: {incomplete['prerequisite_id']}")
             status = "passed" if score >= 3 and evidence_status == "verified" else "needs_correction"
             updated = _timestamp()
-            db.execute(
+            cursor = db.execute(
                 """UPDATE units SET status=?,score=?,evidence_ref=?,evidence_status=?,
                    version=version+1,updated_at=? WHERE unit_id=? AND version=?""",
                 (status, score, evidence_ref, evidence_status, updated, unit_id, expected_version),
             )
-            if db.total_changes == 0:
+            if cursor.rowcount != 1:
                 raise StoreError("concurrent update detected")
             event = self._append_event(db, "assessment_recorded", unit_id,
                 {"score": score, "evidence_ref": evidence_ref, "evidence_status": evidence_status,
