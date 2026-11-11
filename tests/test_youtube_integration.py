@@ -4,6 +4,7 @@ import unittest
 from datetime import date
 from unittest.mock import patch
 
+from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
     youtube_provider_binding,
@@ -125,6 +126,53 @@ class YouTubeIntegrationTests(unittest.TestCase):
         result = client.channel()
         self.assertEqual(result["id"], "channel-1")
         self.assertEqual(calls, {"tokens": 2, "channel": 2})
+
+    def test_resumable_upload_and_verification_use_configured_if18_gateway(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, dict(headers), body))
+                if url.startswith("https://oauth2.googleapis.com/token"):
+                    return 200, b'{"access_token":"gateway-access"}', {}
+                if url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                    return 200, b"", {
+                        "Location": "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=private-session"
+                    }
+                if url.endswith("/session?upload_id=private-session") and method == "PUT":
+                    return 201, b'{"id":"gateway-video"}', {}
+                if url.startswith("https://www.googleapis.com/youtube/v3/videos?"):
+                    return 200, b'{"items":[{"id":"gateway-video","snippet":{"title":"Approved"},"status":{"privacyStatus":"private","uploadStatus":"uploaded"},"processingDetails":{"processingStatus":"succeeded"}}]}', {}
+                raise AssertionError("unexpected method-aware gateway request: " + method + " " + url)
+
+        events = []
+        transport = MethodTransport()
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),), transport=transport,
+            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
+        )
+        client = YouTubeClient(self.config(), gateway=gateway)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"approved-video-bytes")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                result = client.upload_video(
+                    video.name, title="Approved", description="Test",
+                    **self.publish_context(),
+                )
+                verified = client.verify_video(result["video_id"])
+
+        self.assertEqual(result["video_id"], "gateway-video")
+        self.assertEqual(verified["privacy_status"], "private")
+        self.assertEqual([call[1] for call in transport.calls],
+                         ["POST", "POST", "PUT", "GET"])
+        self.assertEqual(
+            [event["operation"] for event in events if event["phase"] == "REQUESTED"],
+            ["OAUTH_TOKEN", "UPLOAD_SESSION", "UPLOAD_CHUNK", "VIDEO_READ"],
+        )
+        self.assertNotIn("gateway-access", repr(events))
+        self.assertNotIn("private-session", repr(events))
+        self.assertNotIn("approved-video-bytes", repr(events))
 
     def test_request_rejects_non_google_hosts_before_transport(self):
         calls = []
