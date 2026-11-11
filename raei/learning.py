@@ -23,7 +23,7 @@ def record_practice(data, unit_id, artifact_ref, method, result, status="verifie
         raise LedgerError("passed units are immutable; create a versioned unit for further practice")
     if data["units"][unit_id].get("lesson") is None:
         raise LedgerError("cannot record practice before lesson is defined")
-    if not artifact_ref or not method or not result:
+    if not all(isinstance(value, str) and value.strip() for value in (artifact_ref, method, result)):
         raise LedgerError("practice requires artifact reference, method and result")
     if status not in {"verified", "reported_unverified", "planned"}:
         raise LedgerError("invalid practice evidence status")
@@ -46,11 +46,11 @@ def record_rubric_assessment(data, unit_id, criterion_scores, evidence_ref, evid
     rubric=lesson["rubric"]
     if set(criterion_scores) != set(rubric):
         raise LedgerError("criterion scores must match every rubric criterion exactly")
-    if any(not isinstance(score,int) or not 0 <= score <= 4 for score in criterion_scores.values()):
+    if any(not isinstance(score,int) or isinstance(score,bool) or not 0 <= score <= 4 for score in criterion_scores.values()):
         raise LedgerError("each criterion score must be an integer from 0 to 4")
     if evidence_status not in {"verified","reported_unverified","planned"}:
         raise LedgerError("invalid evidence status")
-    if evidence_status == "verified" and not evidence_ref:
+    if evidence_status == "verified" and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
         raise LedgerError("verified assessment requires an evidence reference")
     if not any(p["status"]=="verified" for p in unit.get("practice",[])):
         raise LedgerError("at least one verified practice record is required")
