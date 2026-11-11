@@ -85,3 +85,17 @@ python -m unittest tests.test_api_contracts -v
 ```
 
 The policy consumes a preconstructed principal; it does not authenticate users, issue credentials, manage sessions, or replace a production identity provider. The example role rules are illustrative and do not grant access to RhemaScript production systems. A production implementation would need a separately authorised threat model, identity lifecycle, secure secret handling, transport protections, audit review and deployment approval.
+
+
+## API security and authorization capstone practical
+
+The expanded local lab is documented in `raei/studies/engineering/API-SECURITY-AUTHORIZATION.md`. It maps the OWASP API Security Top 10 (2023) to the RAEI syllabus and adds a multi-user record API simulation with object ownership checks, role/action authorization, field allowlists, response filtering, optimistic version checks, per-subject rate limiting and privacy-conscious audit outcomes.
+
+Run:
+
+```sh
+python -m unittest tests.test_api_contracts tests.test_api_security_lab -v
+python -m unittest discover -s tests -v
+```
+
+The lab receives a preconstructed trusted principal; it does not implement authentication, OAuth/OIDC, token validation, TLS, a network server or distributed rate limiting. The lab is not a production service or security certification. The learner must explain and test these missing controls before the competency can be assessed.
