@@ -80,6 +80,26 @@ class EvidenceStoreTests(unittest.TestCase):
         self.assertTrue(self.store.verify_event_chain())
         self.assertEqual(self.store.event_count(), 2)
 
+    def test_backup_restore_preserves_state_and_audit_chain(self):
+        self.store.create_unit("U1", "Foundations")
+        self.store.assess("U1", 2, "attempt", "verified", 1)
+        backup = Path(self.temp.name) / "backup.sqlite3"
+        restored_path = Path(self.temp.name) / "restored.sqlite3"
+        self.store.backup_to(backup)
+        restored = EvidenceStore.restore_from(backup, restored_path)
+        self.assertEqual(restored.get_unit("U1")["status"], "needs_correction")
+        self.assertEqual(restored.event_count(), self.store.event_count())
+        self.assertTrue(restored.verify_event_chain())
+
+    def test_restore_refuses_to_overwrite_existing_destination(self):
+        backup = Path(self.temp.name) / "backup.sqlite3"
+        self.store.backup_to(backup)
+        existing = Path(self.temp.name) / "existing.sqlite3"
+        existing.write_text("do not overwrite")
+        with self.assertRaisesRegex(StoreError, "refusing to overwrite"):
+            EvidenceStore.restore_from(backup, existing)
+        self.assertEqual(existing.read_text(), "do not overwrite")
+
     def test_concurrent_competing_assessments_have_one_serial_winner(self):
         self.store.create_unit("U1", "Foundations")
         barrier = threading.Barrier(2)
