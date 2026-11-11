@@ -59,3 +59,16 @@ project = revise_stage(
 ```
 
 The example is a local learning record, not a RhemaScript production project or proof of biblical verification.
+
+
+## Transactional SQLite evidence-store practical
+
+`raei.store.EvidenceStore` is a local-only engineering practical using Python's standard-library SQLite implementation. It demonstrates atomic write transactions, foreign-key-enforced prerequisites, optimistic version checks, immutable passed units, idempotent request replay, a hash-linked audit event stream, and a competing-writer test.
+
+Run:
+
+```sh
+python -m unittest tests.test_store -v
+```
+
+The test suite uses temporary local databases. It makes no network calls and does not connect to a production RhemaScript database. A passing test demonstrates behaviour of this prototype under the tested cases; it is not a production security review, backup/restore certification, or proof of all concurrency failure modes. SQLite WAL and hash-linked events are operational mechanisms, not digital signatures or proof of operator identity.
