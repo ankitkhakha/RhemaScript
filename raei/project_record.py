@@ -97,3 +97,55 @@ def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstre
         ],
     })
     return result
+
+
+def compare_project_records(before, after):
+    """Return a deterministic change and approval-impact report for two snapshots."""
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        raise IntegrityError("both project snapshots must be objects")
+    if not before.get("project_id") or before.get("project_id") != after.get("project_id"):
+        raise IntegrityError("snapshots must share the same non-empty project_id")
+    before_stages = before.get("stages", {})
+    after_stages = after.get("stages", {})
+    if not isinstance(before_stages, dict) or not isinstance(after_stages, dict):
+        raise IntegrityError("stage collections must be objects")
+    changes = []
+    affected_gates = set()
+    for stage in STAGES:
+        old = before_stages.get(stage, {})
+        new = after_stages.get(stage, {})
+        if not isinstance(old, dict) or not isinstance(new, dict):
+            raise IntegrityError("stage records must be objects")
+        old_ref, new_ref = old.get("artifact_ref"), new.get("artifact_ref")
+        old_revision, new_revision = old.get("revision"), new.get("revision")
+        if old_ref != new_ref or old_revision != new_revision:
+            changes.append({
+                "stage": stage,
+                "before_artifact_ref": old_ref,
+                "after_artifact_ref": new_ref,
+                "before_revision": old_revision,
+                "after_revision": new_revision,
+            })
+            stage_index = STAGES.index(stage)
+            affected_gates.update(
+                gate for gate in GATES
+                if STAGES.index(GATE_STAGE[gate]) >= stage_index
+            )
+    approvals_after = after.get("approvals", {})
+    if not isinstance(approvals_after, dict):
+        raise IntegrityError("approval collection must be an object")
+    invalidated = sorted(
+        gate for gate in affected_gates
+        if not isinstance(approvals_after.get(gate), dict)
+        or approvals_after[gate].get("status") != "approved"
+        or not approvals_after[gate].get("approval_ref")
+    )
+    return {
+        "project_id": before["project_id"],
+        "changed_stages": changes,
+        "affected_gates": [gate for gate in GATES if gate in affected_gates],
+        "gates_without_current_approval_evidence": invalidated,
+        "requires_review": bool(changes or invalidated),
+        "generation_authority": "not_granted_by_comparison",
+        "publishing_authority": "not_granted_by_comparison",
+    }
