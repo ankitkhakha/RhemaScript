@@ -154,3 +154,20 @@ the commands. The example command above is illustrative; the CLI refuses to
 overwrite an existing ledger unless `init --force` is explicitly supplied.
 An assessment pass requires every rubric criterion to be at least 3 and a
 verified practice record. Reported or planned work cannot pass.
+
+
+## Local project-integrity CLI
+
+Validate a project-readiness JSON record without network access:
+
+```sh
+python -m raei.execution.project_integrity_cli path/to/project-readiness.json
+python -m raei.execution.project_integrity_cli path/to/project-readiness.json --json
+python -m unittest tests.test_project_integrity_cli -v
+```
+
+Exit codes: `0` means traceability checks passed, `1` means the record is
+blocked by one or more integrity findings, and `2` means the input file or
+JSON is invalid. A passing synthetic record demonstrates validator behaviour
+only. It does not prove real project approvals, authorize generation or
+publishing, or grant production authority.
