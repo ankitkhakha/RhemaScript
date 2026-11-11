@@ -35,7 +35,7 @@ def seed_ledger() -> dict[str, Any]:
             "id": item["id"],
             "title": item["title"],
             "domain": item["domain"],
-            "prerequisites": [],
+            "prerequisites": list(item.get("prerequisites", [])),
             "status": "not_started",
             "score": None,
             "evidence_ref": None,
