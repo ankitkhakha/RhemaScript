@@ -100,6 +100,25 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("EXTEND_SOURCE_CLIP_NOT_SELECTED", result["blocking_flags"])
         self.assertIn("EXTEND_IMAGE_REFERENCE_LIMIT_EXCEEDED", result["blocking_flags"])
 
+    def test_retired_veo_extend_workflow_is_explicitly_blocked(self):
+        request = flow_request(model="veo-3.1-quality", operation="veo_extend", plan_tier="PRO")
+        request["source_clip_selected"] = True
+        result = assess_tool_preflight(flow_evidence(request), as_of=date(2026, 11, 11))
+        self.assertEqual(result["model_lifecycle"]["status"], "RETIRED")
+        self.assertIn("MODEL_OR_WORKFLOW_RETIRED", result["blocking_flags"])
+
+    def test_sunset_scheduled_omni_flash_11_is_flagged_before_retirement(self):
+        request = flow_request(model="gemini-omni-flash-1.1")
+        result = assess_tool_preflight(flow_evidence(request), as_of=date(2026, 11, 11))
+        self.assertEqual(result["model_lifecycle"]["status"], "SUNSET_SCHEDULED")
+        self.assertIn("MODEL_RETIREMENT_SCHEDULED", result["blocking_flags"])
+
+    def test_sunset_model_becomes_retired_on_effective_date(self):
+        request = flow_request(model="gemini-omni-flash-1.1")
+        result = assess_tool_preflight(flow_evidence(request), as_of=date(2026, 12, 5))
+        self.assertEqual(result["model_lifecycle"]["status"], "RETIRED")
+        self.assertIn("MODEL_OR_WORKFLOW_RETIRED", result["blocking_flags"])
+
     def test_flow_extend_with_pro_and_selected_source_can_pass(self):
         request = flow_request(
             operation="omni_extend",
