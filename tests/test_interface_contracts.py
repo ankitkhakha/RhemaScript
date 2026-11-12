@@ -73,6 +73,20 @@ class InterfaceContractTests(unittest.TestCase):
         self.assertIsNot(first, second)
         self.assertEqual(first.idempotency_key, second.idempotency_key)
 
+    def test_replay_cache_is_namespaced_by_interface(self):
+        gateway = InterfaceGateway()
+        first = gateway.invoke("IF-01", request())
+        second = gateway.invoke("IF-02", request())
+        self.assertEqual(first.request_id, second.request_id)
+        self.assertEqual(first.idempotency_key, second.idempotency_key)
+        self.assertEqual(first.interface_id, "IF-01")
+        self.assertEqual(second.interface_id, "IF-02")
+
+    def test_malformed_authority_container_is_rejected_cleanly(self):
+        gateway = InterfaceGateway()
+        with self.assertRaises(InterfaceError):
+            gateway.invoke("IF-01", request(operation="GENERATE"), authority=[])
+
 
     def test_whitespace_and_case_do_not_bypass_consequential_authority(self):
         required = {
