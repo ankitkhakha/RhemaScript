@@ -47,7 +47,7 @@ class RAEICLITests(unittest.TestCase):
 
     def test_status_and_next_after_initialization(self):
         self.run_cli("init", "--database", str(self.database))
-        code, output, errors = self.run_cli("status", "--database", str(self.database))
+        code, output, errors = self.run_cli("status", "--database", str(self.database), "--evidence-root", str(self.private))
         self.assertEqual(code, 0, errors)
         self.assertEqual(json.loads(output)["recorded_units"], 0)
         code, output, errors = self.run_cli("next", "--database", str(self.database), "--evidence-root", str(self.private))
@@ -67,6 +67,32 @@ class RAEICLITests(unittest.TestCase):
         code, _, errors = self.run_cli("verify", "--database", str(self.database), "--evidence-root", str(self.private / "missing"))
         self.assertEqual(code, 2)
         self.assertIn("evidence artefact integrity", errors)
+
+    def test_modified_recorded_evidence_blocks_read_operations(self):
+        from rhemascript.evidence.artifact_verification import verify_artifact
+        from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
+
+        self.run_cli("init", "--database", str(self.database))
+        evidence_root = self.private / "evidence"
+        evidence_root.mkdir(mode=0o700)
+        os.chmod(evidence_root, 0o700)
+        artifact = evidence_root / "proof.json"
+        artifact.write_text('{"proof":"original"}', encoding="utf-8")
+        verified = verify_artifact(
+            evidence_root, "proof.json", evidence_id="EV-CLI-001", version="1.0"
+        )
+        registry = ReadinessRunRegistry(self.database)
+        registry.record(
+            "RUN-CLI-001",
+            {"assessment_is_approval": False, "assessment_is_execution_authorisation": False},
+            (verified,), (),
+        )
+        artifact.write_text('{"proof":"modified"}', encoding="utf-8")
+        code, _, errors = self.run_cli(
+            "status", "--database", str(self.database), "--evidence-root", str(evidence_root)
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("integrity verification failed", errors)
 
     def test_private_parent_is_required(self):
         public = self.root / "public"
