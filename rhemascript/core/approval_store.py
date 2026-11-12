@@ -11,7 +11,8 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
-from typing import Iterable
+
+from rhemascript.core.approvals import VerifiedApproval
 
 
 class ApprovalStoreError(RuntimeError):
@@ -88,7 +89,15 @@ class SQLiteApprovalConsumptionStore:
                 CREATE TABLE IF NOT EXISTS consumed_approvals (
                     approval_id TEXT PRIMARY KEY,
                     nonce TEXT NOT NULL UNIQUE,
+                    issuer TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    project_id TEXT NOT NULL,
+                    project_version TEXT NOT NULL,
+                    request_id TEXT NOT NULL,
+                    issued_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
+                    key_id TEXT NOT NULL,
                     consumed_at TEXT NOT NULL
                 )
             """)
@@ -114,27 +123,36 @@ class SQLiteApprovalConsumptionStore:
             raise ValueError("approval timestamps must be timezone-aware")
         return value.astimezone(timezone.utc).isoformat()
 
-    def consume_many_once(self, entries: tuple[tuple[str, str, datetime], ...]) -> bool:
-        """Atomically persist every approval consumption or none."""
+    def consume_many_once(self, entries: tuple[VerifiedApproval, ...]) -> bool:
+        """Atomically persist every verified approval and its audit attribution, or none."""
         if not isinstance(entries, tuple) or not entries:
             return False
         normalized = []
         for item in entries:
-            if (not isinstance(item, tuple) or len(item) != 3
-                    or not all(isinstance(x, str) and x.strip() for x in item[:2])):
+            if not isinstance(item, VerifiedApproval):
                 return False
-            approval_id, nonce, expires_at = item
+            values = (
+                item.approval_id, item.nonce, item.issuer, item.actor_id, item.action,
+                item.project_id, item.project_version, item.request_id, item.key_id,
+            )
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                return False
             try:
-                expiry = self._utc(expires_at)
+                issued_at = self._utc(item.issued_at)
+                expires_at = self._utc(item.expires_at)
             except ValueError:
                 return False
-            normalized.append((approval_id, nonce, expiry))
+            normalized.append((
+                item.approval_id, item.nonce, item.issuer, item.actor_id, item.action,
+                item.project_id, item.project_version, item.request_id, issued_at,
+                expires_at, item.key_id,
+            ))
         if (len({item[0] for item in normalized}) != len(normalized)
                 or len({item[1] for item in normalized}) != len(normalized)):
             return False
 
         now = datetime.now(timezone.utc)
-        if any(datetime.fromisoformat(item[2]) <= now for item in normalized):
+        if any(datetime.fromisoformat(item[9]) <= now for item in normalized):
             return False
         db = self._connect()
         try:
@@ -149,9 +167,12 @@ class SQLiteApprovalConsumptionStore:
                     return False
             consumed_at = self._utc(now)
             db.executemany(
-                "INSERT INTO consumed_approvals(approval_id, nonce, expires_at, consumed_at) VALUES (?, ?, ?, ?)",
-                [(approval_id, nonce, expiry, consumed_at)
-                 for approval_id, nonce, expiry in normalized],
+                """INSERT INTO consumed_approvals(
+                    approval_id, nonce, issuer, actor_id, action, project_id,
+                    project_version, request_id, issued_at, expires_at, key_id,
+                    consumed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [(*entry, consumed_at) for entry in normalized],
             )
             db.execute("COMMIT")
             os.chmod(self.path, 0o600)
