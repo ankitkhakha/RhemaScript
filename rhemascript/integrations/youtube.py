@@ -467,9 +467,22 @@ class YouTubeClient:
         path = Path(image_path)
         if not path.is_file():
             raise YouTubeIntegrationError("thumbnail file does not exist")
-        mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+        suffix = path.suffix.lower()
+        mime_by_suffix = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+        mime = mime_by_suffix.get(suffix)
+        if mime is None:
+            raise YouTubeIntegrationError("thumbnail must use a PNG or JPEG file extension")
+        # YouTube custom thumbnails are limited to 2 MB. Read one byte beyond
+        # the limit so a file that grows after stat() is still rejected.
+        try:
+            with path.open("rb") as image:
+                thumbnail_bytes = image.read(2 * 1024 * 1024 + 1)
+        except OSError:
+            raise YouTubeIntegrationError("thumbnail file could not be read") from None
+        if not thumbnail_bytes or len(thumbnail_bytes) > 2 * 1024 * 1024:
+            raise YouTubeIntegrationError("thumbnail must be non-empty and no larger than 2 MB")
         url = f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?{urlencode({'videoId': video_id})}"
-        status, raw, _ = self._authorized_request(url, method="POST", body=path.read_bytes(),
+        status, raw, _ = self._authorized_request(url, method="POST", body=thumbnail_bytes,
             headers={"Authorization": f"Bearer {self._token()}", "Content-Type": mime})
         if status not in (200, 201):
             raise YouTubeIntegrationError(f"thumbnail upload returned HTTP {status}")
