@@ -82,6 +82,33 @@ The existing interface gateway and project approval system remain intact. Do not
 
 The YouTube client is now routed through the existing provider-neutral external gateway when an IF-18 gateway is explicitly supplied. The provider binding declares the supported Google hosts, API path families, and HTTP methods for OAuth, channel/video reads, analytics, resumable upload sessions, upload chunks, and thumbnail writes. The client refuses live traffic if neither an explicitly configured gateway nor an injected offline test transport is supplied.
 
+### Read-only channel identity verification
+
+After owner-led OAuth configuration, the first live validation should be a read-only identity check. Obtain the intended channel ID from the owner's own YouTube/Studio account records, then explicitly call:
+
+~~~python
+from rhemascript.integrations import YouTubeClient, YouTubeConfig
+from rhemascript.integrations.youtube import youtube_provider_binding
+from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
+
+# Configure the existing IF-18 gateway and protected local audit sink first.
+# Keep the gateway disabled until the owner separately authorises this test.
+gateway = ExternalIntegrationGateway(
+    bindings=(youtube_provider_binding(),),
+    transport=UrllibTransport(),
+    credential_resolver=local_credential_resolver,
+    audit_sink=local_audit_sink,
+    enabled=True,  # only for this separately authorised read-only check
+)
+client = YouTubeClient(YouTubeConfig.from_environment(), gateway=gateway)
+identity = client.verify_connection(expected_channel_id="OWNER_CONFIRMED_CHANNEL_ID")
+~~~
+
+`verify_connection` requires an exact expected channel ID, refreshes OAuth if needed, calls only the authenticated channel-list read operation through IF-18, and fails if Google returns zero/multiple channels or a different channel ID. Its result contains only the matched channel ID, channel title (if supplied), and read-only/authenticated flags. It does not upload, change channel settings, set a thumbnail, run Analytics, or grant publishing authority.
+
+For this check, configure only the read-only YouTube scope needed for channel identity (`youtube.readonly`). Do not request `youtube.upload` or `yt-analytics.readonly` until those separate features are explicitly being prepared. Google may impose additional consent/verification requirements; review the current Google requirements before consent. Do not copy the placeholder channel ID, credentials or token values into the repository.
+
+
 The gateway extension preserves the original JSON POST invoke contract and adds a separate method-aware request path for OAuth and resumable protocols. Each provider request is audited without recording query values, authorization headers, OAuth body contents, upload-session URLs, or media bytes. Upload-session, upload-chunk, and thumbnail operations are checked against the separate PUBLISH authority at the gateway boundary. The YouTube client independently validates the Evidence Pack, all six ordered gates, final-film evidence, and human final acceptance before any publishing write.
 
 Automated CI has passed for the IF-18 gateway routing and fail-closed tests, the mocked end-to-end resumable upload (including binary chunk acknowledgements and final video verification), and the mocked gateway-backed thumbnail write. A path-segment boundary hardening test also verifies that sibling paths outside an operation's declared prefix are rejected before transport. These are mocked contract tests, not live Google account or provider validation.
