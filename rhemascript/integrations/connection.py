@@ -10,8 +10,9 @@ import argparse
 from dataclasses import replace
 from hashlib import sha256
 import json
+import os
+import stat
 from pathlib import Path
-import sys
 import uuid
 from typing import Sequence
 
@@ -78,8 +79,22 @@ def run_connection_check(credential_file: str | Path,
     if expected_channel_id != expected_channel_id.strip():
         raise YouTubeIntegrationError("expected channel ID must not contain surrounding whitespace")
 
+    audit_parent = Path(audit_file).expanduser().parent
+    if os.name != "posix":
+        raise YouTubeIntegrationError("read-only credential and audit files require POSIX permissions")
+    try:
+        parent_lstat = audit_parent.lstat()
+        parent_info = audit_parent.stat()
+    except OSError:
+        raise YouTubeIntegrationError("audit parent directory is missing or inaccessible") from None
+    if (stat.S_ISLNK(parent_lstat.st_mode) or not stat.S_ISDIR(parent_info.st_mode)
+            or parent_info.st_uid != os.getuid()
+            or stat.S_IMODE(parent_info.st_mode) & 0o077):
+        raise YouTubeIntegrationError("audit parent directory must be owner-controlled with 0700 permissions")
+    audit_target = Path(audit_file).expanduser()
+    if audit_target.exists() and audit_target.lstat().st_uid != os.getuid():
+        raise YouTubeIntegrationError("audit file must be owned by the current user")
     sink = JsonlAuditSink(audit_file)
-    expected_fp = _fingerprint(expected_channel_id)
     try:
         config = YouTubeConfig.from_private_file(credential_file)
         gateway = ExternalIntegrationGateway(
