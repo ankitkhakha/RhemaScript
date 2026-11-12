@@ -54,13 +54,17 @@ class ReadinessRunRegistry:
             return value
         raise TypeError(f"unsupported readiness payload value: {type(value).__name__}")
 
-    def record(self, run_id: str, report: dict[str, Any], evidence_versions: tuple[Any, ...]) -> bool:
+    def record(
+        self, run_id: str, report: dict[str, Any], evidence_versions: tuple[Any, ...],
+        source_resolution_receipts: tuple[Any, ...] = (),
+    ) -> bool:
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("run_id must be a non-empty string")
         payload = {
             "run_id": run_id,
             "report": self._normalise(report),
             "byte_verified_evidence": self._normalise(evidence_versions),
+            "source_resolution_receipts": self._normalise(source_resolution_receipts),
             "assessment_is_approval": False,
             "assessment_is_execution_authorisation": False,
         }
