@@ -23,7 +23,7 @@ class ProviderBinding:
     provider_name: str
     endpoint: str
     allowed_hosts: tuple[str, ...]
-    operations: dict[str, str]
+    operations: dict[str, str | dict[str, Any]]
     timeout_seconds: float = 10.0
     idempotency_header: str = "Idempotency-Key"
 
