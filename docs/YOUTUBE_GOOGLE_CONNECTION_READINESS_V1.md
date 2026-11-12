@@ -58,18 +58,49 @@ Google may change scope classification, verification or consent requirements. Th
 
 ## 5. Obtain and protect the refresh token
 
-The current RhemaScript client expects an OAuth refresh token supplied by the owner in the local process environment. This repository does not include a browser-based consent flow or a credential vault.
-
 The owner must obtain offline access through Google's supported OAuth flow for the intended channel account. Verify that the flow returns a refresh token and that the consented account is the intended channel owner or authorised channel manager.
 
-Store credentials only in an owner-controlled local secret mechanism appropriate to the operating system. Environment variables are supported by the current client, but they are not themselves an encrypted vault. Avoid shell history, command-line arguments, shared process listings, shell startup files with broad permissions, logs and crash reports. If the environment cannot protect the values adequately, do not activate the live client until a safer local secret-storage mechanism is selected.
+### Recommended local file option (POSIX)
 
-Required variable names (values must never be printed):
-- \`RHEMASCRIPT_YOUTUBE_CLIENT_ID\`
-- \`RHEMASCRIPT_YOUTUBE_CLIENT_SECRET\`
-- \`RHEMASCRIPT_YOUTUBE_REFRESH_TOKEN\`
+The client supports an optional owner-only local credential file. The repository provides an interactive setup helper for Linux/macOS:
 
-Never send the values to ChatGPT or paste them into GitHub.
+1. Create a private directory outside the repository, for example `~/.config/rhemascript`, and set its permissions to `0700`.
+2. Run:
+
+~~~bash
+python -m rhemascript.integrations.credentials --path "$HOME/.config/rhemascript/youtube-oauth.json"
+~~~
+
+3. Enter the OAuth client ID, client secret and refresh token at the prompts. Secret inputs are hidden.
+4. Load credentials from the file:
+
+~~~python
+from rhemascript.integrations import YouTubeConfig
+config = YouTubeConfig.from_private_file(
+    "~/.config/rhemascript/youtube-oauth.json"
+)
+~~~
+
+5. Run the offline preflight:
+
+~~~bash
+python -m rhemascript.integrations.preflight \
+  --credential-file "$HOME/.config/rhemascript/youtube-oauth.json" \
+  --audit-log "$HOME/.config/rhemascript/youtube-audit.jsonl"
+~~~
+
+The helper creates a new file with mode `0600`, refuses to overwrite an existing file, requires an existing owner-only parent directory (`0700` or stricter), and never prints credential values. The loader checks file type, symlink status, size and permissions.
+
+**Important:** this file is plaintext protected by filesystem permissions, not encrypted and not an OS keychain. Protect local account access and backups. Keep it outside Git, synchronised folders and shared drives. The built-in helper refuses non-POSIX platforms because equivalent ACL protections cannot be verified here. On Windows or other unsupported platforms, use the operating system's credential manager and inject the variables through a protected process-launch mechanism.
+
+### Environment-variable alternative
+
+The current client also supports:
+- `RHEMASCRIPT_YOUTUBE_CLIENT_ID`
+- `RHEMASCRIPT_YOUTUBE_CLIENT_SECRET`
+- `RHEMASCRIPT_YOUTUBE_REFRESH_TOKEN`
+
+Environment variables are not an encrypted vault. Avoid shell history, command-line arguments, shared process listings, broadly readable shell startup files, logs and crash reports. Never send the values to ChatGPT or paste them into GitHub.
 
 ## 6. Prepare the local audit destination
 
@@ -109,7 +140,8 @@ Implemented in PR #28:
 - IF-18 provider binding through the existing external gateway.
 - Fail-closed gateway routing, host/path/method restrictions and request auditing.
 - Local JSONL audit sink.
-- Offline local preflight.
+- Offline local preflight for environment variables or the protected credential file.
+- Interactive POSIX local credential-file setup and permission-checked loading (plaintext, owner-only file; not encrypted storage).
 - Mocked tests for channel reads, resumable upload, video verification, thumbnail write, authority checks and audit redaction.
 
 Not yet performed or verified:
