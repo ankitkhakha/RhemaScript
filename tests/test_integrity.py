@@ -52,6 +52,14 @@ class IntegrityChainTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertTrue(any("must match exactly: approved_script" in e for e in result["errors"]))
 
+    def test_root_stage_must_not_declare_upstream_dependencies(self):
+        project = complete_project()
+        project["stages"]["biblical_source"]["upstream_refs"] = ["unrelated-artifact"]
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("root stage must not declare upstream dependencies" in e
+                            for e in result["errors"]))
+
     def test_invalid_revision_is_rejected(self):
         project=complete_project()
         project["stages"]["storyboard"]["revision"]=0
