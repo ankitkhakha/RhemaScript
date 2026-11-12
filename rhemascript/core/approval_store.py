@@ -7,12 +7,16 @@ The parent directory must already be owner-only (0700 or stricter).
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
+import math
 import os
 from pathlib import Path
 import sqlite3
 import stat
 
-from rhemascript.core.approvals import VerifiedApproval
+from rhemascript.core.approvals import VerifiedApproval, is_verified_approval
 
 
 class ApprovalStoreError(RuntimeError):
@@ -25,7 +29,8 @@ class SQLiteApprovalConsumptionStore:
     def __init__(self, path: str | os.PathLike[str], *, timeout_seconds: float = 5.0):
         if os.name != "posix":
             raise ApprovalStoreError("built-in approval store requires POSIX file permissions")
-        if not isinstance(timeout_seconds, (int, float)) or not 0.1 <= timeout_seconds <= 30:
+        if (not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool)
+                or not math.isfinite(timeout_seconds) or not 0.1 <= timeout_seconds <= 30):
             raise ValueError("timeout_seconds must be between 0.1 and 30")
         self.path = Path(path).expanduser()
         self.timeout_seconds = float(timeout_seconds)
@@ -34,9 +39,18 @@ class SQLiteApprovalConsumptionStore:
         self._initialize_schema()
 
     def _validate_parent(self) -> None:
+        absolute = self.path.absolute()
+        current = Path(absolute.anchor)
         try:
+            for component in absolute.parts[1:-1]:
+                current = current / component
+                info = current.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    raise ApprovalStoreError("approval database path must not contain symlinked directories")
             info = self.path.parent.lstat()
             actual = self.path.parent.stat()
+        except ApprovalStoreError:
+            raise
         except OSError:
             raise ApprovalStoreError("approval database parent directory must already exist") from None
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(actual.st_mode):
@@ -106,7 +120,8 @@ class SQLiteApprovalConsumptionStore:
                     approval_id TEXT PRIMARY KEY,
                     nonce TEXT NOT NULL UNIQUE,
                     revoked_at TEXT NOT NULL,
-                    reason TEXT NOT NULL
+                    reason TEXT NOT NULL,
+                    revoked_by TEXT NOT NULL
                 )
             """)
             db.execute("COMMIT")
@@ -124,7 +139,15 @@ class SQLiteApprovalConsumptionStore:
         return value.astimezone(timezone.utc).isoformat()
 
     def consume_many_once(self, entries: tuple[VerifiedApproval, ...]) -> bool:
-        """Atomically persist every verified approval and its audit attribution, or none."""
+        """Consume only exact verifier-issued approval objects, atomically."""
+        if not isinstance(entries, tuple) or not entries:
+            return False
+        if any(not is_verified_approval(item) for item in entries):
+            raise ApprovalStoreError("approval consumption requires verifier-issued approval objects")
+        return self._consume_many_once(entries)
+
+    def _consume_many_once(self, entries: tuple[VerifiedApproval, ...]) -> bool:
+        """Private transaction primitive; callers must use consume_many_once."""
         if not isinstance(entries, tuple) or not entries:
             return False
         normalized = []
@@ -189,19 +212,20 @@ class SQLiteApprovalConsumptionStore:
         finally:
             db.close()
 
-    def revoke(self, approval_id: str, nonce: str, *, reason: str = "revoked") -> None:
-        """Record a revocation; a consumed approval remains consumed permanently."""
+    def revoke(self, approval_id: str, nonce: str, *, revoked_by: str, reason: str) -> None:
+        """Record an actor-attributed revocation; consumed approvals remain consumed."""
         if (not isinstance(approval_id, str) or not approval_id.strip()
                 or not isinstance(nonce, str) or not nonce.strip()
+                or not isinstance(revoked_by, str) or not revoked_by.strip()
                 or not isinstance(reason, str) or not reason.strip()
-                or len(reason) > 256):
-            raise ValueError("approval ID, nonce and a short reason are required")
+                or len(reason) > 256 or len(revoked_by) > 128):
+            raise ValueError("approval ID, nonce, revoking actor and a short reason are required")
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
-                "INSERT INTO revoked_approvals(approval_id, nonce, revoked_at, reason) VALUES (?, ?, ?, ?)",
-                (approval_id, nonce, self._utc(datetime.now(timezone.utc)), reason),
+                "INSERT INTO revoked_approvals(approval_id, nonce, revoked_at, reason, revoked_by) VALUES (?, ?, ?, ?, ?)",
+                (approval_id, nonce, self._utc(datetime.now(timezone.utc)), reason, revoked_by),
             )
             db.execute("COMMIT")
         except sqlite3.IntegrityError:
@@ -238,3 +262,91 @@ class SQLiteApprovalConsumptionStore:
             raise ApprovalStoreError("approval revocation state could not be read") from None
         finally:
             db.close()
+
+    def _snapshot_bytes(self) -> bytes:
+        db = self._connect()
+        try:
+            consumed = db.execute(
+                """SELECT approval_id, nonce, issuer, actor_id, action, project_id,
+                          project_version, request_id, issued_at, expires_at, key_id,
+                          consumed_at
+                   FROM consumed_approvals ORDER BY approval_id"""
+            ).fetchall()
+            revoked = db.execute(
+                """SELECT approval_id, nonce, revoked_at, reason, revoked_by
+                   FROM revoked_approvals ORDER BY approval_id"""
+            ).fetchall()
+        except sqlite3.Error:
+            raise ApprovalStoreError("approval state snapshot could not be read") from None
+        finally:
+            db.close()
+        payload = {
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v1",
+            "consumed": [list(row) for row in consumed],
+            "revoked": [list(row) for row in revoked],
+        }
+        return json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+
+    def checkpoint(self, key: bytes) -> dict[str, str]:
+        """Create an HMAC checkpoint; retain it outside this database."""
+        if not isinstance(key, bytes) or len(key) < 32:
+            raise ValueError("checkpoint key must contain at least 32 bytes")
+        payload = self._snapshot_bytes()
+        return {
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v1",
+            "snapshot_sha256": hashlib.sha256(payload).hexdigest(),
+            "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
+        }
+
+    def verify_checkpoint(self, checkpoint: object, key: bytes) -> bool:
+        if not isinstance(key, bytes) or len(key) < 32 or not isinstance(checkpoint, dict):
+            return False
+        if set(checkpoint) != {"schema", "snapshot_sha256", "hmac_sha256"}:
+            return False
+        if checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v1":
+            return False
+        try:
+            expected = self.checkpoint(key)
+        except (ApprovalStoreError, ValueError):
+            return False
+        return (
+            hmac.compare_digest(str(checkpoint.get("snapshot_sha256", "")), expected["snapshot_sha256"])
+            and hmac.compare_digest(str(checkpoint.get("hmac_sha256", "")), expected["hmac_sha256"])
+        )
+
+    def backup_to(self, destination: str | os.PathLike[str]) -> Path:
+        """Create an owner-only SQLite backup in an already-private directory."""
+        target = Path(destination).expanduser()
+        parent_info = target.parent.lstat()
+        parent_stat = target.parent.stat()
+        if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_stat.st_mode)
+                or parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) & 0o077):
+            raise ApprovalStoreError("backup parent directory must be owner-owned and private")
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(target, flags, 0o600)
+            os.fchmod(fd, 0o600)
+            os.close(fd)
+        except OSError:
+            raise ApprovalStoreError("approval backup destination could not be created safely") from None
+        source = self._connect()
+        destination_db = None
+        try:
+            destination_db = sqlite3.connect(target)
+            source.backup(destination_db)
+            destination_db.close()
+            destination_db = None
+            os.chmod(target, 0o600)
+            return target
+        except (OSError, sqlite3.Error):
+            if destination_db is not None:
+                destination_db.close()
+            try:
+                target.unlink()
+            except OSError:
+                pass
+            raise ApprovalStoreError("approval database backup failed") from None
+        finally:
+            source.close()
