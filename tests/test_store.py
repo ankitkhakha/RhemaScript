@@ -209,5 +209,22 @@ class EvidenceStoreTests(unittest.TestCase):
         self.assertTrue(self.store.verify_event_chain())
 
 
+
+    def test_backup_refuses_to_overwrite_existing_file(self):
+        destination = Path(self.temp.name) / "existing-backup.sqlite3"
+        destination.write_text("preserve this file")
+        with self.assertRaisesRegex(StoreError, "refusing to overwrite"):
+            self.store.backup_to(destination)
+        self.assertEqual(destination.read_text(), "preserve this file")
+
+    def test_backup_path_with_uri_reserved_characters_restores(self):
+        backup = Path(self.temp.name) / "backup #1? copy.sqlite3"
+        destination = Path(self.temp.name) / "restored-special.sqlite3"
+        self.store.create_unit("U1", "Foundations")
+        self.store.backup_to(backup)
+        restored = EvidenceStore.restore_from(backup, destination)
+        self.assertEqual(restored.get_unit("U1")["title"], "Foundations")
+        self.assertTrue(restored.verify_event_chain())
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
