@@ -35,7 +35,7 @@ python3 -m rhemascript.integrations.oauth_readonly \
   --credential-path "$HOME/.config/rhemascript/youtube-oauth.json"
 ```
 
-The command prompts for the Desktop OAuth client ID and client secret. The secret prompt is hidden. Enter the values from the intended Desktop OAuth client in Google Cloud Console. Do not paste either value into chat, a shell command, shell history, Git, or a screenshot.
+The command prompts for the Desktop OAuth client ID only. Desktop OAuth clients are public clients; this PKCE flow does not request, collect, or store a client secret. Do not paste credential values, authorization codes, tokens, or the full authorization URL into chat, a shell command, shell history, Git, or a screenshot.
 
 The command opens the browser for Google consent. Review the permission screen. It must request only YouTube read-only access. If Google displays Upload, Analytics, channel management, or any other permission, cancel and stop.
 
@@ -83,4 +83,4 @@ Stop if:
 - The credential or audit directory is not owner-controlled.
 - The authenticated channel ID does not match the expected channel ID.
 
-Never share the OAuth client secret, authorization code, access token, refresh token, credential JSON, or unredacted token response.
+Never share the authorization code, access token, refresh token, credential JSON, full authorization URL, or unredacted token response.
