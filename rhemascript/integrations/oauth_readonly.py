@@ -78,10 +78,11 @@ def _validate_token_response(payload: Any) -> tuple[str, str]:
     return access_token, refresh_token
 
 
-def _exchange_code(*, client_id: str, code: str,
+def _exchange_code(*, client_id: str, client_secret: str, code: str,
                    redirect_uri: str, verifier: str, timeout: float = 30.0) -> dict[str, Any]:
     body = urlencode({
         "client_id": client_id,
+        "client_secret": client_secret,
         "code": code,
         "code_verifier": verifier,
         "grant_type": "authorization_code",
@@ -314,11 +315,13 @@ def _callback_handler(result: dict[str, str], expected_state: str):
     return CallbackHandler
 
 
-def run_bootstrap(*, client_id: str,
+def run_bootstrap(*, client_id: str, client_secret: str,
                   credential_path: str | Path = DEFAULT_CREDENTIAL_PATH,
                   timeout_seconds: int = 300) -> None:
     if not isinstance(client_id, str) or not client_id.strip():
         raise OAuthBootstrapError("OAuth desktop client ID is required")
+    if not isinstance(client_secret, str) or not client_secret.strip():
+        raise OAuthBootstrapError("OAuth desktop client secret is required for this token exchange")
     if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 900:
         raise OAuthBootstrapError("OAuth callback timeout must be between 1 and 900 seconds")
     target = Path(credential_path).expanduser()
@@ -328,7 +331,7 @@ def run_bootstrap(*, client_id: str,
         client_id=client_id.strip(), timeout_seconds=timeout_seconds
     )
     payload = _exchange_code(
-        client_id=client_id.strip(),
+        client_id=client_id.strip(), client_secret=client_secret,
         code=code, redirect_uri=redirect_uri, verifier=verifier,
     )
     _access_token, refresh_token = _validate_token_response(payload)
@@ -356,9 +359,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="seconds to wait for the browser callback (default: 300)")
     args = parser.parse_args(argv)
     try:
+        from getpass import getpass
         client_id = (args.client_id or input("Google Desktop OAuth client ID: ")).strip()
+        client_secret = getpass("Google Desktop OAuth client secret (input hidden): ")
         run_bootstrap(
             client_id=client_id,
+            client_secret=client_secret,
             credential_path=args.credential_path,
             timeout_seconds=args.timeout,
         )
