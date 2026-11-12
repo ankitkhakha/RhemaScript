@@ -117,6 +117,17 @@ def _exchange_code(*, client_id: str, client_secret: str, code: str,
     return payload
 
 
+def _safe_callback_error_category(category: str) -> str:
+    """Return a fixed, non-sensitive callback diagnostic category."""
+    safe_categories = {
+        "invalid_request", "invalid_query", "unexpected_parameters",
+        "duplicate_parameters", "scope_mismatch", "invalid_issuer",
+        "state_mismatch", "authorization_denied",
+        "authorization_error_details", "missing_code",
+    }
+    return category if category in safe_categories else "callback_rejected"
+
+
 def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tuple[str, str, str]:
     """Run a one-shot 127.0.0.1 callback and return code, verifier, redirect URI."""
     if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 900:
@@ -156,15 +167,7 @@ def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tup
         server.server_close()
     if "error" in result:
         # Emit only a fixed internal category; never include callback values.
-        category = result["error"]
-        safe_categories = {
-            "invalid_request", "invalid_query", "unexpected_parameters",
-            "duplicate_parameters", "scope_mismatch", "invalid_issuer",
-            "state_mismatch", "authorization_denied",
-            "authorization_error_details", "missing_code",
-        }
-        if category not in safe_categories:
-            category = "callback_rejected"
+        category = _safe_callback_error_category(result["error"])
         raise OAuthBootstrapError(
             f"Google callback rejected ({category}); no credentials were saved"
         )
