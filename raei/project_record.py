@@ -34,9 +34,10 @@ def create_project_record(project_id):
 
 def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstream_refs=None):
     """Return a revised copy; invalidate affected approvals and append an audit event."""
-    if not isinstance(project, dict) or not project.get("project_id"):
-        raise IntegrityError("project with project_id is required")
-    if stage not in STAGES:
+    if (not isinstance(project, dict) or not isinstance(project.get("project_id"), str)
+        or not project["project_id"].strip()):
+        raise IntegrityError("project with non-empty string project_id is required")
+    if not isinstance(stage, str) or stage not in STAGES:
         raise IntegrityError("unknown source-to-final stage: " + str(stage))
     for field, value in (
         ("artifact_ref", artifact_ref),
@@ -48,6 +49,14 @@ def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstre
 
     result = deepcopy(project)
     stages = result.setdefault("stages", {})
+    if not isinstance(stages, dict):
+        raise IntegrityError("stages must be an object")
+    history = result.setdefault("revision_history", [])
+    if not isinstance(history, list):
+        raise IntegrityError("revision_history must be a list")
+    approvals_existing = result.setdefault("approvals", {})
+    if not isinstance(approvals_existing, dict):
+        raise IntegrityError("approvals must be an object")
     index = STAGES.index(stage)
     expected_upstream = []
     if index:
@@ -61,6 +70,8 @@ def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstre
         raise IntegrityError("upstream_refs must exactly match the immediate predecessor")
 
     prior = stages.get(stage, {})
+    if not isinstance(prior, dict):
+        raise IntegrityError("existing stage record must be an object")
     previous_revision = prior.get("revision", 0)
     if not isinstance(previous_revision, int) or isinstance(previous_revision, bool) or previous_revision < 0:
         raise IntegrityError("existing stage revision is invalid")
@@ -73,7 +84,7 @@ def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstre
         "upstream_refs": list(supplied_upstream),
     }
 
-    approvals = result.setdefault("approvals", {})
+    approvals = approvals_existing
     affected_index = index
     for gate in GATES:
         gate_stage_index = STAGES.index(GATE_STAGE[gate])
@@ -84,7 +95,7 @@ def revise_stage(project, stage, artifact_ref, source_ref, change_reason, upstre
                 "artifact_ref": None,
             }
 
-    result.setdefault("revision_history", []).append({
+    history.append({
         "stage": stage,
         "revision": revision,
         "previous_artifact_ref": prior.get("artifact_ref"),
@@ -103,7 +114,8 @@ def compare_project_records(before, after):
     """Return a deterministic change and approval-impact report for two snapshots."""
     if not isinstance(before, dict) or not isinstance(after, dict):
         raise IntegrityError("both project snapshots must be objects")
-    if not before.get("project_id") or before.get("project_id") != after.get("project_id"):
+    if (not isinstance(before.get("project_id"), str) or not before["project_id"].strip()
+        or before.get("project_id") != after.get("project_id"):
         raise IntegrityError("snapshots must share the same non-empty project_id")
     before_stages = before.get("stages", {})
     after_stages = after.get("stages", {})
