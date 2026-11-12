@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import threading
+import time
 
 
 class ExternalIntegrationError(RuntimeError):
@@ -23,7 +24,7 @@ class ProviderBinding:
     provider_name: str
     endpoint: str
     allowed_hosts: tuple[str, ...]
-    operations: dict[str, str]
+    operations: dict[str, str | dict[str, Any]]
     timeout_seconds: float = 10.0
     idempotency_header: str = "Idempotency-Key"
 
@@ -39,6 +40,23 @@ class ProviderBinding:
             raise ExternalIntegrationError("provider binding is incomplete")
         if self.timeout_seconds <= 0 or self.timeout_seconds > 60:
             raise ExternalIntegrationError("timeout must be between 0 and 60 seconds")
+        # Validate method-aware contracts before any request can be sent.
+        for operation, spec in self.operations.items():
+            if not isinstance(operation, str) or not operation.strip():
+                raise ExternalIntegrationError("provider operation names must be non-empty strings")
+            if isinstance(spec, dict):
+                method, hosts, path_prefix = spec.get("method"), spec.get("hosts"), spec.get("path_prefix")
+                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                    raise ExternalIntegrationError("method-aware provider contract has an invalid HTTP method")
+                if not isinstance(hosts, (tuple, list)) or not hosts or any(not isinstance(h, str) or not h.strip() for h in hosts):
+                    raise ExternalIntegrationError("method-aware provider contract has invalid hosts")
+                allowed = {h.lower() for h in self.allowed_hosts}
+                if any(h.lower() not in allowed for h in hosts):
+                    raise ExternalIntegrationError("method-aware provider contract host exceeds binding allowlist")
+                if (not isinstance(path_prefix, str) or not path_prefix.startswith("/")
+                    or path_prefix.startswith("//") or "?" in path_prefix or "#" in path_prefix
+                    or "\\" in path_prefix or any(part in {".", ".."} for part in path_prefix.split("/"))):
+                    raise ExternalIntegrationError("method-aware provider contract has an invalid path prefix")
 
 
 class Transport(Protocol):
@@ -93,7 +111,9 @@ class ExternalIntegrationGateway:
         self.enabled = enabled
         self._lock = threading.Lock()
         self._approval_lock = threading.Lock()
-        self._authorized_publish_requests: dict[str, tuple[str, str, dict[str, Any]]] = {}
+        self._authorized_publish_requests: dict[str, tuple[str, str, dict[str, Any], str, float]] = {}
+        self._publish_cache_ttl_seconds = 900.0
+        self._publish_cache_max_entries = 256
         self._responses = {}
 
     def invoke(self, interface_id: str, request: dict[str, Any], *,
@@ -129,7 +149,7 @@ class ExternalIntegrationGateway:
 
         operation = request["operation"].upper()
         path = binding.operations.get(operation)
-        if not path or path.startswith("//") or "://" in path:
+        if not isinstance(path, str) or not path or path.startswith("//") or "://" in path:
             raise ExternalIntegrationError("operation is not mapped by provider contract")
         if operation in self.CONSEQUENT_OPERATIONS:
             try:
@@ -227,10 +247,13 @@ class ExternalIntegrationGateway:
         if not isinstance(path_prefix, str) or not path_prefix.startswith("/") or ".." in path_prefix.split("/"):
             raise ExternalIntegrationError("provider path contract is invalid")
         parsed = urlparse(url)
+        decoded_path = unquote(parsed.path)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                 or parsed.port not in (None, 443) or parsed.fragment
                 or parsed.hostname.lower() not in {h.lower() for h in hosts}
-                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))):
+                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))
+                or "\\" in decoded_path or "\x00" in decoded_path
+                or any(part in {".", ".."} for part in decoded_path.split("/"))):
             raise ExternalIntegrationError("request URL is outside the provider operation allowlist")
         if not isinstance(body, (bytes, type(None))) or not 0 < max_response_bytes <= 8_000_000:
             raise ExternalIntegrationError("request body or response limit is invalid")
@@ -246,9 +269,13 @@ class ExternalIntegrationGateway:
             if self.approval_verifier is None:
                 raise ExternalIntegrationError("publishing requires a trusted signed approval verifier")
             with self._approval_lock:
+                now = time.monotonic()
+                for stale_id, stale in list(self._authorized_publish_requests.items()):
+                    if now - stale[4] >= self._publish_cache_ttl_seconds:
+                        self._authorized_publish_requests.pop(stale_id, None)
                 cached = self._authorized_publish_requests.get(request_id)
                 if cached is not None:
-                    cached_project, cached_version, audit_context, flow_type = cached
+                    cached_project, cached_version, audit_context, flow_type, created_at = cached
                     if cached_project != project_id or cached_version != source_version:
                         raise ExternalIntegrationError("approval request cannot be reused across project versions")
                     if flow_type != "VIDEO_UPLOAD" or operation.upper() != "UPLOAD_CHUNK":
@@ -288,8 +315,10 @@ class ExternalIntegrationGateway:
                         "approval_issuer": approvals[0].issuer,
                     }
                     flow_type = "VIDEO_UPLOAD" if operation.upper() == "UPLOAD_SESSION" else "THUMBNAIL"
+                    if len(self._authorized_publish_requests) >= self._publish_cache_max_entries:
+                        raise ExternalIntegrationError("publishing authorization cache is at capacity")
                     self._authorized_publish_requests[request_id] = (
-                        project_id, source_version, audit_context, flow_type,
+                        project_id, source_version, audit_context, flow_type, time.monotonic(),
                     )
         elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
@@ -339,7 +368,7 @@ class ExternalIntegrationGateway:
             self.audit_sink(dict(event))
             if (authority_operation == "PUBLISH"
                     and (operation.upper() == "THUMBNAIL_WRITE"
-                         or (operation.upper() == "UPLOAD_CHUNK" and status in (200, 201)))):
+                         or (operation.upper() == "UPLOAD_CHUNK" and (status in (200, 201) or 400 <= status < 500)))):
                 with self._approval_lock:
                     self._authorized_publish_requests.pop(request_id, None)
             return status, raw, response_headers
