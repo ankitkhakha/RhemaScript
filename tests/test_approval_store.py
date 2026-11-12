@@ -3,9 +3,14 @@ import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
+import json
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pathlib import Path
 
-from rhemascript.core.approvals import VerifiedApproval
+from rhemascript.core.approvals import ApprovalVerifier, VerifiedApproval
 from rhemascript.core.approval_store import (
     ApprovalStoreError, SQLiteApprovalConsumptionStore,
 )
@@ -38,6 +43,43 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(ApprovalStoreError, "verifier-issued"):
             self.store.consume_many_once((forged,))
         self.assertFalse(self.store.is_consumed(forged.approval_id, forged.nonce))
+
+    def test_public_consume_accepts_exact_verifier_object_but_rejects_copy(self):
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        now = datetime.now(timezone.utc)
+        payload = {
+            "schema": "RhemaScript.ApprovalCredential.v1",
+            "approval_id": "approval-verified-0001",
+            "issuer": "trusted-approval-issuer",
+            "actor_id": "director-0001",
+            "action": "PUBLISH",
+            "project_id": "RS-PWW-001",
+            "project_version": "3.2",
+            "request_id": "publish-request-0001",
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            "nonce": "nonce-verified-0001",
+            "key_id": "key-2026-01",
+        }
+        payload["signature"] = private_key.sign(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False, allow_nan=False).encode()
+        ).hex()
+        verifier = ApprovalVerifier(
+            issuer="trusted-approval-issuer",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=lambda entries: True,
+        )
+        verified = verifier.verify_and_consume(
+            payload, action="PUBLISH", project_id="RS-PWW-001",
+            project_version="3.2", request_id="publish-request-0001",
+        )
+        copied = replace(verified)
+        with self.assertRaisesRegex(ApprovalStoreError, "verifier-issued"):
+            self.store.consume_many_once((copied,))
+        self.assertTrue(self.store.consume_many_once((verified,)))
+        self.assertTrue(self.store.is_consumed(verified.approval_id, verified.nonce))
 
     def test_checkpoint_detects_rewritten_approval_state(self):
         entry = self.record("approval-checkpoint-0001", "nonce-checkpoint-0001", self.future)
@@ -77,7 +119,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         reopened = SQLiteApprovalConsumptionStore(self.path)
         self.assertTrue(reopened.is_consumed("approval-final-0001", "nonce-final-0001"))
         self.assertTrue(reopened.is_consumed("approval-publish-0001", "nonce-publish-0001"))
-        self.assertFalse(reopened.consume_many_once(entries))
+        self.assertFalse(reopened._consume_many_once(entries))
         with sqlite3.connect(self.path) as db:
             rows = db.execute(
                 "SELECT actor_id, action, project_id, project_version, request_id "
@@ -90,9 +132,9 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
 
     def test_duplicate_existing_entry_rejects_entire_batch(self):
         first = self.record("approval-existing-0001", "nonce-existing-0001", self.future)
-        self.assertTrue(self.store.consume_many_once((first,)))
+        self.assertTrue(self.store._consume_many_once((first,)))
         second = self.record("approval-new-0001", "nonce-new-0001", self.future)
-        self.assertFalse(self.store.consume_many_once((second, first)))
+        self.assertFalse(self.store._consume_many_once((second, first)))
         self.assertFalse(self.store.is_consumed("approval-new-0001", "nonce-new-0001"))
 
     def test_revoked_second_entry_prevents_consuming_first(self):
@@ -100,7 +142,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
                           revoked_by="operator-0001", reason="operator requested revocation")
         first = self.record("approval-valid-0001", "nonce-valid-0001", self.future)
         second = self.record("approval-revoked-0001", "nonce-revoked-0001", self.future)
-        self.assertFalse(self.store.consume_many_once((first, second)))
+        self.assertFalse(self.store._consume_many_once((first, second)))
         self.assertFalse(self.store.is_consumed(first.approval_id, first.nonce))
         self.assertTrue(self.store.is_revoked(second.approval_id, second.nonce))
 
@@ -108,12 +150,12 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         expired = datetime.now(timezone.utc) - timedelta(seconds=1)
         first = self.record("approval-valid-0002", "nonce-valid-0002", self.future)
         second = self.record("approval-expired-0002", "nonce-expired-0002", expired)
-        self.assertFalse(self.store.consume_many_once((first, second)))
+        self.assertFalse(self.store._consume_many_once((first, second)))
         self.assertFalse(self.store.is_consumed(first.approval_id, first.nonce))
 
     def test_rejects_duplicate_ids_or_nonces_in_batch(self):
         entry = self.record("approval-duplicate-0001", "nonce-duplicate-0001", self.future)
-        self.assertFalse(self.store.consume_many_once((entry, entry)))
+        self.assertFalse(self.store._consume_many_once((entry, entry)))
         self.assertFalse(self.store.is_consumed(entry.approval_id, entry.nonce))
 
     def test_rejects_non_private_parent_directory(self):
