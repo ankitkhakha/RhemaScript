@@ -142,11 +142,26 @@ def bind_assessment(assessment_id: str, evidence: EvidenceVersion, score: int) -
     )
 
 
-def verify_assessment_binding(binding: AssessmentBinding, current: EvidenceVersion) -> bool:
-    """Return true only for an authentic binding and exact verified evidence identity."""
+def is_verified_assessment_binding(binding: AssessmentBinding) -> bool:
+    """Recognise only bindings issued by bind_assessment in this process."""
     return (
         isinstance(binding, AssessmentBinding)
         and binding._verification_token is _VERIFIED_BINDING_TOKEN
+        and isinstance(binding.assessment_id, str) and bool(binding.assessment_id.strip())
+        and isinstance(binding.evidence_id, str) and bool(binding.evidence_id.strip())
+        and isinstance(binding.evidence_version, str) and bool(binding.evidence_version.strip())
+        and isinstance(binding.evidence_sha256, str)
+        and len(binding.evidence_sha256) == 64
+        and all(char in "0123456789abcdef" for char in binding.evidence_sha256)
+        and isinstance(binding.score, int) and not isinstance(binding.score, bool)
+        and 0 <= binding.score <= 4
+    )
+
+
+def verify_assessment_binding(binding: AssessmentBinding, current: EvidenceVersion) -> bool:
+    """Return true only for an authentic binding and exact verified evidence identity."""
+    return (
+        is_verified_assessment_binding(binding)
         and isinstance(current, EvidenceVersion)
         and current._verification_token is _VERIFIED_EVIDENCE_TOKEN
         and binding.evidence_id == current.evidence_id
