@@ -120,6 +120,50 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.get_header("Content-type"), "application/x-www-form-urlencoded")
 
+    def test_loads_paired_desktop_client_json_without_displaying_values(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "client_secret.json"
+            path.write_text(json.dumps({"installed": {
+                "client_id": "desktop-id.apps.googleusercontent.com",
+                "client_secret": "paired-desktop-secret",
+                "auth_uri": oauth_readonly.AUTHORIZATION_URL,
+                "token_uri": oauth_readonly.TOKEN_URL,
+            }}), encoding="utf-8")
+            self.assertEqual(
+                oauth_readonly._load_desktop_client_config(path),
+                ("desktop-id.apps.googleusercontent.com", "paired-desktop-secret"),
+            )
+
+    def test_rejects_web_client_json(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "web_client.json"
+            path.write_text(json.dumps({"web": {
+                "client_id": "web-id", "client_secret": "web-secret",
+                "auth_uri": oauth_readonly.AUTHORIZATION_URL,
+                "token_uri": oauth_readonly.TOKEN_URL,
+            }}), encoding="utf-8")
+            with self.assertRaisesRegex(oauth_readonly.OAuthBootstrapError, "Desktop app"):
+                oauth_readonly._load_desktop_client_config(path)
+
+    def test_rejects_unexpected_token_endpoint_in_desktop_json(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "client_secret.json"
+            path.write_text(json.dumps({"installed": {
+                "client_id": "desktop-id", "client_secret": "secret",
+                "auth_uri": oauth_readonly.AUTHORIZATION_URL,
+                "token_uri": "https://attacker.example/token",
+            }}), encoding="utf-8")
+            with self.assertRaisesRegex(oauth_readonly.OAuthBootstrapError, "unexpected Google endpoints"):
+                oauth_readonly._load_desktop_client_config(path)
     def test_pkce_pair_uses_s256(self):
         verifier, challenge = oauth_readonly._create_pkce_pair()
         import base64
@@ -340,6 +384,7 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
         write_credentials.assert_called_once_with(
             "/private/youtube-oauth.json",
             client_id="desktop-client-id",
+            client_secret="test-client-secret",
             refresh_token="refresh-test",
         )
 
