@@ -37,6 +37,11 @@ class EvidenceStoreTests(unittest.TestCase):
         self.assertEqual(result["status"], "not_started")
         self.assertEqual(self.store.get_unit("U2")["prerequisites"], ["U1"])
 
+    def test_invalid_prerequisites_fail_with_store_error(self):
+        for invalid in ("", {}, ["U1", 7], ["U1", "U1"]):
+            with self.subTest(invalid=invalid), self.assertRaises(StoreError):
+                self.store.create_unit("U2", "Applied", invalid)
+
     def test_child_assessment_requires_passed_prerequisite(self):
         self.store.create_unit("U1", "Foundations")
         self.store.create_unit("U2", "Applied", ["U1"])
