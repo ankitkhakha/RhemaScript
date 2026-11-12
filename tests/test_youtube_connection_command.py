@@ -42,7 +42,7 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
         def send_request(self, url, method, headers, body, timeout):
             self.calls.append((url, method, dict(headers), body))
             if url == "https://oauth2.googleapis.com/token":
-                return 200, b'{"access_token":"temporary-access-token"}', {}
+                return 200, b'{"access_token":"temporary-access-token","scope":"https://www.googleapis.com/auth/youtube.readonly"}', {}
             if url.startswith("https://www.googleapis.com/youtube/v3/channels?"):
                 payload = {
                     "items": [{
