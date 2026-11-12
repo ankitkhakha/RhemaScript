@@ -83,6 +83,14 @@ class InterfaceContractTests(unittest.TestCase):
         with self.assertRaises(InterfaceError):
             gateway.invoke("IF-01", request(operation=" "))
 
+    def test_generic_gateway_acknowledges_but_does_not_dispatch_read_operations(self):
+        response = InterfaceGateway().invoke(
+            "IF-01",
+            request(operation="READ_LEARNING_UNIT"),
+        )
+        self.assertEqual(response.status, "ACCEPTED_FOR_LOCAL_PROCESSING")
+        self.assertNotEqual(response.status, "COMPLETED_READ_ONLY")
+
     def test_gateway_replays_identical_request_with_same_key(self):
         gateway = InterfaceGateway()
         first = gateway.invoke("IF-01", request())
