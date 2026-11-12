@@ -5,6 +5,7 @@ payloads, headers, credentials, URLs, and arbitrary caller-supplied fields.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import os
 import stat
@@ -21,12 +22,14 @@ _ALLOWED_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
+    "timestamp_utc",
 }
 _REQUIRED_FIELDS = {"interface_id", "provider", "request_id", "operation", "phase"}
 _ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED"}
 _SAFE_STRING_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key", "phase", "error_type",
+    "timestamp_utc",
 }
 _SAFE_INTEGER_FIELDS = {"request_bytes", "response_bytes", "http_status"}
 
@@ -52,7 +55,9 @@ class JsonlAuditSink:
             raise AuditSinkError("audit event contains fields outside the safe schema")
         if event.get("phase") not in _ALLOWED_PHASES:
             raise AuditSinkError("audit event phase is invalid")
-        for key, value in event.items():
+        record_data = dict(event)
+        record_data.setdefault("timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        for key, value in record_data.items():
             if key in _SAFE_STRING_FIELDS and (not isinstance(value, str) or not value):
                 raise AuditSinkError("audit event string field is invalid")
             if key in _SAFE_INTEGER_FIELDS and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
