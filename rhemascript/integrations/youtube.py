@@ -246,6 +246,7 @@ class YouTubeClient:
         self._gateway_authority: dict[str, bool] = {}
         self._access_token: str | None = None
         self._last_upload_context: dict[str, str] | None = None
+        self._verified_upload_context: dict[str, str] | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -545,11 +546,20 @@ class YouTubeClient:
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
-        _authorise_project_video(
+        evidence_project_id, evidence_project_version = _authorise_project_video(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
             video_id=video_id,
         )
+        verified_context = self._verified_upload_context
+        if (verified_context is None
+                or verified_context.get("video_id") != video_id
+                or verified_context.get("project_id") != evidence_project_id
+                or verified_context.get("project_version") != evidence_project_version):
+            raise YouTubeIntegrationError(
+                "thumbnail write requires a matching successful YouTube read-back "
+                "from this client session; a caller-supplied verification artifact alone is insufficient"
+            )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
         self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
@@ -620,6 +630,9 @@ class YouTubeClient:
                 "upload_status": upload_status,
                 "processing_status": processing_status,
             }
+            # Retain a process-local trust anchor from the actual API read-back.
+            # A caller-authored Evidence Pack record alone is not proof.
+            self._verified_upload_context = dict(context)
         return result
 
     def analytics(self, *, start_date: date, end_date: date,
