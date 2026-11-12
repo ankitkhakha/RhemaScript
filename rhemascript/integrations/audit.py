@@ -22,14 +22,14 @@ _ALLOWED_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
-    "timestamp_utc",
+    "timestamp_utc", "approval_ids", "approval_actor_ids", "approval_issuer",
 }
 _REQUIRED_FIELDS = {"interface_id", "provider", "request_id", "operation", "phase"}
 _ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED"}
 _SAFE_STRING_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key", "phase", "error_type",
-    "timestamp_utc",
+    "timestamp_utc", "approval_issuer",
 }
 _SAFE_INTEGER_FIELDS = {"request_bytes", "response_bytes", "http_status"}
 
@@ -66,6 +66,17 @@ class JsonlAuditSink:
             raise AuditSinkError("audit event phase is invalid")
         record_data = dict(event)
         record_data.setdefault("timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        for field in ("approval_ids", "approval_actor_ids"):
+            if field in record_data:
+                value = record_data[field]
+                if (not isinstance(value, list) or not value or len(value) > 2
+                        or any(not isinstance(item, str) or not item or len(item) > 128 for item in value)):
+                    raise AuditSinkError("audit approval attribution field is invalid")
+        if ("approval_ids" in record_data) != ("approval_actor_ids" in record_data):
+            raise AuditSinkError("audit approval IDs and actor IDs must be recorded together")
+        if "approval_issuer" in record_data and (not isinstance(record_data["approval_issuer"], str)
+                or not record_data["approval_issuer"] or len(record_data["approval_issuer"]) > 128):
+            raise AuditSinkError("audit approval issuer is invalid")
         for key, value in record_data.items():
             if key in _SAFE_STRING_FIELDS and (not isinstance(value, str) or not value):
                 raise AuditSinkError("audit event string field is invalid")
