@@ -155,7 +155,20 @@ Not yet performed or verified:
 - Public or scheduled publication.
 - Deployment, merge or production activation.
 
-## 10. Stop conditions
+## 10. Project-bound YouTube write evidence
+
+Scheduled publication timestamps are accepted only in RFC3339 form with an explicit timezone and only when the represented instant is in the future. A scheduled upload must remain private at upload time; the timestamp does not itself authorise release.
+
+A thumbnail write requires a `YOUTUBE_VIDEO_VERIFICATION` artifact in the same validated project Evidence Pack. The artifact must:
+- Have status `VERIFIED` and be bound to the exact project ID and project version.
+- Record the exact `youtube_video_id` being targeted.
+- Reference the approved final-film artifact through `verified_final_film_artifact_id`.
+- State `verification_method: YOUTUBE_API_VIDEO_READ`.
+- Record a successful upload status (`uploaded` or `processed`) and processing status (`succeeded` or `processed`).
+
+The verification artifact is evidence, not authority. The normal six-gate final-film approval, Human Director acceptance and separate publishing authorisation remain mandatory. A video ID copied from another project or an unverified upload response is not sufficient.
+
+## 11. Stop conditions
 
 Stop and request owner review if:
 - The project, billing state, API quota or consent requirements are unclear.
