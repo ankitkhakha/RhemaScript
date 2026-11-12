@@ -129,6 +129,45 @@ class LocalSourceResolverTests(unittest.TestCase):
             with self.assertRaises(TypeError):
                 resolver._catalog[reference] = entry(reference, "other.txt", content)
 
+
+    def test_caller_catalog_replacement_does_not_mutate_resolver_snapshot(self):
+        with tempfile.TemporaryDirectory() as root:
+            content = b"original catalog bytes"
+            (Path(root) / "source.txt").write_bytes(content)
+            reference = "local-source:immutable"
+            original = entry(reference, "source.txt", content)
+            supplied_catalog = {reference: original}
+            resolver = LocalSourceResolver(root, supplied_catalog)
+            fingerprint = resolver.catalog_fingerprint
+            supplied_catalog[reference] = LocalSourceEntry(
+                reference=reference, source_id="SRC-OTHER", relative_path="other.txt",
+                version="v2", expected_sha256="f" * 64, media_type="text/plain",
+                catalog_revision="catalog-replaced", project_id="PROJECT-1",
+                project_version="1.0",
+            )
+            self.assertEqual(resolver.catalog_fingerprint, fingerprint)
+            version, receipt = resolver.resolve(
+                reference, project_id="PROJECT-1", project_version="1.0"
+            )
+            self.assertEqual(version.evidence_id, "SRC-001")
+            self.assertEqual(receipt.catalog_revision, "catalog-v1")
+
+    def test_malformed_catalog_path_and_digest_types_are_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            reference = "local-source:malformed"
+            bad_path = LocalSourceEntry(
+                reference, "SRC-001", None, "v1", "a" * 64, "text/plain",
+                "catalog-v1", "PROJECT-1", "1.0",
+            )
+            with self.assertRaises(LocalSourceResolutionError):
+                LocalSourceResolver(root, {reference: bad_path})
+            bad_digest = LocalSourceEntry(
+                reference, "SRC-001", "source.txt", "v1", 123, "text/plain",
+                "catalog-v1", "PROJECT-1", "1.0",
+            )
+            with self.assertRaises(LocalSourceResolutionError):
+                LocalSourceResolver(root, {reference: bad_digest})
+
     def test_catalog_key_must_match_entry_reference(self):
         with tempfile.TemporaryDirectory() as root:
             catalog_entry = entry("local-source:actual", "source.txt", b"x")
