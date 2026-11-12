@@ -53,6 +53,9 @@ def validate(data: Any) -> list[str]:
     missing = REQUIRED_DOMAINS - set(domains)
     if missing:
         errors.append("Missing required domains: " + ", ".join(sorted(missing)))
+    unknown = set(domains) - REQUIRED_DOMAINS
+    if unknown:
+        errors.append("Unknown evidence domains: " + ", ".join(sorted(str(x) for x in unknown)))
 
     for name, domain in domains.items():
         if not _record(domain):
