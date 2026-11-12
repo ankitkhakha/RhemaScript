@@ -109,5 +109,28 @@ class ProjectRecordTests(unittest.TestCase):
             with self.subTest(project_id=project_id), self.assertRaises(IntegrityError):
                 compare_project_records(record, record)
 
+    def test_compare_marks_approval_with_stale_artifact_reference_invalid(self):
+        before = create_project_record("RS-COMPARE-STALE-001")
+        before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
+        before["approvals"]["creative_direction"] = {
+            "status": "approved", "approval_ref": "approval:cd", "artifact_ref": "source-v1"
+        }
+        after = revise_stage(before, "biblical_source", "source-v2", "bible:ref2", "Correction")
+        after["approvals"]["creative_direction"] = {
+            "status": "approved", "approval_ref": "approval:old", "artifact_ref": "source-v1"
+        }
+        report = compare_project_records(before, after)
+        self.assertIn("creative_direction", report["gates_without_current_approval_evidence"])
+
+    def test_compare_accepts_approval_linked_to_current_artifact(self):
+        before = create_project_record("RS-COMPARE-CURRENT-001")
+        before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
+        after = revise_stage(before, "biblical_source", "source-v2", "bible:ref2", "Correction")
+        after["approvals"]["creative_direction"] = {
+            "status": "approved", "approval_ref": "approval:new", "artifact_ref": "source-v2"
+        }
+        report = compare_project_records(before, after)
+        self.assertNotIn("creative_direction", report["gates_without_current_approval_evidence"])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
