@@ -18,14 +18,14 @@ Replace caller-supplied booleans and generic authority dictionaries with signed,
 - `issued_at` and `expires_at`: timezone-aware timestamps with a short bounded lifetime
 - `nonce`: unique replay-prevention value
 - `key_id`: identifies the issuer's active signing key
-- `signature`: HMAC-SHA256 over canonical JSON excluding the signature field
+- `signature`: Ed25519 signature over canonical JSON excluding the signature field
 
-The verifier enforces exact fields, issuer and key trust, constant-time signature comparison, action/project/version/request matching, issue-time skew, expiry, maximum lifetime, and replay/revocation state.
+The verifier enforces exact fields, issuer and key trust, Ed25519 public-key signature verification, action/project/version/request matching, issue-time skew, expiry, maximum lifetime, and replay/revocation state.
 
 ## Trust and storage boundary
 
 1. The approval issuer must authenticate the human through an independently controlled identity provider or equivalent trusted local operator-authentication boundary.
-2. The signing key must be held by the issuer, not by the RhemaScript client, repository, browser, or caller. RhemaScript receives verification keys only.
+2. The Ed25519 private signing key must be held by the issuer, not by the RhemaScript client, repository, browser, or caller. RhemaScript receives only the 32-byte Ed25519 public verification keys; the verifier cannot mint credentials.
 3. The `consume_many_once` adapter must atomically reject revoked approvals and previously consumed `(approval_id, nonce)` pairs while recording every first use in a batch, or record none. A process-local set or cache is not sufficient.
 4. Production storage must provide durable transactions, access controls, backup, audit retention, key rotation, revocation and recovery procedures.
 5. Separate `FINAL_ACCEPTANCE` and `PUBLISH` approvals must be issued as distinct records, with distinct approval IDs/nonces and authenticated actors. Both must bind to the same project, project version and request.
@@ -34,7 +34,7 @@ The verifier enforces exact fields, issuer and key trust, constant-time signatur
 
 ## Current implementation boundary
 
-`rhemascript/core/approvals.py` is a verification-only primitive. It has no signing or minting method. Its injected atomic-consumption callback is mandatory. Unit tests use a test-only signer and in-memory callback to exercise cryptographic and policy checks.
+`rhemascript/core/approvals.py` is a verification-only Ed25519 primitive. It has no signing or minting method. Its injected atomic-consumption callback is mandatory. Unit tests use a test-only signer and in-memory callback to exercise cryptographic and policy checks.
 
 The verifier supports `verify_many_and_consume` so distinct `FINAL_ACCEPTANCE` and `PUBLISH` credentials can be validated first and consumed as one atomic batch. This foundation is **not yet wired into** `YouTubeClient.upload_video` or `set_thumbnail`. Existing boolean parameters and the current caller-supplied gateway authority dictionary remain a production blocker. Do not infer that this document or verifier tests make those paths production-safe.
 
