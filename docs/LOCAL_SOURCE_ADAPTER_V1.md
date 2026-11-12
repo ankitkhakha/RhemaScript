@@ -23,3 +23,19 @@
 ## Explicit non-goals
 
 No network-capable adapter, Bible API, remote URL fetch, automatic source ranking, translation substitution, copyright clearance, doctrinal assessment, workflow approval, generation authorization, or publishing action.
+
+## Security review addendum — catalog, receipt and project binding
+
+The resolver freezes a defensive copy of the supplied catalog and computes a deterministic SHA-256 catalog fingerprint over every entry, including source ID, relative path, source version, expected digest, media type, catalog revision and project scope. Mutating the caller's original mapping cannot change the resolver snapshot. The resolver exposes the catalog as a read-only mapping.
+
+Every receipt records the catalog fingerprint and, when configured, the exact project ID and project version. Evidence-pack integration requires catalog project scope to match the manifest project/version and requires the resolved source ID, source version and digest to match the artifact record. A catalog entry scoped to another project or project version is rejected.
+
+`verify_receipt` re-resolves the exact reference against the current catalog snapshot and current file bytes. It rejects a receipt from a different catalog fingerprint, a replaced catalog revision, changed source bytes, or a project-scope mismatch. Evidence-pack execution always resolves afresh; it does not accept a caller-supplied receipt as proof.
+
+The catalog fingerprint is an identity digest, not a signature or external trust anchor. A malicious operator who can replace both the catalog and all independently retained evidence can create a new internally consistent snapshot. Independent retention of approved catalog fingerprints and readiness checkpoints remains necessary for tamper detection. SQLite and in-process receipt objects are not immutable against a privileged local attacker.
+
+## Readiness traceability
+
+`run_project_assessment` accepts the same explicit local resolver. The report records each receipt's source ID, version, digest, catalog revision/fingerprint and project scope, and the artifact trace maps that receipt to the exact artifact. The durable readiness registry stores the complete receipt alongside byte-verified artifact versions. Reusing a readiness run ID with a changed receipt/catalog identity is rejected as a replay conflict.
+
+These checks establish content identity and provenance linkage only. They do not establish publisher identity, copyright permission, theological correctness, approval, generation authorization or publishing authorization.
