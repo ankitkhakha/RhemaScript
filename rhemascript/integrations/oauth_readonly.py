@@ -182,8 +182,16 @@ def _callback_handler(result: dict[str, str], expected_state: str):
                 result["error"] = "invalid_query"
                 self._reply(400, "Authorization response rejected. You may close this tab.")
                 return
-            if set(query) - {"state", "code", "error", "error_description", "error_uri"}:
+            # Google includes the RFC 9207 issuer parameter (iss) in its
+            # authorization response. Accept it only once and only for Google's
+            # exact issuer; continue rejecting every other unexpected parameter.
+            if set(query) - {"state", "code", "error", "error_description", "error_uri", "iss"}:
                 result["error"] = "unexpected_parameters"
+                self._reply(400, "Authorization response rejected. You may close this tab.")
+                return
+            issuers = query.get("iss", [])
+            if issuers and (len(issuers) != 1 or issuers[0] != "https://accounts.google.com"):
+                result["error"] = "invalid_issuer"
                 self._reply(400, "Authorization response rejected. You may close this tab.")
                 return
             states = query.get("state", [])
