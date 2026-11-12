@@ -1,6 +1,6 @@
 # Read-only YouTube connection command V1.0
 
-**Status:** Implementation is on the YouTube integration pull-request branch. GitHub Actions synthetic CI passed on 2026-11-12 (run 43144908406, commit `d3ae502766af642fa638fd36290fa13e74b11af3`). No live owner OAuth or channel connection has been performed.
+**Status:** Implementation is on the YouTube integration pull-request branch. GitHub Actions synthetic CI passed on the current head commit `596fdd9da354c08089be1bb03183cc36003212d2` on 2026-11-12 (push run [43144950724](https://github.com/ankitkhakha/RhemaScript/actions/runs/43144950724), PR run [43144956546](https://github.com/ankitkhakha/RhemaScript/actions/runs/43144956546)). No live owner OAuth or channel connection has been performed.
 
 ## Purpose
 
