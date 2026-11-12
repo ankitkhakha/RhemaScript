@@ -4,7 +4,7 @@
 
 This integration uses only Python's standard library and Google's official YouTube Data API v3 and YouTube Analytics API. It adds no package dependency, paid API, hosted service, or database. It does not create a Google Cloud project, enable an API, request OAuth consent, or store credentials.
 
-> **Owner verification update — 2026-11-12:** the owner has completed OAuth authorization and live read-only IF-18 channel identity verification. The expected channel matched, and the current grant is `youtube.readonly` only. The isolated OAuth bootstrap is proposed in draft PR #40 and has not been merged into `main`. This proves the read-only identity path only; it does not prove live uploads, thumbnails, analytics, scheduled publication or production readiness. The remaining sections describe implementation capabilities and staged requirements, not completed live activations.
+> **Owner verification update — 2026-11-12:** the owner has completed OAuth authorization and live read-only IF-18 channel identity verification. The expected channel matched, and the current grant is `youtube.readonly` only. The isolated OAuth bootstrap from PR #40 was merged into `main` in commit `63b8d7285790e6237ddf87082965d550954f602b`; this is a source-code merge, not deployment or publishing authorization. This proves the read-only identity path only; it does not prove live uploads, thumbnails, analytics, scheduled publication or production readiness. The remaining sections describe implementation capabilities and staged requirements, not completed live activations.
 
 Implemented client operations:
 - Read the authenticated channel profile.
@@ -21,11 +21,8 @@ YouTube API quota is not a per-call monetary fee, but it is limited and subject 
 1. Use an existing Google Cloud project (do not create a paid resource).
 2. Enable YouTube Data API v3 and YouTube Analytics API.
 3. Configure an OAuth consent screen and an OAuth client for a local installed application.
-4. Obtain offline OAuth consent for the RhemaScript YouTube channel with these scopes:
-   - `https://www.googleapis.com/auth/youtube.upload`
-   - `https://www.googleapis.com/auth/youtube.readonly`
-   - `https://www.googleapis.com/auth/yt-analytics.readonly`
-5. Supply the OAuth client ID, client secret and refresh token as local environment variables. Never commit them to Git.
+4. For the initial connection check, authorize only `https://www.googleapis.com/auth/youtube.readonly`. The upload and Analytics scopes are not part of the current grant and must not be requested unless separately approved for those specific features.
+5. Keep credentials in the owner-only local credential file or inject them through protected local environment variables. Never commit them to Git.
 
 Environment variables:
 - `RHEMASCRIPT_YOUTUBE_CLIENT_ID`
@@ -78,7 +75,7 @@ For a scheduled public release, YouTube requires the upload to be private and a 
 
 The read-only channel connection has been verified by the owner. A live upload still cannot be considered verified until the owner separately authorises a test upload with the required upload scope and project-level approvals. API access, quota and account-specific restrictions must be confirmed in the existing Google project. No live upload, thumbnail change, public release or analytics access has been performed.
 
-The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. Before production use, add a local encrypted secret store if the deployment environment provides one; this implementation intentionally reads secrets from environment variables only.
+The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. The current local workflow supports an owner-only plaintext credential file protected by filesystem permissions or protected environment variables. The file is not encrypted or stored in an OS keychain; a production deployment should use an appropriately protected secret store if one is introduced and separately approved.
 
 ## External gateway integration status
 
@@ -115,7 +112,7 @@ The gateway extension preserves the original JSON POST invoke contract and adds 
 
 Automated CI has passed for the IF-18 gateway routing and fail-closed tests, the mocked end-to-end resumable upload (including binary chunk acknowledgements and final video verification), and the mocked gateway-backed thumbnail write. A path-segment boundary hardening test also verifies that sibling paths outside an operation's declared prefix are rejected before transport. These are mocked contract tests, not live Google account or provider validation.
 
-`JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable the relevant external requests. OAuth consent and read-only channel identity have now been completed locally; no live upload, thumbnail change, analytics query or public release has been performed. PR #40 remains unmerged and no deployment has occurred. A passing CI run validates mocked contracts only; it does not validate write permissions, quota, billing status or real write-operation outcomes.
+`JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable the relevant external requests. OAuth consent and read-only channel identity have now been completed locally; no live upload, thumbnail change, analytics query or public release has been performed. PR #40 is merged into `main`; no deployment has occurred. A passing CI run validates mocked contracts only; it does not validate write permissions, quota, billing status or real write-operation outcomes.
 
 
 ### Local audit sink
