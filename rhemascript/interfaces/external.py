@@ -193,6 +193,7 @@ class ExternalIntegrationGateway:
                 recipient_clearance: str = "OPERATIONAL",
                 task_need: bool = True, approved_scope: bool = True,
                 authority: dict[str, bool] | None = None,
+                audit_context: dict[str, Any] | None = None,
                 max_response_bytes: int = 8_000_000) -> tuple[int, bytes, dict[str, str]]:
         """Audited method-aware provider request for OAuth and resumable protocols."""
         from rhemascript.core.authority import authorise_action, AuthorityError
@@ -242,6 +243,22 @@ class ExternalIntegrationGateway:
             except AuthorityError:
                 raise ExternalIntegrationError("consequential operation lacks explicit authority") from None
 
+        if authority_operation == "PUBLISH":
+            if (not isinstance(audit_context, dict)
+                    or set(audit_context) != {"approval_ids", "approval_actor_ids", "approval_issuer"}):
+                raise ExternalIntegrationError("publishing requires verified approval audit attribution")
+            approval_ids = audit_context.get("approval_ids")
+            actor_ids = audit_context.get("approval_actor_ids")
+            issuer = audit_context.get("approval_issuer")
+            if (not isinstance(approval_ids, list) or len(approval_ids) != 2
+                    or any(not isinstance(x, str) or not x.strip() for x in approval_ids)
+                    or len(set(approval_ids)) != 2
+                    or not isinstance(actor_ids, list) or len(actor_ids) != 2
+                    or any(not isinstance(x, str) or not x.strip() for x in actor_ids)
+                    or len(set(actor_ids)) != 2
+                    or not isinstance(issuer, str) or not issuer.strip()):
+                raise ExternalIntegrationError("publishing approval audit attribution is invalid")
+
         fingerprint = sha256(
             interface_id.encode() + b":" + operation.upper().encode() + b":" +
             method.upper().encode() + b":" + parsed.hostname.encode() + b":" +
@@ -252,6 +269,12 @@ class ExternalIntegrationGateway:
                  "operation": operation.upper(), "method": method.upper(),
                  "host": parsed.hostname, "request_fingerprint": fingerprint,
                  "request_bytes": len(body or b""), "phase": "REQUESTED"}
+        if authority_operation == "PUBLISH":
+            event.update({
+                "approval_ids": list(approval_ids),
+                "approval_actor_ids": list(actor_ids),
+                "approval_issuer": issuer,
+            })
         self.audit_sink(dict(event))
         try:
             secret_headers = self.credential_resolver(binding.provider_name)
