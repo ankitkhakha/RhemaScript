@@ -35,7 +35,7 @@ Evidence payloads for the same CAP are merged only when repeated keys have ident
 
 ## Limits
 
-References are caller-supplied identifiers; remote files are not fetched or verified. No binary media storage, durable database, signature service, retention engine or immutable audit store is added. Human approval authenticity still depends on the existing gate-record process and review. No frame or waveform inspection is implemented.
+References are caller-supplied opaque identifiers; remote files and source identities are not fetched or verified. Readiness traceability explicitly labels these references unresolved by the local artifact verifier. The threat model and future source-specific resolver contract are documented in `docs/EXTERNAL_EVIDENCE_REFERENCE_RESOLUTION_V1.md`; that design is not implemented or activated. No binary media storage, signature service, retention engine or immutable audit store is added. Human approval authenticity still depends on the existing gate-record process and review. No frame or waveform inspection is implemented.
 
 
 ## Canonical schema and starter template
