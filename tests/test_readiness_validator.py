@@ -18,14 +18,14 @@ def ready_ledger():
         "domains": {
             "engineering": {**passed_domain([evidence(x) for x in ENGINEERING_CAPSTONES]),
                             "required_capstones": ENGINEERING_CAPSTONES},
-            "whole_bible": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"books/review","score":3}], "books": [
+            "whole_bible": {"status": "passed", "competency_score": 3, "critical_failure": False, "evidence": [{"status":"verified","evidence_ref":"books/review","score":3}], "books": [
                 {"book_id": book, "status": "passed", "evidence_status": "verified",
                  "evidence_ref": f"books/{book}", "score": 3} for book in BIBLE_BOOKS]},
-            "bible_only_ethics": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"ethics/review","score":3}], "cases": [
+            "bible_only_ethics": {"status": "passed", "competency_score": 3, "critical_failure": False, "evidence": [{"status":"verified","evidence_ref":"ethics/review","score":3}], "cases": [
                 {"case_id": case, "status": "passed", "score": 3, "evidence_status": "verified", "evidence_ref": f"ethics/{case}",
                  "biblical_context_reviewed": True, "explicit_vs_inference_recorded": True, "uncertainty_recorded": True, "proof_texting_check_passed": True}
                 for case in ETHICS_CASES]},
-            "rhemascript": {"status": "passed", "competency_score": 3, "evidence": [{"status":"verified","evidence_ref":"rhemascript/review","score":3}], "capabilities": [
+            "rhemascript": {"status": "passed", "competency_score": 3, "critical_failure": False, "evidence": [{"status":"verified","evidence_ref":"rhemascript/review","score":3}], "capabilities": [
                 {"capability_id": cap, "status": "passed", "score": 3, "evidence_status": "verified", "evidence_ref": f"rs/{cap}"}
                 for cap in RHEMA_IDS]},
             "integrated_capstone": {"status": "passed", "competency_score": 3,
