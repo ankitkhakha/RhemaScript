@@ -6,6 +6,7 @@ weights. They provide controlled, evidence-linked practice and assessment.
 from .curriculum import CURRICULUM_VERSION, build_registry, registry_summary
 from .training import (
     RAEITrainingError,
+    build_self_assessment_payload,
     build_training_brief,
     get_progress,
     next_unit,
@@ -14,6 +15,6 @@ from .training import (
 
 __all__ = [
     "CURRICULUM_VERSION", "build_registry", "registry_summary",
-    "RAEITrainingError", "build_training_brief", "get_progress",
+    "RAEITrainingError", "build_self_assessment_payload", "build_training_brief", "get_progress",
     "next_unit", "record_attempt",
 ]
