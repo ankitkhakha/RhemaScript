@@ -11,7 +11,7 @@ class YouTubeAnalyticsEvidenceError(ValueError):
 
 def build_cap15_performance_evidence(
     report: dict[str, Any], *, video_id: str, production_version: str,
-    evidence_reference: str,
+    evidence_reference: str, video_filter: str,
 ) -> dict[str, Any]:
     """Convert one video-filtered Analytics report into descriptive CAP-15 evidence.
 
@@ -23,6 +23,8 @@ def build_cap15_performance_evidence(
                         ("evidence_reference", evidence_reference)):
         if not isinstance(value, str) or not value.strip() or value != value.strip():
             raise YouTubeAnalyticsEvidenceError(f"{name} must be a non-empty exact string")
+    if video_filter != f"video=={video_id}":
+        raise YouTubeAnalyticsEvidenceError("video_filter must exactly bind the report to video_id")
     if not isinstance(report, dict):
         raise YouTubeAnalyticsEvidenceError("report must be an object")
     headers = report.get("columnHeaders")
@@ -66,7 +68,7 @@ def build_cap15_performance_evidence(
         observations.append({
             "source": "YOUTUBE_ANALYTICS_API", "video_id": video_id,
             "production_version": production_version, "evidence_reference": evidence_reference,
-            "dimensions": dimensions, "metrics": metrics,
+            "dimensions": dimensions, "metrics": metrics, "video_filter": video_filter,
         })
     return {
         "linked_production_version": production_version,
