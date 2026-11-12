@@ -13,6 +13,7 @@ from raei.training import (
     RAEITrainingError,
     SCHEMA,
     _prerequisites_met,
+    build_self_assessment_payload,
     build_training_brief,
     canonical_assessment_bytes,
     get_progress,
@@ -80,6 +81,16 @@ class RAEITrainingTests(unittest.TestCase):
             {"CAPSTONE-REPRODUCIBLE", "BIBLE-66", "ETH-TECH", "QC-COMPLIANCE"},
         )
 
+    def test_self_assessment_payload_builder_uses_versioned_schema(self):
+        payload = build_self_assessment_payload(
+            "CS-FOUND", "ATT-BUILDER", "EV-BUILDER", "v1",
+            {"accuracy": 4, "reasoning": 4, "execution": 4, "evidence": 4},
+            created_at_utc="2026-11-12T12:00:00+00:00",
+        )
+        self.assertEqual(payload["schema"], SCHEMA)
+        self.assertEqual(payload["curriculum_version"], CURRICULUM_VERSION)
+        self.assertEqual(payload["assessor_role"], "RAEI_SELF")
+
     def test_next_unit_starts_with_first_engineering_unit(self):
         self.assertEqual(next_unit(self.registry)["id"], "CS-FOUND")
 
@@ -132,13 +143,11 @@ class RAEITrainingTests(unittest.TestCase):
 
     def test_evidence_identity_and_version_must_match_artifact(self):
         payload, evidence = self.make_artifact()
-        changed = {**payload, "evidence_version": "v2"}
-        (self.root / evidence.relative_path).write_bytes(canonical_assessment_bytes(changed))
         changed_evidence = verify_artifact(
-            self.root, evidence.relative_path, evidence_id=evidence.evidence_id, version="v2"
+            self.root, evidence.relative_path, evidence_id="EV-OTHER", version="v2"
         )
         with self.assertRaisesRegex(RAEITrainingError, "does not identify"):
-            record_attempt(self.registry, changed, changed_evidence)
+            record_attempt(self.registry, payload, changed_evidence)
 
     def test_human_review_cannot_be_self_asserted(self):
         payload, evidence = self.make_artifact(assessor_role="HUMAN_INDEPENDENT")
