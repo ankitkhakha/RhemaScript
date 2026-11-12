@@ -204,6 +204,7 @@ class EvidenceStoreTests(unittest.TestCase):
         backup = Path(self.temp.name) / "unrelated.sqlite3"
         with sqlite3.connect(backup) as db:
             db.execute("CREATE TABLE unrelated (value TEXT)")
+        backup.chmod(0o600)
         destination = Path(self.temp.name) / "must-not-exist.sqlite3"
         with self.assertRaisesRegex(StoreError, "missing required"):
             EvidenceStore.restore_from(backup, destination)
