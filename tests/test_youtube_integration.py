@@ -383,6 +383,36 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 client.upload_video(video.name, title="", description="Test",
                                     **self.publish_context())
 
+    def test_upload_rejects_invalid_tags_and_category_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            invalid_cases = (
+                {"tags": ["valid", " "]},
+                {"tags": ["x" * 501]},
+                {"category_id": "not-a-category"},
+                {"category_id": True},
+            )
+            for kwargs in invalid_cases:
+                with self.subTest(kwargs=kwargs):
+                    with self.assertRaises(YouTubeIntegrationError):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            **kwargs, **self.publish_context())
+
+    def test_upload_accepts_numeric_category_and_tags_within_limit(self):
+        calls = []
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            # Stop at the first token response; this confirms metadata validation passed.
+            client._token = lambda: "test-token"
+            client._authorized_request = lambda *args, **kwargs: (400, b"{}", {})
+            with self.assertRaisesRegex(YouTubeIntegrationError, "resumable upload session"):
+                with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                    client.upload_video(video.name, title="Approved", description="Test",
+                        tags=["RhemaScript", "Bible"], category_id="22", **self.publish_context())
     def test_scheduled_publication_must_use_private_upload(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
