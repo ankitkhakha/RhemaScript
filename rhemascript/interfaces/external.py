@@ -63,7 +63,9 @@ class ProviderBinding:
             raise ExternalIntegrationError("endpoint must not contain credentials, query, or fragment")
         if (not isinstance(self.allowed_hosts, (tuple, list)) or not self.allowed_hosts
                 or any(not isinstance(host, str) or not host.strip()
-                       or any(char in host for char in "/\\\\@?#")
+                       or host != host.strip() or any(char.isspace() for char in host)
+                       or any(char in host for char in "/@?#")
+                       or any(ord(char) == 92 for char in host)
                        for host in self.allowed_hosts)):
             raise ExternalIntegrationError("provider host allowlist is invalid")
         allowed = {host.rstrip(".").lower() for host in self.allowed_hosts}
@@ -319,7 +321,7 @@ class ExternalIntegrationGateway:
         expected_method = spec.get("method")
         hosts = spec.get("hosts")
         path_prefix = spec.get("path_prefix")
-        if (not isinstance(method, str) or method.upper() != expected_method
+        if (not isinstance(method, str) or method.upper() != expected_method.upper()
                 or not isinstance(hosts, (tuple, list)) or not hosts):
             raise ExternalIntegrationError("HTTP method is not permitted by provider contract")
         if not isinstance(url, str) or not url:
