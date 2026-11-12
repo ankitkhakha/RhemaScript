@@ -32,6 +32,13 @@ class ValidationReportWriterTests(unittest.TestCase):
             write_report(link, '{"overall_status":"PASS"}\n')
         self.assertEqual(target.read_text(), "do not change")
 
+    def test_refuses_existing_target_without_overwriting(self):
+        report = self.root / "existing.json"
+        report.write_text("keep this file")
+        with self.assertRaises(FileExistsError):
+            write_report(report, '{"overall_status":"PASS"}\\n')
+        self.assertEqual(report.read_text(), "keep this file")
+
     def test_refuses_missing_parent(self):
         with self.assertRaises(OSError):
             write_report(self.root / "missing" / "report.json", "{}\n")
