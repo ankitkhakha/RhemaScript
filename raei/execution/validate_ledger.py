@@ -61,11 +61,17 @@ def validate(data: Any) -> list[str]:
         if not _record(domain):
             errors.append(f"{name}: domain record must be an object")
             continue
-        if domain.get("status") not in VALID_STATUSES:
+        domain_status = domain.get("status")
+        if not isinstance(domain_status, str) or domain_status not in VALID_STATUSES:
             errors.append(f"{name}: invalid or missing status")
-        if domain.get("critical_failure") is True:
+        critical_failure = domain.get("critical_failure")
+        if critical_failure is not None and not isinstance(critical_failure, bool):
+            errors.append(f"{name}: critical_failure must be a boolean when supplied")
+        if critical_failure is True:
             errors.append(f"{name}: critical failure is recorded")
-        if domain.get("status") == "passed":
+        if domain_status == "passed":
+            if critical_failure is not False:
+                errors.append(f"{name}: passed status requires critical_failure explicitly false")
             if not _score_ok(domain.get("competency_score")):
                 errors.append(f"{name}: passed status requires competency_score 3 or 4")
             evidence = domain.get("evidence")
