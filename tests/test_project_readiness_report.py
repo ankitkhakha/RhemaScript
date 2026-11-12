@@ -97,6 +97,11 @@ class ReadinessReportTests(unittest.TestCase):
         self.assertEqual(result.project_id, PROJECT["project_id"])
         self.assertEqual(report["run_id"], result.run_id)
         self.assertEqual(report["project_id"], validated.project_id)
+        trace = report["evidence_traceability"]
+        self.assertEqual(trace["records"][0]["capability_id"], "CAP-01")
+        self.assertEqual(trace["records"][0]["artifact_refs"], ["SOURCE-1"])
+        self.assertEqual(trace["artifacts"][0]["capability_ids"], ["CAP-01"])
+        self.assertEqual(trace["artifacts"][0]["integrity_status"], "NOT_BYTE_VERIFIED")
         self.assertFalse(report["generation_preconditions_met"])
         self.assertFalse(report["execution"]["generation_performed"])
         self.assertFalse(report["execution"]["external_action_performed"])
