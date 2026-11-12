@@ -85,6 +85,40 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
                 self.assertEqual(response.status, 400)
                 self.assertIn("error", result)
 
+    def test_callback_accepts_google_issuer_and_rejects_untrusted_issuer(self):
+        from http.client import HTTPConnection
+        from threading import Thread
+
+        for issuer, expected_status in (
+            ("https://accounts.google.com", 200),
+            ("https://attacker.example", 400),
+        ):
+            with self.subTest(issuer=issuer):
+                result = {}
+                server = oauth_readonly.HTTPServer(
+                    ("127.0.0.1", 0),
+                    oauth_readonly._callback_handler(result, "expected-state"),
+                )
+                thread = Thread(target=server.handle_request, daemon=True)
+                thread.start()
+                connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=3)
+                connection.request(
+                    "GET",
+                    oauth_readonly.CALLBACK_PATH
+                    + "?state=expected-state&code=test-code&iss="
+                    + issuer.replace(":", "%3A").replace("/", "%2F"),
+                )
+                response = connection.getresponse()
+                response.read()
+                connection.close()
+                thread.join(timeout=3)
+                server.server_close()
+                self.assertEqual(response.status, expected_status)
+                if expected_status == 200:
+                    self.assertEqual(result.get("code"), "test-code")
+                else:
+                    self.assertIn("error", result)
+
     def test_callback_accepts_one_valid_state_and_code_once(self):
         from http.client import HTTPConnection
         from threading import Thread
