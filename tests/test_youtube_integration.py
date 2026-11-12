@@ -404,7 +404,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
     def test_thumbnail_write_requires_full_project_authority(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
-        with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "approval batch"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_final_gate_must_reference_the_approved_final_film(self):
