@@ -24,7 +24,7 @@ The verifier enforces exact fields, trusted issuer and key ID, Ed25519 signature
 
 ## Trusted issuer boundary
 
-`rhemascript/core/approval_issuer.py` defines a request-only `ApprovalCredentialSource` protocol. The caller supplies action, project, project version and request ID, but no actor ID or claimed identity. The issuer must authenticate the human independently, derive actor identity from its authenticated session, enforce issuer-side policy, and return an Ed25519-signed credential. No issuer implementation or private signing key is included in RhemaScript.
+`rhemascript/core/approval_issuer.py` defines a request-only `ApprovalCredentialSource` protocol and `request_publish_approval_credentials` helper for obtaining the two scoped credentials. The caller supplies action, project, project version and request ID, but no actor ID or claimed identity. The issuer must authenticate the human independently, derive actor identity from its authenticated session, enforce issuer-side policy, and return an Ed25519-signed credential. No issuer implementation or private signing key is included in RhemaScript.
 
 ## Key custody
 
