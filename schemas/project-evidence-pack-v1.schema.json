@@ -37,7 +37,24 @@
           "status": {"type": "string", "minLength": 1},
           "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
         },
-        "additionalProperties": true
+        "additionalProperties": true,
+        "allOf": [{
+          "if": {"properties": {"artifact_type": {"const": "YOUTUBE_VIDEO_VERIFICATION"}}},
+          "then": {
+            "required": [
+              "youtube_video_id", "verified_final_film_artifact_id",
+              "verification_method", "upload_status", "processing_status"
+            ],
+            "properties": {
+              "status": {"const": "VERIFIED"},
+              "verification_method": {"const": "YOUTUBE_API_VIDEO_READ"},
+              "youtube_video_id": {"type": "string", "minLength": 1},
+              "verified_final_film_artifact_id": {"type": "string", "minLength": 1},
+              "upload_status": {"enum": ["uploaded", "processed"]},
+              "processing_status": {"enum": ["succeeded", "processed"]}
+            }
+          }
+        }]
       }
     },
     "evidence_records": {
