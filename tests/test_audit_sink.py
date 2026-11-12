@@ -42,6 +42,25 @@ class JsonlAuditSinkTests(unittest.TestCase):
                 sink(self.event(payload={"media": "private"}, authorization="Bearer secret"))
             self.assertFalse(path.exists())
 
+    def test_accepts_bounded_signed_approval_attribution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            sink(self.event(approval_ids=["approval-1", "approval-2"],
+                approval_actor_ids=["actor-1", "actor-2"], approval_issuer="trusted-issuer"))
+            record = json.loads(path.read_text().splitlines()[0])
+            self.assertEqual(record["approval_actor_ids"], ["actor-1", "actor-2"])
+            self.assertNotIn("signature", record)
+            self.assertNotIn("credential", record)
+
+    def test_rejects_malformed_approval_attribution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
+            with self.assertRaisesRegex(AuditSinkError, "approval attribution"):
+                sink(self.event(approval_ids=["approval-1"], approval_actor_ids="actor-1"))
+            with self.assertRaisesRegex(AuditSinkError, "recorded together"):
+                sink(self.event(approval_ids=["approval-1"]))
+
     def test_rejects_invalid_event_phase(self):
         with tempfile.TemporaryDirectory() as directory:
             sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
