@@ -1,6 +1,6 @@
 # IF-18 owner verification checklist V1.0
 
-**Status:** Ready for owner-run local verification. This checklist does not authorize ChatGPT, CI, or any other remote process to access the owner's Google account.
+**Status:** Merged into `main`; owner-run local verification remains pending. The owner has approved enabling publishing capability in RhemaScript. This approval does not authorize ChatGPT, CI, or any other remote process to access the owner's Google account.
 
 ## Objective
 
@@ -8,7 +8,7 @@ Verify that the existing local YouTube OAuth credential file authenticates the i
 
 ## Before running
 
-- [ ] Confirm PR #28 has been reviewed and the owner intentionally wants to perform a live read-only connection check. Synthetic CI passing is not a substitute for this decision.
+- [ ] Confirm the owner intentionally wants to perform a live read-only connection check. PR #28 is merged; synthetic CI passing is not a substitute for live verification.
 - [ ] Use the existing credential file already prepared by the owner. Do not paste, upload, email, or commit it.
 - [ ] Confirm the credential file is a regular file owned by the current OS user, is not a symbolic link, and has permissions `0600` or stricter.
 - [ ] Confirm its parent directory is owner-only (`0700` or stricter).
@@ -58,10 +58,10 @@ Keep the full audit file and diagnostic output private. If assistance is needed,
 
 A successful local run proves that the supplied credential file authenticated and that the returned channel matched the expected channel ID at the time of the check, using the read-only IF-18 command boundary.
 
-It does **not** prove publishing readiness, authorize publishing, grant new Google permissions, or merge PR #28. CI runs are synthetic-only and do not contact Google.
+It does **not** prove publishing readiness, establish the actual channel connection, grant new Google permissions, or satisfy any project-level publishing gate. CI runs are synthetic-only and do not contact Google.
 
 ## Governance sign-off
 
 - Owner-run live verification: pending until the owner executes the command locally.
-- PR review and merge: separate explicit owner decision.
-- Publishing authorization: not granted; publishing remains disabled.
+- PR #28 review and merge: completed; merge commit `2e5940618a18278899a69ed9ca7a548f35d33645`.
+- Publishing capability approval: granted by the owner. Actual publishing remains blocked for each project until its Evidence Pack, six approved gates, final-film evidence, human director acceptance, and explicit project-level publishing authorization are all present.
