@@ -48,6 +48,31 @@ class EvidencePackIntegrityTests(unittest.TestCase):
         with self.assertRaises(EvidencePackIntegrityError):
             verify_pack_artifacts(pack,self.root)
 
+    def test_capability_referenced_draft_artifact_is_still_byte_verified(self):
+        data = make_pack(self.digest)
+        data["artifacts"][0]["status"] = "DRAFT"
+        data["evidence_records"] = [{
+            "evidence_id": "CAP01-EVIDENCE", "capability_id": "CAP-01",
+            "payload": {"sources": [{"source_ref": "external:source"}]},
+            "evidence_refs": ["external:source"], "artifact_refs": ["A-1"],
+        }]
+        pack = validate_evidence_pack(data)
+        versions = verify_pack_artifacts(pack, self.root)
+        self.assertEqual([item.evidence_id for item in versions], ["A-1"])
+        self.assertEqual(versions[0].sha256, self.digest)
+
+    def test_referenced_draft_artifact_without_local_bytes_fails_closed(self):
+        data = make_pack(self.digest)
+        data["artifacts"][0]["status"] = "DRAFT"
+        del data["artifacts"][0]["local_path"]
+        data["evidence_records"] = [{
+            "evidence_id": "CAP01-EVIDENCE", "capability_id": "CAP-01",
+            "payload": {"sources": [{"source_ref": "external:source"}]},
+            "evidence_refs": ["external:source"], "artifact_refs": ["A-1"],
+        }]
+        with self.assertRaises(EvidencePackIntegrityError):
+            verify_pack_artifacts(validate_evidence_pack(data), self.root)
+
     def test_unverified_draft_does_not_claim_byte_verification(self):
         data=make_pack(self.digest); data["artifacts"][0]["status"]="DRAFT"
         del data["artifacts"][0]["local_path"]; del data["artifacts"][0]["sha256"]
