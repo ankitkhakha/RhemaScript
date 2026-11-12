@@ -54,6 +54,18 @@ class InterfaceContractTests(unittest.TestCase):
         with self.assertRaises(InterfaceContractError):
             validate_interface_request("IF-01", request(payload={"bad": object()}))
 
+    def test_non_string_interface_identifier_is_rejected_cleanly(self):
+        with self.assertRaises(InterfaceContractError):
+            validate_interface_request([], request())
+
+    def test_non_string_nested_object_keys_are_rejected(self):
+        with self.assertRaisesRegex(InterfaceContractError, "keys must be strings"):
+            validate_interface_request("IF-01", request(payload={1: "ambiguous"}))
+
+    def test_python_tuple_is_not_accepted_as_json_array(self):
+        with self.assertRaisesRegex(InterfaceContractError, "JSON-compatible"):
+            validate_interface_request("IF-01", request(payload={"values": (1, 2)}))
+
     def test_nan_is_rejected(self):
         with self.assertRaises(InterfaceContractError):
             validate_interface_request("IF-01", request(payload={"bad": float("nan")}))
