@@ -113,9 +113,14 @@ def main(argv: list[str] | None = None) -> int:
     # Keep raw test output out of the certification report and normal console
     # result; emit only a bounded failure hint for troubleshooting.
     if test_run.returncode:
-        tail = "\n".join(test_run.stdout.splitlines()[-12:])
-        print("TEST RUNNER FAILURE (last 12 lines):", file=sys.stderr)
-        print(tail, file=sys.stderr)
+        lines = test_run.stdout.splitlines()
+        markers = [i for i, line in enumerate(lines) if ("FAIL:" in line or "ERROR:" in line or line.startswith("Traceback"))]
+        selected = set()
+        for marker in markers:
+            selected.update(range(max(0, marker - 3), min(len(lines), marker + 18)))
+        diagnostic = "\\n".join(lines[i] for i in sorted(selected)) if selected else "\\n".join(lines[-80:])
+        print("TEST RUNNER FAILURE (focused test diagnostics):", file=sys.stderr)
+        print(diagnostic, file=sys.stderr)
     return 0 if passed else 1
 
 
