@@ -52,3 +52,32 @@ def required_publish_scopes(
         ApprovalScope(action="FINAL_ACCEPTANCE", **shared),
         ApprovalScope(action="PUBLISH", **shared),
     )
+
+
+def request_publish_approval_credentials(
+    source: ApprovalCredentialSource,
+    *,
+    project_id: str,
+    project_version: str,
+    request_id: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Request final-acceptance and publish credentials from a trusted issuer.
+
+    The issuer independently authenticates each human actor. No actor identity
+    is accepted from this caller. Signature, scope and replay checks remain the
+    responsibility of ApprovalVerifier at the provider boundary.
+    """
+    if not isinstance(source, ApprovalCredentialSource):
+        raise TypeError("a trusted ApprovalCredentialSource is required")
+    scopes = required_publish_scopes(
+        project_id=project_id,
+        project_version=project_version,
+        request_id=request_id,
+    )
+    credentials = []
+    for scope in scopes:
+        credential = source.request_approval(scope)
+        if not isinstance(credential, Mapping):
+            raise TypeError("approval issuer must return a credential object")
+        credentials.append(dict(credential))
+    return credentials[0], credentials[1]
