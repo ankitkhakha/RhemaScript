@@ -131,6 +131,16 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
         self.assertNotIn("sensitive internal detail", output.getvalue())
         self.assertNotIn("UC_expected_channel", output.getvalue())
 
+    def test_rejects_broken_symlink_audit_target_before_network(self):
+        link = self.root / "broken-audit.jsonl"
+        link.symlink_to(self.root / "missing-target.jsonl")
+        transport = self.FakeTransport("UC_expected_channel")
+        with self.assertRaisesRegex(YouTubeIntegrationError, "symbolic link"):
+            run_connection_check(
+                self.credentials, "UC_expected_channel", link, transport=transport
+            )
+        self.assertEqual(transport.calls, [])
+
     def test_rejects_symlink_ancestor_in_audit_path(self):
         real_dir = self.root / "real-parent"
         nested = real_dir / "nested"
