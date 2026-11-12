@@ -156,7 +156,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = run_connection_check(
             args.credential_file, args.expected_channel_id, args.audit_file
         )
-    except (YouTubeIntegrationError, KeyboardInterrupt):
+    except (Exception, KeyboardInterrupt):
         print(json.dumps({
             "status": "FAILED",
             "interface_id": "IF-18",
