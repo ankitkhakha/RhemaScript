@@ -8,6 +8,20 @@ from rhemascript.integrations import oauth_readonly
 
 
 class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
+    def test_callback_diagnostics_expose_only_safe_categories(self):
+        self.assertEqual(
+            oauth_readonly._safe_callback_error_category("state_mismatch"),
+            "state_mismatch",
+        )
+        self.assertEqual(
+            oauth_readonly._safe_callback_error_category("unexpected_parameters"),
+            "unexpected_parameters",
+        )
+        self.assertEqual(
+            oauth_readonly._safe_callback_error_category("authorization_code_secret"),
+            "callback_rejected",
+        )
+
     def test_pkce_pair_uses_s256(self):
         verifier, challenge = oauth_readonly._create_pkce_pair()
         import base64
