@@ -1,6 +1,6 @@
 # Read-only YouTube connection command V1.0
 
-**Status:** Implementation is on the YouTube integration pull-request branch. GitHub Actions synthetic CI passed on the current head commit `596fdd9da354c08089be1bb03183cc36003212d2` on 2026-11-12 (push run [43144950724](https://github.com/ankitkhakha/RhemaScript/actions/runs/43144950724), PR run [43144956546](https://github.com/ankitkhakha/RhemaScript/actions/runs/43144956546)). No live owner OAuth or channel connection has been performed.
+**Status:** Merged into `main` in commit `2e5940618a18278899a69ed9ca7a548f35d33645`. Post-merge GitHub Actions synthetic CI passed in run [43146990690](https://github.com/ankitkhakha/RhemaScript/actions/runs/43146990690) on 2026-11-12. No live owner OAuth or channel connection has been performed.
 
 ## Purpose
 
@@ -40,7 +40,7 @@ A mismatch or failed check is recorded as FAILED and the command exits non-zero.
 
 - IF-18 is the only external provider interface used.
 - Existing credential-file validation remains in force: POSIX owner-only permissions, regular file, no symlink, exact JSON key set, no overwrite behavior.
-- The connection command's gateway is explicitly enabled only for this read-only operation. It does not grant publishing authority.
+- The connection command's gateway is explicitly enabled only for this read-only operation. The owner has separately approved enabling publishing capability in RhemaScript; this read-only command does not exercise or confer project-level publishing authority. Each project remains subject to its Evidence Pack, six approved gates, final-film evidence, human director acceptance, and explicit project-level publishing authorization.
 - No upload, metadata mutation, thumbnail change, scheduling, or publication is enabled or authorized by a successful connection check.
 - No credential values are to be pasted into ChatGPT, issue comments, source files, CI logs, or audit records.
 - This command is a connection diagnostic, not deployment, OAuth consent setup, or a live test until the owner runs it locally.
