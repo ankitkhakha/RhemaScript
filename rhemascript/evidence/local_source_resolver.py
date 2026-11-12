@@ -64,9 +64,11 @@ class LocalSourceResolver:
         for key, entry in catalog.items():
             if not isinstance(key, str) or not key.strip() or not isinstance(entry, LocalSourceEntry):
                 raise LocalSourceResolutionError("catalog keys and entries must be valid local source records")
-            if key != entry.reference:
-                raise LocalSourceResolutionError("catalog key must exactly match entry reference")
-            if not re.fullmatch(r"[0-9a-fA-F]{64}", entry.expected_sha256 or ""):
+            if not isinstance(entry.reference, str) or not entry.reference.strip() or key != entry.reference:
+                raise LocalSourceResolutionError("catalog key must exactly match a non-empty entry reference")
+            if not isinstance(entry.relative_path, str) or not entry.relative_path.strip():
+                raise LocalSourceResolutionError("catalog entry requires a non-empty relative path")
+            if not isinstance(entry.expected_sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", entry.expected_sha256):
                 raise LocalSourceResolutionError("catalog entry requires a 64-character SHA-256 digest")
             for value in (entry.source_id, entry.version, entry.media_type, entry.catalog_revision):
                 if not isinstance(value, str) or not value.strip():
