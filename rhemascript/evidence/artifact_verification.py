@@ -145,12 +145,19 @@ def verify_artifact(root: str | os.PathLike[str], relative_path: str, *,
     return result
 
 
+def is_verified_evidence_version(evidence: EvidenceVersion) -> bool:
+    """Recognise only the exact live object issued by verify_artifact."""
+    return (
+        isinstance(evidence, EvidenceVersion)
+        and evidence._verification_token is _VERIFIED_EVIDENCE_TOKEN
+        and _is_registered_instance(evidence, _VERIFIED_EVIDENCE_INSTANCES)
+    )
+
+
 def bind_assessment(assessment_id: str, evidence: EvidenceVersion, score: int) -> AssessmentBinding:
     if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
         raise EvidenceIntegrityError("score must be an integer from 0 through 4")
-    if (not isinstance(evidence, EvidenceVersion)
-            or evidence._verification_token is not _VERIFIED_EVIDENCE_TOKEN
-            or not _is_registered_instance(evidence, _VERIFIED_EVIDENCE_INSTANCES)):
+    if not is_verified_evidence_version(evidence):
         raise EvidenceIntegrityError("assessment requires evidence returned by verify_artifact")
     if (not isinstance(evidence.sha256, str)
             or len(evidence.sha256) != 64
@@ -187,9 +194,7 @@ def verify_assessment_binding(binding: AssessmentBinding, current: EvidenceVersi
     """Return true only for an authentic binding and exact verified evidence identity."""
     return (
         is_verified_assessment_binding(binding)
-        and isinstance(current, EvidenceVersion)
-        and current._verification_token is _VERIFIED_EVIDENCE_TOKEN
-        and _is_registered_instance(current, _VERIFIED_EVIDENCE_INSTANCES)
+        and is_verified_evidence_version(current)
         and binding.evidence_id == current.evidence_id
         and binding.evidence_version == current.version
         and hmac.compare_digest(binding.evidence_sha256, current.sha256)
