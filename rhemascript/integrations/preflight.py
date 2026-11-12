@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Sequence
 
 from rhemascript.integrations.audit import AuditSinkError, JsonlAuditSink
+from rhemascript.integrations.credentials import PrivateCredentialError, load_private_credentials
 
 
 CREDENTIAL_ENV = (
@@ -22,17 +23,26 @@ CREDENTIAL_ENV = (
 
 
 def inspect_local_preflight(audit_log: str | os.PathLike[str],
-                            environ: dict[str, str] | None = None) -> list[tuple[str, bool, str]]:
+                            environ: dict[str, str] | None = None,
+                            credential_file: str | os.PathLike[str] | None = None) -> list[tuple[str, bool, str]]:
     """Return safe status checks without displaying secrets or touching the network."""
     env = os.environ if environ is None else environ
     checks: list[tuple[str, bool, str]] = []
-    present = [bool(env.get(name, "").strip()) for name in CREDENTIAL_ENV]
-    checks.append((
-        "OAuth environment variables",
-        all(present),
-        "all three values are present (values not displayed)" if all(present)
-        else f"{sum(present)}/3 values present; missing values must be configured locally",
-    ))
+    if credential_file is not None:
+        try:
+            load_private_credentials(credential_file)
+            checks.append(("OAuth private credential file", True,
+                           "file and owner-only permissions verified; values not displayed"))
+        except (PrivateCredentialError, OSError, ValueError) as exc:
+            checks.append(("OAuth private credential file", False, str(exc)))
+    else:
+        present = [bool(env.get(name, "").strip()) for name in CREDENTIAL_ENV]
+        checks.append((
+            "OAuth environment variables",
+            all(present),
+            "all three values are present (values not displayed)" if all(present)
+            else f"{sum(present)}/3 values present; missing values must be configured locally",
+        ))
 
     try:
         sink = JsonlAuditSink(audit_log)
@@ -70,8 +80,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--audit-log", required=True,
                         help="path to the local JSONL audit file in an existing private directory")
+    parser.add_argument("--credential-file",
+                        help="optional owner-only local OAuth credential file; otherwise check environment variables")
     args = parser.parse_args(argv)
-    checks = inspect_local_preflight(args.audit_log)
+    checks = inspect_local_preflight(args.audit_log, credential_file=args.credential_file)
     print("RhemaScript YouTube preflight (offline; no secrets displayed)")
     for label, passed, detail in checks:
         print(f"[{'PASS' if passed else 'CHECK'}] {label}: {detail}")
