@@ -104,6 +104,18 @@ class ProviderPathContractHardeningTests(unittest.TestCase):
             self.invoke(gateway, url)
         self.assertEqual(transport.calls, [])
 
+    def test_gateway_snapshots_and_freezes_nested_provider_contract(self):
+        binding = self.binding()
+        gateway, transport = self.gateway(binding)
+        # Mutating the caller-owned input after construction cannot widen the
+        # gateway's already-validated operation boundary.
+        binding.operations["CHANNEL_READ"]["path_prefix"] = "/"
+        with self.assertRaisesRegex(ExternalIntegrationError, "outside the provider operation allowlist"):
+            self.invoke(gateway, "https://www.googleapis.com/admin/settings")
+        self.assertEqual(transport.calls, [])
+        with self.assertRaises(TypeError):
+            gateway.bindings["IF-18"].operations["CHANNEL_READ"]["path_prefix"] = "/"
+
     def test_request_rejects_path_prefix_sibling(self):
         gateway, transport = self.gateway(self.binding())
         with self.assertRaisesRegex(ExternalIntegrationError, "outside the provider operation allowlist"):
