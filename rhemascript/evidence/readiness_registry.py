@@ -51,7 +51,9 @@ class ReadinessRunRegistry:
                 for item in fields(value) if not item.name.startswith("_")
             }
         if isinstance(value, dict):
-            return {str(k): ReadinessRunRegistry._normalise(v) for k, v in value.items()}
+            if any(not isinstance(key, str) for key in value):
+                raise TypeError("readiness payload object keys must be strings")
+            return {key: ReadinessRunRegistry._normalise(v) for key, v in value.items()}
         if isinstance(value, (list, tuple)):
             return [ReadinessRunRegistry._normalise(v) for v in value]
         if value is None or isinstance(value, (str, int, float, bool)):
@@ -72,7 +74,7 @@ class ReadinessRunRegistry:
             "assessment_is_approval": False,
             "assessment_is_execution_authorisation": False,
         }
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -88,6 +90,16 @@ class ReadinessRunRegistry:
                        (run_id, digest, encoded))
             db.commit()
         return True
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """Return detached records in durable insertion order after integrity validation."""
+        if not self.verify():
+            raise ValueError("readiness registry integrity verification failed")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT payload_json FROM readiness_runs ORDER BY created_at, rowid"
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
