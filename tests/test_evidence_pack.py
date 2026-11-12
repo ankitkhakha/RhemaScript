@@ -52,7 +52,7 @@ class EvidencePackTests(unittest.TestCase):
     def test_strict_run_rejects_verified_status_without_local_file(self):
         import tempfile
         with tempfile.TemporaryDirectory() as root:
-            with self.assertRaisesRegex(ValueError, "could not be byte-verified"):
+            with self.assertRaisesRegex(ValueError, "without local_path"):
                 run_evidence_pack(pack(), actor_role="TEST_HARNESS", evidence_root=root)
 
     def test_strict_run_binds_verified_artifact_to_actual_bytes(self):
