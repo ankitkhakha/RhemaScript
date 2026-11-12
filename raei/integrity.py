@@ -58,6 +58,10 @@ def validate_project_chain(project):
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
             errors.append("invalid positive revision number: " + stage)
 
+    first_stage = stages.get(STAGES[0])
+    if isinstance(first_stage, dict) and first_stage.get("upstream_refs") != []:
+        errors.append("root stage must not declare upstream dependencies: " + STAGES[0])
+
     for index, stage in enumerate(STAGES[1:], start=1):
         record = stages.get(stage)
         previous = stages.get(STAGES[index - 1])
