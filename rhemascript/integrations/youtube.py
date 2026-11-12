@@ -7,7 +7,7 @@ No external request is made at import time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,7 +15,6 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import json
 import os
-import re
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
@@ -38,20 +37,6 @@ REQUIRED_SCOPES = (
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
 
-def _validate_publish_at(value: Any) -> None:
-    """Require a future RFC3339 timestamp with an explicit UTC offset."""
-    pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
-    if not isinstance(value, str) or not re.fullmatch(pattern, value):
-        raise YouTubeIntegrationError("publish_at must be a future RFC3339 timestamp with an explicit timezone")
-    try:
-        scheduled = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        raise YouTubeIntegrationError("publish_at must be a valid future RFC3339 timestamp") from None
-    if scheduled.tzinfo is None or scheduled.utcoffset() is None:
-        raise YouTubeIntegrationError("publish_at must include an explicit timezone")
-    if scheduled <= datetime.now(timezone.utc):
-        raise YouTubeIntegrationError("publish_at must be in the future")
-
 
 class _NoRedirect(HTTPRedirectHandler):
     """Reject redirects so credentials and media never follow an untrusted hop."""
@@ -60,19 +45,26 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 
-def _authorise_project_publish(*, evidence_pack: dict[str, Any],
-                               final_film_evidence_ref: str,
-                               human_director_acceptance: bool,
-                               publishing_authorisation: bool) -> tuple[str, str]:
-    """Validate the canonical evidence pack before permitting any YouTube write."""
+def _authorise_project_publish(
+    *,
+    evidence_pack: dict[str, Any],
+    final_film_evidence_ref: str,
+    approval_verifier,
+    approval_credentials,
+    approval_request_id: str,
+    defer_approval_consumption: bool = False,
+):
+    """Validate project evidence and atomically consume two signed approvals."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
-    from rhemascript.core.authority import (
-        authorise_action, final_acceptance_allowed, AuthorityError,
-    )
+    from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
     from rhemascript.core.gates import (
         GateDecision, GateError, GateRecord, ProjectGateState,
     )
     try:
+        if not isinstance(approval_verifier, ApprovalVerifier):
+            raise ApprovalError("a configured Ed25519 approval verifier is required")
+        if not isinstance(approval_request_id, str) or not approval_request_id.strip():
+            raise ApprovalError("an exact approval request ID is required")
         validated = validate_evidence_pack(evidence_pack)
         films = [
             item for item in validated.artifacts
@@ -102,15 +94,30 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             raise GateError("all six project gates must be approved")
         if state.records[-1].evidence_ref != final_film_evidence_ref:
             raise GateError("final gate evidence reference does not match the approved final film")
-        if not final_acceptance_allowed(
-            human_director_acceptance=human_director_acceptance
-        ):
-            raise AuthorityError("final human acceptance is absent")
-        authorise_action("PUBLISH", {
-            "publishing_authorisation": publishing_authorisation
-        })
-        return validated.project_id, validated.project_version
-    except (EvidencePackError, AuthorityError, GateError, ValueError, TypeError) as exc:
+        expectations = (
+            {
+                "action": "FINAL_ACCEPTANCE",
+                "project_id": validated.project_id,
+                "project_version": validated.project_version,
+                "request_id": approval_request_id,
+            },
+            {
+                "action": "PUBLISH",
+                "project_id": validated.project_id,
+                "project_version": validated.project_version,
+                "request_id": approval_request_id,
+            },
+        )
+        if defer_approval_consumption:
+            if not isinstance(approval_credentials, (tuple, list)) or len(approval_credentials) != 2:
+                raise ApprovalError("exactly two signed approval credentials are required")
+            verified = ()
+        else:
+            verified = approval_verifier.verify_many_and_consume(
+                approval_credentials, expectations, require_distinct_actors=True,
+            )
+        return validated.project_id, validated.project_version, verified
+    except (EvidencePackError, ApprovalError, GateError, ValueError, TypeError) as exc:
         raise YouTubeIntegrationError(
             f"operation denied by RhemaScript governance: {exc}"
         ) from None
@@ -195,6 +202,8 @@ class YouTubeClient:
         self._gateway_project_id = project_id
         self._gateway_source_version = source_version
         self._gateway_authority: dict[str, bool] = {}
+        self._gateway_approval_credentials: tuple[dict[str, Any], ...] = ()
+        self._gateway_approval_request_id: str | None = None
         self._access_token: str | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
@@ -227,9 +236,12 @@ class YouTubeClient:
                     raise YouTubeIntegrationError("request has no approved IF-18 operation")
                 status, raw, response_headers = self._gateway.request(
                     YOUTUBE_INTERFACE_ID, operation, url, method=method,
-                    headers=headers or {}, body=body, request_id=str(uuid.uuid4()),
+                    headers=headers or {}, body=body,
+                    request_id=self._gateway_approval_request_id or str(uuid.uuid4()),
                     project_id=self._gateway_project_id, source_version=self._gateway_source_version,
                     authority=self._gateway_authority,
+                    approval_credentials=self._gateway_approval_credentials,
+                    approval_request_id=self._gateway_approval_request_id,
                 )
             elif self._transport:
                 status, raw, response_headers = self._transport(req, self.config.timeout_seconds)
@@ -353,26 +365,32 @@ class YouTubeClient:
     def upload_video(self, file_path: str, *, title: str, description: str,
                      evidence_pack: dict[str, Any],
                      final_film_evidence_ref: str,
-                     human_director_acceptance: bool,
+                     approval_verifier,
+                     approval_credentials,
+                     approval_request_id: str,
                      tags: list[str] | None = None, category_id: str = "22",
                      privacy_status: str = "private", publish_at: str | None = None,
-                     made_for_kids: bool = False,
-                     publishing_authorisation: bool = False) -> dict[str, Any]:
-        """Resumable upload behind all six project gates and separate authorities.
+                     made_for_kids: bool = False) -> dict[str, Any]:
+        """Resumable upload requiring two separately signed, one-use approvals.
 
-        The caller must supply ordered, approved gate records for this project,
-        final-film evidence matching the last gate, final human acceptance, and
-        separate publishing authorisation. The safe default is private.
+        FINAL_ACCEPTANCE and PUBLISH credentials must be signed by distinct
+        authenticated actors and bound to the exact project version/request.
         """
-        project_id, project_version = _authorise_project_publish(
+        project_id, project_version, approvals = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
-            human_director_acceptance=human_director_acceptance,
-            publishing_authorisation=publishing_authorisation,
+            approval_verifier=approval_verifier,
+            approval_credentials=approval_credentials,
+            approval_request_id=approval_request_id,
+            defer_approval_consumption=self._gateway is not None,
         )
+        if self._gateway is not None and getattr(self._gateway, "approval_verifier", None) is not approval_verifier:
+            raise YouTubeIntegrationError("IF-18 gateway must use the same trusted approval verifier")
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
+        self._gateway_authority = {}
+        self._gateway_approval_credentials = tuple(approval_credentials)
+        self._gateway_approval_request_id = approval_request_id
         path = Path(file_path)
         if not path.is_file() or path.stat().st_size == 0:
             raise YouTubeIntegrationError("video file is missing or empty")
@@ -382,19 +400,12 @@ class YouTubeClient:
             raise YouTubeIntegrationError("description exceeds the supported limit")
         if privacy_status not in {"private", "unlisted", "public"}:
             raise YouTubeIntegrationError("invalid privacy_status")
-        if publish_at is not None:
-            if privacy_status != "private":
-                raise YouTubeIntegrationError("scheduled publication requires private privacy")
-            _validate_publish_at(publish_at)
+        if publish_at and (privacy_status != "private" or not isinstance(publish_at, str)):
+            raise YouTubeIntegrationError("scheduled publication requires private privacy and an RFC3339 publish_at")
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
-        if tags is not None:
-            if not isinstance(tags, list) or any(not isinstance(x, str) or not x.strip() for x in tags):
-                raise YouTubeIntegrationError("tags must be a list of non-empty strings")
-            if sum(len(tag) for tag in tags) > 500:
-                raise YouTubeIntegrationError("combined tag length exceeds 500 characters")
-        if not isinstance(category_id, (str, int)) or isinstance(category_id, bool) or not str(category_id).isdigit():
-            raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
+        if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
+            raise YouTubeIntegrationError("tags must be a list of strings")
 
         metadata: dict[str, Any] = {
             "snippet": {"title": title.strip(), "description": description,
@@ -476,17 +487,24 @@ class YouTubeClient:
     def set_thumbnail(self, video_id: str, image_path: str, *,
                       evidence_pack: dict[str, Any],
                       final_film_evidence_ref: str,
-                      human_director_acceptance: bool,
-                      publishing_authorisation: bool = False) -> dict[str, Any]:
-        project_id, project_version = _authorise_project_publish(
+                      approval_verifier,
+                      approval_credentials,
+                      approval_request_id: str) -> dict[str, Any]:
+        project_id, project_version, approvals = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
-            human_director_acceptance=human_director_acceptance,
-            publishing_authorisation=publishing_authorisation,
+            approval_verifier=approval_verifier,
+            approval_credentials=approval_credentials,
+            approval_request_id=approval_request_id,
+            defer_approval_consumption=self._gateway is not None,
         )
+        if self._gateway is not None and getattr(self._gateway, "approval_verifier", None) is not approval_verifier:
+            raise YouTubeIntegrationError("IF-18 gateway must use the same trusted approval verifier")
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
+        self._gateway_authority = {}
+        self._gateway_approval_credentials = tuple(approval_credentials)
+        self._gateway_approval_request_id = approval_request_id
         path = Path(image_path)
         if not path.is_file():
             raise YouTubeIntegrationError("thumbnail file does not exist")
@@ -543,18 +561,8 @@ class YouTubeClient:
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
                   dimensions: str = "day", filters: str | None = None) -> dict[str, Any]:
-        if not isinstance(start_date, date) or isinstance(start_date, datetime):
-            raise YouTubeIntegrationError("start_date must be a date, not a datetime")
-        if not isinstance(end_date, date) or isinstance(end_date, datetime):
-            raise YouTubeIntegrationError("end_date must be a date, not a datetime")
         if end_date < start_date:
             raise YouTubeIntegrationError("end_date cannot precede start_date")
-        if not isinstance(metrics, str) or not metrics.strip() or len(metrics) > 500:
-            raise YouTubeIntegrationError("metrics must be a non-empty string of at most 500 characters")
-        if not isinstance(dimensions, str) or not dimensions.strip() or len(dimensions) > 200:
-            raise YouTubeIntegrationError("dimensions must be a non-empty string of at most 200 characters")
-        if filters is not None and (not isinstance(filters, str) or len(filters) > 500):
-            raise YouTubeIntegrationError("filters must be a string of at most 500 characters")
         params: dict[str, Any] = {
             "ids": "channel==MINE", "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(), "metrics": metrics, "dimensions": dimensions,
