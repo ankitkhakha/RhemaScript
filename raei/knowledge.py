@@ -19,6 +19,7 @@ _ID = re.compile(r"^[A-Z0-9][A-Z0-9._:-]{2,127}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 SOURCE_TYPES = {"BIBLE", "OFFICIAL_DOC", "INTERNAL_SPEC", "CODE", "SECONDARY", "LESSON_FROM_FAILURE"}
 AUTHORITY_LEVELS = {"SCRIPTURE", "OFFICIAL_PRIMARY", "INTERNAL_APPROVED", "SECONDARY", "UNVERIFIED"}
+SOURCE_AUTHORITY = {"BIBLE": "SCRIPTURE", "OFFICIAL_DOC": "OFFICIAL_PRIMARY", "INTERNAL_SPEC": "INTERNAL_APPROVED", "CODE": "UNVERIFIED", "SECONDARY": "SECONDARY", "LESSON_FROM_FAILURE": "UNVERIFIED"}
 
 
 class RAEIKnowledgeError(ValueError):
@@ -71,10 +72,12 @@ def _validate_payload(payload: dict[str, Any], evidence: EvidenceVersion) -> Non
         raise RAEIKnowledgeError("version must use numeric major.minor[.patch] format")
     for field in ("title", "domain", "source_name", "source_version", "source_reference", "summary"):
         _required_text(payload, field)
-    if payload["source_type"] not in SOURCE_TYPES:
+    if not isinstance(payload["source_type"], str) or payload["source_type"] not in SOURCE_TYPES:
         raise RAEIKnowledgeError("unsupported source_type")
-    if payload["authority_level"] not in AUTHORITY_LEVELS:
+    if not isinstance(payload["authority_level"], str) or payload["authority_level"] not in AUTHORITY_LEVELS:
         raise RAEIKnowledgeError("unsupported authority_level")
+    if payload["authority_level"] != SOURCE_AUTHORITY[payload["source_type"]]:
+        raise RAEIKnowledgeError("authority_level does not match the declared source_type")
     if payload["status"] != "PENDING_REVIEW":
         raise RAEIKnowledgeError("new knowledge can only enter as PENDING_REVIEW")
     if payload["source_authentication_status"] != "NOT_CHECKED":
@@ -129,6 +132,16 @@ def list_knowledge(registry: ReadinessRunRegistry) -> list[dict[str, Any]]:
         if not isinstance(payload, dict) or not isinstance(evidence_items, list) or len(evidence_items) != 1 or not isinstance(binding, dict):
             raise RAEIKnowledgeError("stored knowledge record lacks one exact evidence binding")
         evidence_item = evidence_items[0]
+        if not isinstance(evidence_item, dict):
+            raise RAEIKnowledgeError("stored knowledge evidence record is malformed")
+        try:
+            evidence_stub = EvidenceVersion(
+                evidence_item["evidence_id"], evidence_item["relative_path"],
+                evidence_item["version"], evidence_item["sha256"], evidence_item["size_bytes"],
+            )
+            _validate_payload(payload, evidence_stub)
+        except (KeyError, TypeError, RAEIKnowledgeError) as exc:
+            raise RAEIKnowledgeError("stored knowledge payload failed schema validation") from exc
         encoded = canonical_knowledge_bytes(payload)
         digest = hashlib.sha256(encoded).hexdigest()
         if (stored.get("run_id") != f"KNOWLEDGE:{payload.get('knowledge_id')}:{payload.get('version')}"
