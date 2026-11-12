@@ -104,8 +104,28 @@ def _exchange_code(*, client_id: str, client_secret: str, code: str,
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 raise OAuthBootstrapError("Google OAuth response exceeded the safety limit")
-    except HTTPError:
-        raise OAuthBootstrapError("Google OAuth token exchange was rejected") from None
+    except HTTPError as exc:
+        # Read only Google's machine-readable error code. Never surface the
+        # response description/body, which may contain sensitive provider data.
+        category = "token_rejected"
+        try:
+            error_body = exc.read(MAX_RESPONSE_BYTES + 1)
+            if len(error_body) <= MAX_RESPONSE_BYTES:
+                error_payload = json.loads(error_body.decode("utf-8"))
+                candidate = error_payload.get("error") if isinstance(error_payload, dict) else None
+                safe_errors = {
+                    "invalid_client", "invalid_grant", "redirect_uri_mismatch",
+                    "unauthorized_client", "unsupported_grant_type",
+                    "invalid_request", "invalid_scope",
+                }
+                if isinstance(candidate, str) and candidate in safe_errors:
+                    category = candidate
+        except (UnicodeDecodeError, ValueError, OSError):
+            pass
+        raise OAuthBootstrapError(
+            f"Google OAuth token exchange rejected (HTTP {exc.code}, {category}); "
+            "no credentials were saved"
+        ) from None
     except (URLError, TimeoutError, OSError):
         raise OAuthBootstrapError("Google OAuth token exchange could not reach Google") from None
     try:
