@@ -164,6 +164,7 @@ def compare_project_records(before, after):
             isinstance(approval, dict)
             and isinstance(prior_approval, dict)
             and approval != prior_approval
+            and approval.get("approval_ref") != prior_approval.get("approval_ref")
         )
         if (
             not isinstance(approval, dict)
