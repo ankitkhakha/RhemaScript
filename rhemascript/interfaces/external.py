@@ -78,6 +78,7 @@ class ExternalIntegrationGateway:
                  transport: Transport | None = None,
                  credential_resolver: Callable[[str], dict[str, str]] | None = None,
                  audit_sink: Callable[[dict[str, Any]], None] | None = None,
+                 approval_verifier=None,
                  enabled: bool = False):
         self.bindings = {}
         for binding in bindings:
@@ -88,8 +89,11 @@ class ExternalIntegrationGateway:
         self.transport = transport or UrllibTransport()
         self.credential_resolver = credential_resolver or (lambda _provider: {})
         self.audit_sink = audit_sink
+        self.approval_verifier = approval_verifier
         self.enabled = enabled
         self._lock = threading.Lock()
+        self._approval_lock = threading.Lock()
+        self._authorized_publish_requests: dict[str, tuple[str, str, dict[str, Any]]] = {}
         self._responses = {}
 
     def invoke(self, interface_id: str, request: dict[str, Any], *,
@@ -193,7 +197,8 @@ class ExternalIntegrationGateway:
                 recipient_clearance: str = "OPERATIONAL",
                 task_need: bool = True, approved_scope: bool = True,
                 authority: dict[str, bool] | None = None,
-                audit_context: dict[str, Any] | None = None,
+                approval_credentials: tuple[dict[str, Any], ...] | None = None,
+                approval_request_id: str | None = None,
                 max_response_bytes: int = 8_000_000) -> tuple[int, bytes, dict[str, str]]:
         """Audited method-aware provider request for OAuth and resumable protocols."""
         from rhemascript.core.authority import authorise_action, AuthorityError
@@ -237,27 +242,51 @@ class ExternalIntegrationGateway:
         authority_operation = "PUBLISH" if operation.upper() in {
             "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
         } else operation.upper()
-        if authority_operation in self.CONSEQUENT_OPERATIONS or authority_operation == "PUBLISH":
+        if authority_operation == "PUBLISH":
+            if not isinstance(self.approval_verifier, object) or self.approval_verifier is None:
+                raise ExternalIntegrationError("publishing requires a trusted signed approval verifier")
+            with self._approval_lock:
+                cached = self._authorized_publish_requests.get(request_id)
+                if cached is not None:
+                    cached_project, cached_version, audit_context = cached
+                    if cached_project != project_id or cached_version != source_version:
+                        raise ExternalIntegrationError("approval request cannot be reused across project versions")
+                else:
+                    if (approval_request_id != request_id
+                            or not isinstance(approval_credentials, (tuple, list))
+                            or len(approval_credentials) != 2):
+                        raise ExternalIntegrationError("publishing requires two signed approvals bound to this request")
+                    try:
+                        from rhemascript.core.approvals import ApprovalVerifier
+                        if not isinstance(self.approval_verifier, ApprovalVerifier):
+                            raise ExternalIntegrationError("trusted approval verifier is not configured")
+                        approvals = self.approval_verifier.verify_many_and_consume(
+                            approval_credentials,
+                            (
+                                {"action": "FINAL_ACCEPTANCE", "project_id": project_id,
+                                 "project_version": source_version, "request_id": request_id},
+                                {"action": "PUBLISH", "project_id": project_id,
+                                 "project_version": source_version, "request_id": request_id},
+                            ),
+                            require_distinct_actors=True,
+                        )
+                    except Exception as exc:
+                        if isinstance(exc, ExternalIntegrationError):
+                            raise
+                        raise ExternalIntegrationError("signed publishing approvals were denied") from None
+                    audit_context = {
+                        "approval_ids": [item.approval_id for item in approvals],
+                        "approval_actor_ids": [item.actor_id for item in approvals],
+                        "approval_issuer": approvals[0].issuer,
+                    }
+                    self._authorized_publish_requests[request_id] = (
+                        project_id, source_version, audit_context,
+                    )
+        elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
                 authorise_action(authority_operation, authority or {})
             except AuthorityError:
                 raise ExternalIntegrationError("consequential operation lacks explicit authority") from None
-
-        if authority_operation == "PUBLISH":
-            if (not isinstance(audit_context, dict)
-                    or set(audit_context) != {"approval_ids", "approval_actor_ids", "approval_issuer"}):
-                raise ExternalIntegrationError("publishing requires verified approval audit attribution")
-            approval_ids = audit_context.get("approval_ids")
-            actor_ids = audit_context.get("approval_actor_ids")
-            issuer = audit_context.get("approval_issuer")
-            if (not isinstance(approval_ids, list) or len(approval_ids) != 2
-                    or any(not isinstance(x, str) or not x.strip() for x in approval_ids)
-                    or len(set(approval_ids)) != 2
-                    or not isinstance(actor_ids, list) or len(actor_ids) != 2
-                    or any(not isinstance(x, str) or not x.strip() for x in actor_ids)
-                    or len(set(actor_ids)) != 2
-                    or not isinstance(issuer, str) or not issuer.strip()):
-                raise ExternalIntegrationError("publishing approval audit attribution is invalid")
 
         fingerprint = sha256(
             interface_id.encode() + b":" + operation.upper().encode() + b":" +
@@ -271,9 +300,9 @@ class ExternalIntegrationGateway:
                  "request_bytes": len(body or b""), "phase": "REQUESTED"}
         if authority_operation == "PUBLISH":
             event.update({
-                "approval_ids": list(approval_ids),
-                "approval_actor_ids": list(actor_ids),
-                "approval_issuer": issuer,
+                "approval_ids": list(audit_context["approval_ids"]),
+                "approval_actor_ids": list(audit_context["approval_actor_ids"]),
+                "approval_issuer": audit_context["approval_issuer"],
             })
         self.audit_sink(dict(event))
         try:
