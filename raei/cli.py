@@ -57,6 +57,8 @@ def _database(path_value: str, *, create: bool = False) -> ReadinessRunRegistry:
                 raise RAEICLIError("database file must be owner-controlled and private (0600)")
     except RAEICLIError:
         raise
+    except FileExistsError as exc:
+        raise RAEICLIError("database already exists") from exc
     except OSError as exc:
         raise RAEICLIError("database path is unavailable or unsafe") from exc
     return ReadinessRunRegistry(path)
