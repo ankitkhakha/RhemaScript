@@ -4,6 +4,7 @@ from raei.integrity import STAGES, GATES, IntegrityError, validate_project_chain
 def complete_project():
     stages = {name: {"status":"present","artifact_ref":name+"-v1","source_ref":"source:"+name,"revision":1}
               for name in STAGES}
+    stages[STAGES[0]]["upstream_refs"] = []
     for index, name in enumerate(STAGES[1:], start=1):
         stages[name]["upstream_refs"] = [stages[STAGES[index-1]]["artifact_ref"]]
     gate_stage = {
