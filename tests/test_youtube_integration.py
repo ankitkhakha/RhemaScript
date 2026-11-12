@@ -393,6 +393,27 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     privacy_status="public", publish_at="2026-12-01T12:00:00Z",
                     **self.publish_context())
 
+    def test_scheduled_publication_rejects_invalid_rfc3339_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        invalid_values = ("not-a-date", "2026-12-01T12:00:00", "2026-12-01 12:00:00Z", 123)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for value in invalid_values:
+                with self.subTest(value=value):
+                    with self.assertRaisesRegex(YouTubeIntegrationError, "RFC3339"):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            privacy_status="private", publish_at=value, **self.publish_context())
+
+    def test_scheduled_publication_rejects_past_timestamp_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with self.assertRaisesRegex(YouTubeIntegrationError, "in the future"):
+                client.upload_video(video.name, title="Approved", description="Test",
+                    privacy_status="private", publish_at="2000-01-01T00:00:00Z", **self.publish_context())
+
     def test_analytics_date_range_is_validated_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
