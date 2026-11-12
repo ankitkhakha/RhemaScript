@@ -109,6 +109,18 @@ class RAEIReadOnlyAdapterTests(unittest.TestCase):
                 "unit_id": "UNIT-1", "authorize_write": True,
             })
 
+    def test_dispatcher_never_calls_learning_write_methods(self):
+        from unittest.mock import patch
+
+        self.store.create_unit("UNIT-NO-WRITE", "Read-only proof")
+        with patch.object(self.store, "assess", side_effect=AssertionError("write path reached")) as assess, \
+             patch.object(self.store, "create_unit", side_effect=AssertionError("write path reached")) as create:
+            result = self.adapter.invoke("READ_LEARNING_UNIT", {"unit_id": "UNIT-NO-WRITE"})
+        self.assertEqual(result["status"], "COMPLETED_READ_ONLY")
+        self.assertFalse(result["write_performed"])
+        assess.assert_not_called()
+        create.assert_not_called()
+
     def test_adapter_requires_explicit_evidence_store(self):
         with self.assertRaises(RAEIAdapterError):
             RAEIReadOnlyAdapter(None)
