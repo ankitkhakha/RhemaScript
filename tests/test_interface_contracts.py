@@ -104,6 +104,23 @@ class InterfaceContractTests(unittest.TestCase):
                 authority={"generation_authorisation": 1},
             )
 
+    def test_caller_mutation_cannot_change_cached_request_or_response(self):
+        gateway = InterfaceGateway()
+        original = request(payload={"nested": {"value": "accepted"}})
+        first = gateway.invoke("IF-01", original)
+        original["payload"]["nested"]["value"] = "caller-mutated"
+        first.payload["payload"]["nested"]["value"] = "response-mutated"
+
+        replay = gateway.invoke(
+            "IF-01",
+            request(payload={"nested": {"value": "accepted"}}),
+        )
+        self.assertEqual(
+            replay.payload["payload"]["nested"]["value"], "accepted"
+        )
+        self.assertIsNot(replay, first)
+        self.assertIsNot(replay.payload, first.payload)
+
 
 if __name__ == "__main__":
     unittest.main()
