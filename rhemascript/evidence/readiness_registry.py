@@ -124,6 +124,40 @@ class ReadinessRunRegistry:
         return all(hashlib.sha256(encoded.encode("utf-8")).hexdigest() == digest
                    for digest, encoded in rows)
 
+    def verify_artifacts(self, evidence_root: str | Path) -> bool:
+        """Re-hash every retained evidence artefact before using recorded progress."""
+        root = Path(evidence_root).expanduser()
+        try:
+            root_info = root.lstat()
+            if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+                return False
+            root.resolve(strict=True)
+        except OSError:
+            return False
+        if not self.verify():
+            return False
+        from .artifact_verification import EvidenceIntegrityError, verify_artifact
+        try:
+            for record in self.list_all():
+                evidence_items = record.get("byte_verified_evidence")
+                if not isinstance(evidence_items, list):
+                    return False
+                for item in evidence_items:
+                    if not isinstance(item, dict):
+                        return False
+                    required = {"evidence_id", "relative_path", "version", "sha256", "size_bytes"}
+                    if not required.issubset(item):
+                        return False
+                    verified = verify_artifact(
+                        root, item["relative_path"],
+                        evidence_id=item["evidence_id"], version=item["version"],
+                    )
+                    if verified.sha256 != item["sha256"] or verified.size_bytes != item["size_bytes"]:
+                        return False
+        except (EvidenceIntegrityError, KeyError, TypeError, ValueError):
+            return False
+        return True
+
     def checkpoint(self, key: bytes) -> dict[str, Any]:
         """Create an HMAC checkpoint for independent retention outside the database."""
         if not isinstance(key, bytes) or len(key) < 32:
