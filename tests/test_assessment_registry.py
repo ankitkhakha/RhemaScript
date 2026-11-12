@@ -16,6 +16,12 @@ class AssessmentRegistryTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_forged_binding_cannot_be_persisted(self):
+        from rhemascript.evidence.artifact_verification import AssessmentBinding, EvidenceIntegrityError
+        forged = AssessmentBinding("AS-FORGED", "EV-1", "v1", "a" * 64, 4)
+        with self.assertRaises(EvidenceIntegrityError):
+            self.registry.record(forged)
+
     def test_persists_exact_binding(self):
         self.assertTrue(self.registry.record(self.binding))
         reopened = AssessmentRegistry(self.db)
