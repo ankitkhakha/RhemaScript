@@ -54,6 +54,13 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "parent directory"):
                 JsonlAuditSink(missing)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX permissions required")
+    def test_rejects_group_or_world_accessible_audit_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            os.chmod(directory, 0o750)
+            with self.assertRaisesRegex(AuditSinkError, "owner-controlled directory"):
+                JsonlAuditSink(Path(directory) / "audit.jsonl")
+
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
     def test_rejects_symlink_destination(self):
         with tempfile.TemporaryDirectory() as directory:
