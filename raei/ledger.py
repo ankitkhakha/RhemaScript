@@ -15,7 +15,7 @@ class LedgerError(ValueError):
     pass
 
 def canonical(value):
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 def digest(value):
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
@@ -32,6 +32,8 @@ def event_hash(event):
 def verify_chain(events, units):
     previous = "GENESIS"
     for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise LedgerError(f"event {index + 1} must be an object")
         if event.get("sequence") != index + 1:
             raise LedgerError(f"event sequence broken at position {index + 1}")
         if event.get("previous_hash") != previous:
@@ -43,6 +45,8 @@ def verify_chain(events, units):
         raise LedgerError("current ledger state does not match the final recorded event")
 
 def validate(data):
+    if not isinstance(data, dict):
+        raise LedgerError("ledger root must be an object")
     if data.get("schema_version") != SCHEMA:
         raise LedgerError("unsupported schema version")
     if not isinstance(data.get("units"), dict) or not isinstance(data.get("events"), list):
@@ -53,8 +57,12 @@ def validate(data):
             raise LedgerError(f"invalid unit identity: {unit_id!r}")
         if unit.get("status") not in STATUSES:
             raise LedgerError(f"invalid status for {unit_id}")
-        if not isinstance(unit.get("prerequisites", []), list):
+        if not isinstance(unit.get("prerequisites", []), list) or any(
+            not isinstance(item, str) or not item.strip() for item in unit.get("prerequisites", [])
+        ):
             raise LedgerError(f"invalid prerequisites for {unit_id}")
+        if len(set(unit.get("prerequisites", []))) != len(unit.get("prerequisites", [])):
+            raise LedgerError(f"duplicate prerequisites for {unit_id}")
         for prerequisite in unit.get("prerequisites", []):
             if prerequisite not in data["units"]:
                 raise LedgerError(f"unknown prerequisite {prerequisite!r} for {unit_id}")
@@ -105,10 +113,12 @@ def load(path):
     return data
 
 def add_unit(data, unit_id, title, prerequisites):
+    if not isinstance(unit_id, str) or not unit_id.strip() or not isinstance(title, str) or not title.strip():
+        raise LedgerError("unit id and title must be non-empty strings")
+    if not isinstance(prerequisites, list) or any(not isinstance(item, str) or not item.strip() for item in prerequisites):
+        raise LedgerError("prerequisites must be a list of non-empty unit IDs")
     if unit_id in data["units"]:
         raise LedgerError(f"duplicate unit id: {unit_id}")
-    if not unit_id.strip() or not title.strip():
-        raise LedgerError("unit id and title are required")
     if unit_id in prerequisites or len(set(prerequisites)) != len(prerequisites):
         raise LedgerError("self-dependency or duplicate prerequisite")
     for item in prerequisites:
@@ -128,9 +138,9 @@ def record_assessment(data, unit_id, score, evidence_ref, evidence_status, note=
         raise LedgerError("passed units are immutable; create a new versioned unit for reassessment")
     if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
         raise LedgerError("score must be an integer from 0 to 4")
-    if evidence_status not in {"verified", "reported_unverified", "planned"}:
+    if not isinstance(evidence_status, str) or evidence_status not in {"verified", "reported_unverified", "planned"}:
         raise LedgerError("invalid evidence status")
-    if evidence_status == "verified" and (not evidence_ref or not evidence_ref.strip()):
+    if evidence_status == "verified" and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
         raise LedgerError("verified evidence requires a non-empty evidence reference")
     if any(data["units"][p]["status"] != "passed" for p in unit["prerequisites"]):
         raise LedgerError("cannot assess unit before prerequisites pass")
