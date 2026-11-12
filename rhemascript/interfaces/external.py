@@ -40,6 +40,28 @@ class ProviderBinding:
         if self.timeout_seconds <= 0 or self.timeout_seconds > 60:
             raise ExternalIntegrationError("timeout must be between 0 and 60 seconds")
 
+        # Method-aware contracts must not widen the binding's host boundary.
+        # Validate these at configuration time, before any request can be sent.
+        for operation, spec in self.operations.items():
+            if not isinstance(operation, str) or not operation.strip():
+                raise ExternalIntegrationError("provider operation names must be non-empty strings")
+            if isinstance(spec, dict):
+                method = spec.get("method")
+                hosts = spec.get("hosts")
+                path_prefix = spec.get("path_prefix")
+                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                    raise ExternalIntegrationError("method-aware provider contract has an invalid HTTP method")
+                if (not isinstance(hosts, (tuple, list)) or not hosts
+                        or any(not isinstance(host, str) or not host.strip() for host in hosts)):
+                    raise ExternalIntegrationError("method-aware provider contract has invalid hosts")
+                allowed = {host.lower() for host in self.allowed_hosts}
+                if any(host.lower() not in allowed for host in hosts):
+                    raise ExternalIntegrationError("method-aware provider contract host exceeds binding allowlist")
+                if (not isinstance(path_prefix, str) or not path_prefix.startswith("/")
+                        or path_prefix.startswith("//") or "?" in path_prefix or "#" in path_prefix
+                        or "\\\\" in path_prefix or any(part in {".", ".."} for part in path_prefix.split("/"))):
+                    raise ExternalIntegrationError("method-aware provider contract has an invalid path prefix")
+
 
 class Transport(Protocol):
     def send(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> tuple[int, bytes]: ...
