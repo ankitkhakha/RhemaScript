@@ -243,7 +243,7 @@ class ExternalIntegrationGateway:
             "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
         } else operation.upper()
         if authority_operation == "PUBLISH":
-            if not isinstance(self.approval_verifier, object) or self.approval_verifier is None:
+            if self.approval_verifier is None:
                 raise ExternalIntegrationError("publishing requires a trusted signed approval verifier")
             with self._approval_lock:
                 cached = self._authorized_publish_requests.get(request_id)
