@@ -20,10 +20,9 @@ The channel owner must confirm:
 - YouTube Data API v3 is enabled in that project.
 - The OAuth consent screen is configured for the intended audience.
 - The Google account that manages the intended channel is listed as a test user while the app is in Testing.
-- The OAuth client is the **Desktop app** client named `RhemaScript YouTube Read-Only Desktop`.
-- The client belongs to the selected Google Cloud project.
-
-Do not use the separate Apps Script Web application client or another Desktop client.
+- The OAuth client is the intended **Desktop app** client in the selected Google Cloud project.
+- Download that exact Desktop client JSON from Google Cloud Console. Do not use the Apps Script Web application client JSON.
+- Keep the downloaded JSON outside the RhemaScript repository (for example, in Downloads). Do not upload it, paste its contents, or commit it.
 
 ## Run on macOS
 
@@ -32,10 +31,11 @@ From Terminal:
 ```bash
 cd "$HOME/Documents/RhemaScript"
 python3 -m rhemascript.integrations.oauth_readonly \
+  --client-config "$HOME/Downloads/client_secret_XXXXXXXX.json" \
   --credential-path "$HOME/.config/rhemascript/youtube-oauth.json"
 ```
 
-The command prompts for the Desktop OAuth client ID, then asks for the Desktop OAuth client secret using a hidden Terminal prompt. Google’s token endpoint has returned `invalid_request:missing_client_secret` for this client in this environment, so the secret is supplied only as a compatibility parameter in the HTTPS token-exchange POST. Desktop OAuth clients remain public clients: this secret is not treated as confidential. It is not printed, placed in the authorization URL, written to the credential file, or committed to Git. Do not paste credential values, authorization codes, tokens, or the full authorization URL into chat, a shell command, shell history, Git, or a screenshot.
+The command reads the client ID and matching client secret from the local downloaded Desktop JSON. This avoids accidentally pairing a client ID from one OAuth client with a secret from another. The JSON is read locally and its values are never printed. The authorization-code exchange sends the matching pair only in the HTTPS POST body, alongside the PKCE verifier. Google documents the Desktop client as a public client: its client secret is not confidential, and PKCE remains the security control. The resulting credential file stores the client ID, client secret, and refresh token using the existing owner-only credential format required by RhemaScript's existing YouTube client. The file is plaintext protected by filesystem permissions, not encryption. Keep both downloaded JSON and credential file outside Git. Never paste credential values, authorization codes, tokens, or the full authorization URL into chat, a shell command, shell history, Git, or a screenshot.
 
 The command opens the browser for Google consent. Review the permission screen. It must request only YouTube read-only access. If Google displays Upload, Analytics, channel management, or any other permission, cancel and stop.
 
