@@ -87,6 +87,29 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
         self.assertEqual(binding.interface_id, "IF-18")
         self.assertEqual(set(binding.operations), {"OAUTH_TOKEN", "CHANNEL_READ"})
 
+    def test_rejects_group_or_world_accessible_audit_directory_before_network(self):
+        self.root.chmod(0o755)
+        transport = self.FakeTransport("UC_expected_channel")
+        with self.assertRaisesRegex(YouTubeIntegrationError, "owner-controlled"):
+            run_connection_check(
+                self.credentials, "UC_expected_channel", self.audit, transport=transport
+            )
+        self.assertEqual(transport.calls, [])
+        self.assertFalse(self.audit.exists())
+
+    def test_rejects_symlink_audit_directory(self):
+        real_dir = self.root / "real-audit"
+        real_dir.mkdir(mode=0o700)
+        link = self.root / "audit-link"
+        link.symlink_to(real_dir, target_is_directory=True)
+        transport = self.FakeTransport("UC_expected_channel")
+        with self.assertRaisesRegex(YouTubeIntegrationError, "owner-controlled"):
+            run_connection_check(
+                self.credentials, "UC_expected_channel",
+                link / "audit.jsonl", transport=transport
+            )
+        self.assertEqual(transport.calls, [])
+
     def test_missing_credentials_still_produces_redacted_failure_audit(self):
         missing = self.root / "missing.json"
         with self.assertRaises(YouTubeIntegrationError):
