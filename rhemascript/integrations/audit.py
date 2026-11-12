@@ -46,6 +46,15 @@ class JsonlAuditSink:
         self.path = Path(path).expanduser()
         if not self.path.name or not self.path.parent.is_dir():
             raise AuditSinkError("audit log parent directory must already exist")
+        if os.name == "posix":
+            try:
+                parent_info = os.lstat(self.path.parent)
+            except OSError:
+                raise AuditSinkError("audit log parent directory is unavailable") from None
+            if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_info.st_mode)
+                    or parent_info.st_uid != os.getuid()
+                    or stat.S_IMODE(parent_info.st_mode) & 0o077):
+                raise AuditSinkError("audit log parent must be an owner-controlled directory with mode 0700 or stricter")
         self._lock = threading.Lock()
 
     def __call__(self, event: dict[str, Any]) -> None:
@@ -76,6 +85,8 @@ class JsonlAuditSink:
                 info = os.fstat(descriptor)
                 if not stat.S_ISREG(info.st_mode):
                     raise AuditSinkError("audit destination must be a regular file")
+                if os.name == "posix" and info.st_uid != os.getuid():
+                    raise AuditSinkError("audit destination must be owned by the current user")
                 if hasattr(os, "fchmod"):
                     os.fchmod(descriptor, 0o600)
                 view = memoryview(record)
