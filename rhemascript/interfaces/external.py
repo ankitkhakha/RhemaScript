@@ -10,11 +10,33 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import unquote, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
+import math
 import threading
 
 
 class ExternalIntegrationError(RuntimeError):
     pass
+
+
+def _safe_decoded_path(path: str) -> str:
+    """Decode path escapes repeatedly and reject traversal or separator tricks."""
+    if not isinstance(path, str) or not path.startswith("/") or path.startswith("//"):
+        raise ExternalIntegrationError("provider path must be an absolute single-root path")
+    decoded = path
+    for _ in range(8):
+        next_value = unquote(decoded)
+        if next_value == decoded:
+            break
+        decoded = next_value
+    else:
+        raise ExternalIntegrationError("provider path has excessive nested encoding")
+    if unquote(decoded) != decoded:
+        raise ExternalIntegrationError("provider path has excessive nested encoding")
+    if "\\" in decoded or "\x00" in decoded:
+        raise ExternalIntegrationError("provider path contains an unsafe separator or null byte")
+    if any(part in {".", ".."} for part in decoded.split("/")):
+        raise ExternalIntegrationError("provider path contains traversal segments")
+    return decoded
 
 
 @dataclass(frozen=True)
@@ -28,17 +50,58 @@ class ProviderBinding:
     idempotency_header: str = "Idempotency-Key"
 
     def validate(self) -> None:
+        if (not isinstance(self.interface_id, str) or not self.interface_id.strip()
+                or not isinstance(self.provider_name, str) or not self.provider_name.strip()):
+            raise ExternalIntegrationError("provider binding identity is incomplete")
+        if not isinstance(self.endpoint, str) or not self.endpoint.strip():
+            raise ExternalIntegrationError("provider endpoint must be a non-empty URL")
         parsed = urlparse(self.endpoint)
-        if parsed.scheme != "https" or not parsed.hostname:
-            raise ExternalIntegrationError("provider endpoint must use HTTPS")
+        if (parsed.scheme.lower() != "https" or not parsed.hostname
+                or parsed.port not in (None, 443)):
+            raise ExternalIntegrationError("provider endpoint must use HTTPS on port 443")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ExternalIntegrationError("endpoint must not contain credentials, query, or fragment")
-        if parsed.hostname.lower() not in {h.lower() for h in self.allowed_hosts}:
+        if (not isinstance(self.allowed_hosts, (tuple, list)) or not self.allowed_hosts
+                or any(not isinstance(host, str) or not host.strip()
+                       or any(char in host for char in "/\\\\@?#")
+                       for host in self.allowed_hosts)):
+            raise ExternalIntegrationError("provider host allowlist is invalid")
+        allowed = {host.rstrip(".").lower() for host in self.allowed_hosts}
+        if parsed.hostname.rstrip(".").lower() not in allowed:
             raise ExternalIntegrationError("provider host is not explicitly allowlisted")
-        if not self.interface_id or not self.provider_name or not self.operations:
-            raise ExternalIntegrationError("provider binding is incomplete")
-        if self.timeout_seconds <= 0 or self.timeout_seconds > 60:
-            raise ExternalIntegrationError("timeout must be between 0 and 60 seconds")
+        if not isinstance(self.operations, dict) or not self.operations:
+            raise ExternalIntegrationError("provider binding requires operation contracts")
+        if (not isinstance(self.timeout_seconds, (int, float))
+                or isinstance(self.timeout_seconds, bool)
+                or not math.isfinite(self.timeout_seconds)
+                or self.timeout_seconds <= 0 or self.timeout_seconds > 60):
+            raise ExternalIntegrationError("timeout must be finite and between 0 and 60 seconds")
+
+        for operation, spec in self.operations.items():
+            if not isinstance(operation, str) or not operation.strip():
+                raise ExternalIntegrationError("provider operation names must be non-empty strings")
+            if isinstance(spec, str):
+                if not spec.strip():
+                    raise ExternalIntegrationError("provider operation path must be non-empty")
+                continue
+            if not isinstance(spec, dict):
+                raise ExternalIntegrationError("provider operation contract must be a path or object")
+            method = spec.get("method")
+            hosts = spec.get("hosts")
+            path_prefix = spec.get("path_prefix")
+            if not isinstance(method, str) or method.upper() not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+                raise ExternalIntegrationError("method-aware provider contract has an invalid HTTP method")
+            if (not isinstance(hosts, (tuple, list)) or not hosts
+                    or any(not isinstance(host, str) or not host.strip() for host in hosts)):
+                raise ExternalIntegrationError("method-aware provider contract has invalid hosts")
+            if any(host.rstrip(".").lower() not in allowed for host in hosts):
+                raise ExternalIntegrationError("method-aware provider contract host exceeds binding allowlist")
+            try:
+                _safe_decoded_path(path_prefix)
+            except ExternalIntegrationError as exc:
+                raise ExternalIntegrationError("method-aware provider contract has an invalid path prefix") from exc
+            if "?" in path_prefix or "#" in path_prefix:
+                raise ExternalIntegrationError("method-aware provider contract has an invalid path prefix")
 
 
 class Transport(Protocol):
@@ -256,15 +319,23 @@ class ExternalIntegrationGateway:
         expected_method = spec.get("method")
         hosts = spec.get("hosts")
         path_prefix = spec.get("path_prefix")
-        if method.upper() != expected_method or not isinstance(hosts, (tuple, list)) or not hosts:
+        if (not isinstance(method, str) or method.upper() != expected_method
+                or not isinstance(hosts, (tuple, list)) or not hosts):
             raise ExternalIntegrationError("HTTP method is not permitted by provider contract")
-        if not isinstance(path_prefix, str) or not path_prefix.startswith("/") or ".." in path_prefix.split("/"):
-            raise ExternalIntegrationError("provider path contract is invalid")
-        parsed = urlparse(url)
-        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-                or parsed.port not in (None, 443) or parsed.fragment
-                or parsed.hostname.lower() not in {h.lower() for h in hosts}
-                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))):
+        if not isinstance(url, str) or not url:
+            raise ExternalIntegrationError("request URL must be a non-empty string")
+        try:
+            parsed = urlparse(url)
+            decoded_path = _safe_decoded_path(parsed.path)
+            decoded_prefix = _safe_decoded_path(path_prefix)
+        except (ValueError, ExternalIntegrationError) as exc:
+            raise ExternalIntegrationError("request URL is outside the provider operation allowlist") from exc
+        allowed_hosts = {host.rstrip(".").lower() for host in hosts}
+        prefix = decoded_prefix.rstrip("/") or "/"
+        if (parsed.scheme.lower() != "https" or not parsed.hostname
+                or parsed.username or parsed.password or parsed.port not in (None, 443)
+                or parsed.fragment or parsed.hostname.rstrip(".").lower() not in allowed_hosts
+                or not (decoded_path == prefix or decoded_path.startswith(prefix.rstrip("/") + "/"))):
             raise ExternalIntegrationError("request URL is outside the provider operation allowlist")
         if not isinstance(body, (bytes, type(None))) or not 0 < max_response_bytes <= 8_000_000:
             raise ExternalIntegrationError("request body or response limit is invalid")
