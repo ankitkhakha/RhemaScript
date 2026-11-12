@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 from typing import Mapping
+from types import MappingProxyType
 
 from .artifact_verification import EvidenceIntegrityError, EvidenceVersion, verify_artifact
 
@@ -79,7 +80,7 @@ class LocalSourceResolver:
                 raise LocalSourceResolutionError("project scope values must be non-empty strings")
             copied[key] = entry
         self._evidence_root = evidence_root
-        self._catalog = copied
+        self._catalog = MappingProxyType(copied)
         canonical = [
             {
                 "reference": item.reference, "source_id": item.source_id,
