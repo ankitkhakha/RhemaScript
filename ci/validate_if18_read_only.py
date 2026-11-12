@@ -13,10 +13,35 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import stat
 
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_OPERATIONS = {"OAUTH_TOKEN", "CHANNEL_READ"}
+
+
+def write_report(path: str | Path, rendered: str) -> None:
+    """Write a redacted report without following a symlink or creating a public file."""
+    destination = Path(path).expanduser()
+    if not destination.parent.is_dir():
+        raise OSError("report parent directory must already exist")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise OSError("platform does not support no-follow report creation")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow
+    descriptor = os.open(destination, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise OSError("report target must be an owner-owned regular file")
+        os.fchmod(descriptor, 0o600)
+        payload = rendered.encode("utf-8")
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,11 +104,8 @@ def main(argv: list[str] | None = None) -> int:
     print(rendered, end="")
 
     if args.report_file:
-        destination = Path(args.report_file).expanduser()
         try:
-            if destination.exists() and destination.is_symlink():
-                raise OSError("report destination must not be a symlink")
-            destination.write_text(rendered, encoding="utf-8")
+            write_report(args.report_file, rendered)
         except OSError:
             print("Could not write validation report to the requested path.", file=sys.stderr)
             return 2
