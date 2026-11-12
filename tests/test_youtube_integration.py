@@ -398,6 +398,22 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
 
+    def test_analytics_rejects_datetime_and_malformed_parameters_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        valid = date(2026, 11, 1)
+        invalid_calls = (
+            {"start_date": datetime(2026, 11, 1), "end_date": valid},
+            {"start_date": valid, "end_date": datetime(2026, 11, 2)},
+            {"start_date": valid, "end_date": valid, "metrics": ""},
+            {"start_date": valid, "end_date": valid, "dimensions": " "},
+            {"start_date": valid, "end_date": valid, "filters": 42},
+            {"start_date": valid, "end_date": valid, "filters": "x" * 501},
+        )
+        for kwargs in invalid_calls:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(YouTubeIntegrationError):
+                    client.analytics(**kwargs)
+
     def test_resumable_upload_retries_unacknowledged_bytes(self):
         chunk_size = 256 * 1024
         payload = bytes((i % 251 for i in range(chunk_size * 2)))
