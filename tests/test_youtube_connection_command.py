@@ -1,11 +1,15 @@
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 from pathlib import Path
 
 from rhemascript.integrations.connection import (
     read_only_youtube_binding,
+    main,
     run_connection_check,
 )
 from rhemascript.integrations.credentials import write_private_credentials
@@ -109,6 +113,23 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
                 link / "audit.jsonl", transport=transport
             )
         self.assertEqual(transport.calls, [])
+
+    def test_cli_redacts_unexpected_runtime_errors(self):
+        output = io.StringIO()
+        with patch(
+            "rhemascript.integrations.connection.run_connection_check",
+            side_effect=RuntimeError("sensitive internal detail"),
+        ):
+            with redirect_stdout(output):
+                exit_code = main([
+                    "--credential-file", str(self.credentials),
+                    "--expected-channel-id", "UC_expected_channel",
+                    "--audit-file", str(self.audit),
+                ])
+        self.assertEqual(exit_code, 2)
+        self.assertIn('"status": "FAILED"', output.getvalue())
+        self.assertNotIn("sensitive internal detail", output.getvalue())
+        self.assertNotIn("UC_expected_channel", output.getvalue())
 
     def test_missing_credentials_still_produces_redacted_failure_audit(self):
         missing = self.root / "missing.json"
