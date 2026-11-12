@@ -33,7 +33,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
         authority = {
             "BIBLE": "SCRIPTURE",
             "OFFICIAL_DOC": "OFFICIAL_PRIMARY",
-            "INTERNAL_SPEC": "INTERNAL_APPROVED",
+            "INTERNAL_SPEC": "UNVERIFIED",
             "CODE": "UNVERIFIED",
             "SECONDARY": "SECONDARY",
             "LESSON_FROM_FAILURE": "UNVERIFIED",
@@ -103,6 +103,21 @@ class RAEIKnowledgeTests(unittest.TestCase):
         self.assertEqual(items[0]["status"], "PENDING_REVIEW")
         self.assertEqual(items[0]["source_authentication_status"], "NOT_CHECKED")
         self.assertEqual(items[0]["claim_relevance_status"], "NOT_ASSESSED")
+
+    def test_internal_spec_is_not_assumed_approved_by_source_type(self):
+        payload, evidence = self.make_item(source_type="INTERNAL_SPEC")
+        self.assertEqual(payload["authority_level"], "UNVERIFIED")
+        record_knowledge(self.registry, payload, evidence)
+        self.assertEqual(search_knowledge(self.registry, "Python packaging"), [])
+        self.assertEqual(len(search_knowledge(self.registry, "Python packaging", include_pending=True)), 1)
+
+    def test_search_tokenizes_multiple_terms(self):
+        payload, evidence = self.make_item()
+        payload["title"] = "Python engineering foundations"
+        payload["summary"] = "Packaging and build reliability."
+        evidence = self.reverify(payload, evidence)
+        record_knowledge(self.registry, payload, evidence)
+        self.assertEqual(len(search_knowledge(self.registry, "python build", include_pending=True)), 1)
 
     def test_pending_knowledge_is_hidden_from_default_search(self):
         payload, evidence = self.make_item()
