@@ -4,7 +4,7 @@
 
 This is an owner-operated readiness checklist for connecting RhemaScript to an existing Google Cloud project and the intended YouTube channel. It does not perform OAuth, change Cloud settings, enable APIs, access the channel, grant publishing authority, or make an external request.
 
-The integration is implemented against Google's official YouTube Data API v3 and YouTube Analytics API. A successful local preflight or CI run is not proof that Google has granted access. **Current status (2026-11-12):** the owner has completed OAuth and a live read-only IF-18 channel identity check; the intended channel matched. The granted scope is `youtube.readonly` only. PR #40 contains the isolated OAuth bootstrap but remains open/draft and is not merged into `main`. The setup and staged-activation instructions below remain the baseline for future operators; the completed read-only steps do not need to be repeated. Upload, thumbnail, analytics and publishing checks remain outstanding and require their own permissions and approvals.
+The integration is implemented against Google's official YouTube Data API v3 and YouTube Analytics API. A successful local preflight or CI run is not proof that Google has granted access. **Current status (2026-11-12):** the owner has completed OAuth and a live read-only IF-18 channel identity check; the intended channel matched. The granted scope is `youtube.readonly` only. The isolated OAuth bootstrap from PR #40 was merged into `main` in commit `63b8d7285790e6237ddf87082965d550954f602b`. The setup and staged-activation instructions below remain the baseline for future operators; the completed read-only steps do not need to be repeated. Upload, thumbnail, analytics and publishing checks remain outstanding and require their own permissions and approvals.
 
 ## 1. Confirm the existing Google Cloud project
 
@@ -52,7 +52,7 @@ The current client operations are designed around these scopes:
 | \`https://www.googleapis.com/auth/youtube.readonly\` | Read channel/video information |
 | \`https://www.googleapis.com/auth/yt-analytics.readonly\` | Read YouTube Analytics reports |
 
-Request only scopes needed for the features the owner intends to activate. If beginning with a read-only connection check, do not request upload permission merely for that check; use a separate least-privilege authorisation plan. A later upload capability requires the upload scope and the separate RhemaScript publishing authority.
+Request only scopes needed for the features the owner intends to activate. If beginning with a read-only connection check, do not request upload permission merely for that check; use a separate least-privilege authorisation plan. A later upload capability would require a separate owner-approved authorization for the `youtube.upload` scope and the distinct RhemaScript publishing authority. Neither is granted by the current read-only connection.
 
 Google may change scope classification, verification or consent requirements. The owner must review the current Google OAuth documentation and consent screen before granting access.
 
@@ -144,14 +144,16 @@ Implemented in PR #28:
 - Interactive POSIX local credential-file setup and permission-checked loading (plaintext, owner-only file; not encrypted storage).
 - Mocked tests for channel reads, resumable upload, video verification, thumbnail write, authority checks and audit redaction.
 
+Completed locally (2026-11-12):
+- OAuth authorization using the isolated read-only bootstrap, with `youtube.readonly` only.
+- Live authenticated IF-18 channel identity check; intended channel matched.
+
 Not yet performed or verified:
-- Google Cloud project selection, API enablement, billing/quota review or consent configuration.
-- OAuth consent or refresh-token acquisition.
-- Live authenticated channel identity check.
+- Full production review of Google Cloud project settings, billing/quota and consent configuration.
 - Live analytics query.
 - Live upload or thumbnail write.
 - Public or scheduled publication.
-- Deployment, merge or production activation.
+- Deployment or production activation.
 
 ## 10. Stop conditions
 
