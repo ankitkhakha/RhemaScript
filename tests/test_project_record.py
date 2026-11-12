@@ -122,6 +122,22 @@ class ProjectRecordTests(unittest.TestCase):
         report = compare_project_records(before, after)
         self.assertIn("creative_direction", report["gates_without_current_approval_evidence"])
 
+    def test_upstream_change_requires_fresh_downstream_approval_even_when_artifact_unchanged(self):
+        before = create_project_record("RS-COMPARE-UPSTREAM-001")
+        before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
+        before = revise_stage(before, "approved_script", "script-v1", "source-v1", "Script")
+        before["approvals"]["biblical_accuracy"] = {
+            "status": "approved", "approval_ref": "approval:old",
+            "artifact_ref": "script-v1"
+        }
+        after = revise_stage(before, "biblical_source", "source-v2", "bible:ref2", "Correction")
+        after["approvals"]["biblical_accuracy"] = {
+            "status": "approved", "approval_ref": "approval:old",
+            "artifact_ref": "script-v1"
+        }
+        report = compare_project_records(before, after)
+        self.assertIn("biblical_accuracy", report["gates_without_current_approval_evidence"])
+
     def test_compare_accepts_approval_linked_to_current_artifact(self):
         before = create_project_record("RS-COMPARE-CURRENT-001")
         before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
