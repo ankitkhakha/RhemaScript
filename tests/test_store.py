@@ -15,6 +15,55 @@ class EvidenceStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_malformed_create_inputs_raise_store_error_before_sql(self):
+        cases = [
+            ([], "Valid title", []),
+            ("U1", [], []),
+            ("U1", "Valid title", ["U2", []]),
+            ("U1", "Valid title", ["U2", "U2"]),
+        ]
+        for unit_id, title, prerequisites in cases:
+            with self.subTest(unit_id=unit_id, title=title, prerequisites=prerequisites):
+                with self.assertRaises(StoreError):
+                    self.store.create_unit(unit_id, title, prerequisites)
+        self.assertEqual(self.store.event_count(), 0)
+
+    def test_malformed_assessment_inputs_raise_store_error(self):
+        self.store.create_unit("U1", "Foundations")
+        invalid_calls = [
+            ("U1", 3, "ref", [], 1),
+            ("U1", True, "ref", "verified", 1),
+            ("U1", 3, {}, "verified", 1),
+            ("U1", 3, "ref", "verified", True),
+            ("U1", 3, "ref", "verified", 0),
+        ]
+        for args in invalid_calls:
+            with self.subTest(args=args), self.assertRaises(StoreError):
+                self.store.assess(*args)
+
+    def test_verified_evidence_requires_nonempty_string(self):
+        self.store.create_unit("U1", "Foundations")
+        for evidence_ref in (" ", [], {}, 42):
+            with self.subTest(evidence_ref=evidence_ref), self.assertRaises(StoreError):
+                self.store.assess("U1", 3, evidence_ref, "verified", 1)
+
+    def test_nonverified_evidence_ref_must_be_string_or_null(self):
+        self.store.create_unit("U1", "Foundations")
+        with self.assertRaises(StoreError):
+            self.store.assess("U1", 2, {"claim": "x"}, "reported_unverified", 1)
+
+    def test_invalid_idempotency_key_is_rejected(self):
+        with self.assertRaises(StoreError):
+            self.store.create_unit("U1", "Foundations", idempotency_key=" ")
+        self.assertEqual(self.store.event_count(), 0)
+
+    def test_event_chain_returns_false_for_corrupt_payload_json(self):
+        self.store.create_unit("U1", "Foundations")
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE events SET payload='not-json' WHERE sequence=1")
+        self.assertFalse(self.store.verify_event_chain())
+
     def test_create_and_read_unit(self):
         result = self.store.create_unit("U1", "Foundations")
         self.assertEqual(result, {"unit_id": "U1", "status": "not_started", "version": 1})
