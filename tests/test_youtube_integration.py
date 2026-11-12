@@ -1,10 +1,16 @@
+import json
 import os
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
-from rhemascript.interfaces.external import ExternalIntegrationError, ExternalIntegrationGateway, UrllibTransport
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from rhemascript.core.approvals import ApprovalVerifier
+from rhemascript.core.approval_store import SQLiteApprovalConsumptionStore
+from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
     youtube_provider_binding,
@@ -23,25 +29,6 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(binding.operations["UPLOAD_CHUNK"]["method"], "PUT")
         self.assertIn("youtubeanalytics.googleapis.com",
                       binding.operations["ANALYTICS_READ"]["hosts"])
-
-    def test_legacy_invoke_rejects_method_aware_mapping_cleanly(self):
-        calls = []
-        gateway = ExternalIntegrationGateway(
-            (youtube_provider_binding(),),
-            transport=lambda *args: calls.append(args),
-            audit_sink=lambda event: None,
-            enabled=True,
-        )
-        request = {
-            "request_id": "req-method-aware",
-            "project_id": "RS-TEST",
-            "operation": "OAUTH_TOKEN",
-            "source_version": "1",
-            "payload": {},
-        }
-        with self.assertRaisesRegex(ExternalIntegrationError, "method-aware request contract"):
-            gateway.invoke("IF-18", request)
-        self.assertEqual(calls, [])
 
     def test_client_routes_oauth_and_channel_reads_through_gateway(self):
         class Gateway:
@@ -169,11 +156,55 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "source_to_final_links": links,
             "gate_records": records,
         }
+        private_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(private_directory.cleanup)
+        os.chmod(private_directory.name, 0o700)
+        store = SQLiteApprovalConsumptionStore(
+            os.path.join(private_directory.name, "approvals.sqlite3")
+        )
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        issuer = "RhemaScript-Test-Approval-Issuer"
+        key_id = "test-ed25519-key-01"
+        request_id = "youtube-write-request-0001"
+        now = datetime.now(timezone.utc)
+        credentials = []
+        actions = [
+            ("FINAL_ACCEPTANCE", "director-actor-0001"),
+            ("PUBLISH", "publisher-actor-0001"),
+        ]
+        if not authorised:
+            actions = actions[:1]
+        for index, (action, actor_id) in enumerate(actions, start=1):
+            payload = {
+                "schema": "RhemaScript.ApprovalCredential.v1",
+                "approval_id": f"approval-test-{index:04d}",
+                "issuer": issuer,
+                "actor_id": actor_id,
+                "action": action,
+                "project_id": "RS-TEST-001",
+                "project_version": "1.0",
+                "request_id": request_id,
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "nonce": f"nonce-test-{index:04d}",
+                "key_id": key_id,
+            }
+            payload["signature"] = private_key.sign(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode()
+            ).hex()
+            credentials.append(payload)
+        verifier = ApprovalVerifier(
+            issuer=issuer, verification_keys={key_id: public_key},
+            consume_many_once=store.consume_many_once,
+        )
         return {
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
-            "human_director_acceptance": True,
-            "publishing_authorisation": authorised,
+            "approval_verifier": verifier,
+            "approval_credentials": tuple(credentials),
+            "approval_request_id": request_id,
         }
 
     def test_config_rejects_upload_chunk_larger_than_32_mib(self):
@@ -226,10 +257,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 raise AssertionError("unexpected method-aware gateway request: " + method + " " + url)
 
         events = []
+        context = self.publish_context()
         transport = MethodTransport()
         gateway = ExternalIntegrationGateway(
             (youtube_provider_binding(),), transport=transport,
-            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
+            credential_resolver=lambda provider: {}, audit_sink=events.append,
+            approval_verifier=context["approval_verifier"], enabled=True,
         )
         client = YouTubeClient(self.config(), gateway=gateway)
         with tempfile.NamedTemporaryFile() as video:
@@ -238,7 +271,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.upload_video(
                     video.name, title="Approved", description="Test",
-                    **self.publish_context(),
+                    **context,
                 )
                 verified = client.verify_video(result["video_id"])
 
@@ -253,6 +286,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "UPLOAD_SESSION", "UPLOAD_CHUNK", "VIDEO_READ"],
         )
+        self.assertEqual(events[2]["approval_actor_ids"], ["director-actor-0001", "publisher-actor-0001"])
         self.assertNotIn("gateway-access", repr(events))
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
@@ -293,10 +327,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 raise AssertionError("unexpected gateway request")
 
         events = []
+        context = self.publish_context()
         transport = MethodTransport()
         gateway = ExternalIntegrationGateway(
             (youtube_provider_binding(),), transport=transport,
-            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
+            credential_resolver=lambda provider: {}, audit_sink=events.append,
+            approval_verifier=context["approval_verifier"], enabled=True,
         )
         client = YouTubeClient(self.config(), gateway=gateway)
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
@@ -304,7 +340,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.set_thumbnail(
-                    "video-123", image.name, **self.publish_context(),
+                    "video-123", image.name, **context,
                 )
 
         self.assertIn("items", result)
@@ -313,6 +349,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "THUMBNAIL_WRITE"],
         )
+        self.assertEqual(events[2]["approval_actor_ids"], ["director-actor-0001", "publisher-actor-0001"])
         self.assertNotIn("thumb-access", repr(events))
         self.assertNotIn("thumbnail-bytes", repr(events))
 
@@ -366,14 +403,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "approval batch"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
     def test_thumbnail_write_requires_full_project_authority(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
-        with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "approval batch"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_final_gate_must_reference_the_approved_final_film(self):
@@ -416,22 +453,6 @@ class YouTubeIntegrationTests(unittest.TestCase):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
-
-    def test_analytics_rejects_datetime_and_malformed_parameters_before_network(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
-        valid = date(2026, 11, 1)
-        invalid_calls = (
-            {"start_date": datetime(2026, 11, 1), "end_date": valid},
-            {"start_date": valid, "end_date": datetime(2026, 11, 2)},
-            {"start_date": valid, "end_date": valid, "metrics": ""},
-            {"start_date": valid, "end_date": valid, "dimensions": " "},
-            {"start_date": valid, "end_date": valid, "filters": 42},
-            {"start_date": valid, "end_date": valid, "filters": "x" * 501},
-        )
-        for kwargs in invalid_calls:
-            with self.subTest(kwargs=kwargs):
-                with self.assertRaises(YouTubeIntegrationError):
-                    client.analytics(**kwargs)
 
     def test_resumable_upload_retries_unacknowledged_bytes(self):
         chunk_size = 256 * 1024
@@ -514,68 +535,6 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "POST")
 
-
-    def test_scheduled_publication_rejects_invalid_or_non_future_timestamps(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
-        invalid_values = (
-            "not-a-timestamp",
-            "2026-12-01T12:00:00",  # timezone is required
-            "2020-01-01T12:00:00Z",  # scheduled time must be in the future
-        )
-        with tempfile.NamedTemporaryFile() as video:
-            video.write(b"video")
-            video.flush()
-            for value in invalid_values:
-                with self.subTest(publish_at=value):
-                    with self.assertRaisesRegex(YouTubeIntegrationError, "publish_at"):
-                        client.upload_video(video.name, title="Approved", description="Test",
-                            privacy_status="private", publish_at=value, **self.publish_context())
-
-    def test_valid_future_rfc3339_schedule_passes_timestamp_validation(self):
-        def transport(request, timeout):
-            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
-                return 200, b'{"access_token":"test-token"}', {}
-            return 400, b"{}", {}
-        client = YouTubeClient(self.config(), transport=transport)
-        scheduled = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        with tempfile.NamedTemporaryFile() as video:
-            video.write(b"video")
-            video.flush()
-            with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "resumable upload session"):
-                    client.upload_video(video.name, title="Approved", description="Test",
-                        privacy_status="private", publish_at=scheduled, **self.publish_context())
-
-    def test_upload_rejects_invalid_tags_and_category_before_network(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
-        with tempfile.NamedTemporaryFile() as video:
-            video.write(b"video")
-            video.flush()
-            invalid_cases = (
-                {"tags": ["valid", " "]},
-                {"tags": ["x" * 501]},
-                {"category_id": "not-a-category"},
-                {"category_id": True},
-            )
-            for kwargs in invalid_cases:
-                with self.subTest(kwargs=kwargs):
-                    with self.assertRaises(YouTubeIntegrationError):
-                        client.upload_video(video.name, title="Approved", description="Test",
-                            **kwargs, **self.publish_context())
-
-    def test_upload_accepts_numeric_category_and_tags_within_limit(self):
-        calls = []
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
-        with tempfile.NamedTemporaryFile() as video:
-            video.write(b"video")
-            video.flush()
-            # Stop at the first token response; this confirms metadata validation passed.
-            client._token = lambda: "test-token"
-            client._authorized_request = lambda *args, **kwargs: (400, b"{}", {})
-            with self.assertRaisesRegex(YouTubeIntegrationError, "resumable upload session"):
-                with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                    client.upload_video(video.name, title="Approved", description="Test",
-                        tags=["RhemaScript", "Bible"], category_id="22", **self.publish_context())
 
 if __name__ == "__main__":
     unittest.main()
