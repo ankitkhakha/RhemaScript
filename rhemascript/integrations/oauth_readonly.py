@@ -185,10 +185,30 @@ def _callback_handler(result: dict[str, str], expected_state: str):
             # Google includes the RFC 9207 issuer parameter (iss) in its
             # authorization response. Accept it only once and only for Google's
             # exact issuer; continue rejecting every other unexpected parameter.
-            if set(query) - {"state", "code", "error", "error_description", "error_uri", "iss"}:
+            # Google may include standard authorization-response context
+            # parameters alongside code/state. Allow only documented fields;
+            # validate security-relevant values and reject duplicates.
+            allowed = {
+                "state", "code", "error", "error_description", "error_uri",
+                "iss", "scope", "authuser", "prompt",
+            }
+            if set(query) - allowed:
                 result["error"] = "unexpected_parameters"
                 self._reply(400, "Authorization response rejected. You may close this tab.")
                 return
+            for optional_singleton in ("scope", "authuser", "prompt", "iss"):
+                values = query.get(optional_singleton, [])
+                if len(values) > 1:
+                    result["error"] = "duplicate_parameters"
+                    self._reply(400, "Authorization response rejected. You may close this tab.")
+                    return
+            returned_scopes = query.get("scope", [])
+            if returned_scopes:
+                scopes = returned_scopes[0].split()
+                if scopes != [READ_ONLY_SCOPE]:
+                    result["error"] = "scope_mismatch"
+                    self._reply(400, "Authorization response rejected. You may close this tab.")
+                    return
             issuers = query.get("iss", [])
             if issuers and (len(issuers) != 1 or issuers[0] != "https://accounts.google.com"):
                 result["error"] = "invalid_issuer"
