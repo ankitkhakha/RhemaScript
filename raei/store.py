@@ -115,16 +115,22 @@ class EvidenceStore:
             return None
         _required_text(key, "idempotency_key")
         row = db.execute(
-            "SELECT request_hash,response_json FROM idempotency WHERE idempotency_key=?",
+            "SELECT request_hash,response_json,event_sequence FROM idempotency WHERE idempotency_key=?",
             (key,),
         ).fetchone()
         if row is None:
             return None
         if row["request_hash"] != _hash(request):
             raise StoreError("idempotency key was already used for a different request")
+        sequence = row["event_sequence"]
+        if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
+            raise StoreError("stored idempotency event reference is invalid")
+        event = db.execute("SELECT sequence FROM events WHERE sequence=?", (sequence,)).fetchone()
+        if event is None:
+            raise StoreError("stored idempotency event reference is missing")
         try:
             response = json.loads(row["response_json"])
-        except json.JSONDecodeError as exc:
+        except (json.JSONDecodeError, TypeError) as exc:
             raise StoreError("stored idempotency response is invalid JSON") from exc
         if not isinstance(response, dict):
             raise StoreError("stored idempotency response must be an object")
