@@ -125,9 +125,16 @@ class EvidenceStore:
         sequence = row["event_sequence"]
         if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
             raise StoreError("stored idempotency event reference is invalid")
-        event = db.execute("SELECT sequence FROM events WHERE sequence=?", (sequence,)).fetchone()
+        event = db.execute("SELECT sequence,action,unit_id FROM events WHERE sequence=?", (sequence,)).fetchone()
         if event is None:
             raise StoreError("stored idempotency event reference is missing")
+        expected_action = {
+            "create_unit": "unit_created",
+            "assess": "assessment_recorded",
+        }.get(request.get("action"))
+        if (expected_action is None or event["action"] != expected_action
+                or event["unit_id"] != request.get("unit_id")):
+            raise StoreError("stored idempotency event reference does not match the request")
         try:
             response = json.loads(row["response_json"])
         except (json.JSONDecodeError, TypeError) as exc:
@@ -346,6 +353,28 @@ class EvidenceStore:
                             raise
                         raise StoreError("backup contains malformed audit events") from exc
                     previous = row["event_hash"]
+                event_rows = {
+                    row["sequence"]: row
+                    for row in source.execute("SELECT sequence,action,unit_id FROM events")
+                }
+                for record in source.execute("SELECT * FROM idempotency"):
+                    request_hash = record["request_hash"]
+                    if (not isinstance(request_hash, str) or len(request_hash) != 64
+                            or any(char not in "0123456789abcdef" for char in request_hash)):
+                        raise StoreError("backup contains an invalid idempotency request hash")
+                    try:
+                        response = json.loads(record["response_json"])
+                    except (json.JSONDecodeError, TypeError) as exc:
+                        raise StoreError("backup contains invalid idempotency response JSON") from exc
+                    if not isinstance(response, dict):
+                        raise StoreError("backup idempotency response must be an object")
+                    sequence = record["event_sequence"]
+                    event = event_rows.get(sequence) if isinstance(sequence, int) and not isinstance(sequence, bool) else None
+                    if event is None:
+                        raise StoreError("backup contains a missing idempotency event reference")
+                    if (event["unit_id"] != response.get("unit_id")
+                            or event["action"] not in {"unit_created", "assessment_recorded"}):
+                        raise StoreError("backup contains an idempotency event reference mismatch")
             finally:
                 source.close()
         except sqlite3.Error as exc:
