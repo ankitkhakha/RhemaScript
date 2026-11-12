@@ -54,5 +54,37 @@ class YouTubePreflightTests(unittest.TestCase):
         self.assertFalse(audit_path.exists())
 
 
+    def test_preflight_accepts_protected_credential_file_without_environment_secrets(self):
+        from rhemascript.integrations.credentials import write_private_credentials
+        directory = self.private_directory()
+        credential_path = directory / "youtube-oauth.json"
+        write_private_credentials(
+            credential_path, client_id="id", client_secret="secret",
+            refresh_token="refresh",
+        )
+        checks = inspect_local_preflight(
+            directory / "audit.jsonl", {}, credential_file=credential_path
+        )
+        check = next(item for item in checks if item[0] == "OAuth private credential file")
+        self.assertTrue(check[1])
+        self.assertNotIn("secret", repr(checks))
+
+    def test_preflight_rejects_insecure_credential_file(self):
+        from rhemascript.integrations.credentials import write_private_credentials
+        directory = self.private_directory()
+        credential_path = directory / "youtube-oauth.json"
+        write_private_credentials(
+            credential_path, client_id="id", client_secret="secret",
+            refresh_token="refresh",
+        )
+        credential_path.chmod(0o644)
+        checks = inspect_local_preflight(
+            directory / "audit.jsonl", {}, credential_file=credential_path
+        )
+        check = next(item for item in checks if item[0] == "OAuth private credential file")
+        self.assertFalse(check[1])
+        self.assertNotIn("secret", repr(checks))
+
+
 if __name__ == "__main__":
     unittest.main()
