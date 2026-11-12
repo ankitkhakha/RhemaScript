@@ -350,7 +350,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 with self.assertRaisesRegex(YouTubeIntegrationError, "PNG or JPEG"):
-                    client.set_thumbnail("video-123", image.name, **self.publish_context())
+                    client.set_thumbnail("video-123", image.name, **self.add_verified_video_evidence(self.publish_context()))
 
     def test_request_rejects_non_google_hosts_before_transport(self):
         calls = []
