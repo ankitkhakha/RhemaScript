@@ -219,6 +219,8 @@ class YouTubeClient:
         self._gateway_approval_credentials: tuple[dict[str, Any], ...] = ()
         self._gateway_approval_request_id: str | None = None
         self._access_token: str | None = None
+        self._access_token_expires_at: float = 0.0
+        self._granted_scopes: frozenset[str] | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -275,7 +277,7 @@ class YouTubeClient:
             raise YouTubeIntegrationError("YouTube network request failed") from None
 
     def _token(self) -> str:
-        if self._access_token:
+        if self._access_token and time.monotonic() < self._access_token_expires_at:
             return self._access_token
         payload = urlencode({
             "client_id": self.config.client_id,
@@ -290,12 +292,21 @@ class YouTubeClient:
         if status != 200:
             raise YouTubeIntegrationError("Google OAuth token refresh failed")
         try:
-            token = json.loads(raw)["access_token"]
+            token_response = json.loads(raw)
+            token = token_response["access_token"]
+            scope_text = token_response.get("scope")
+            if not isinstance(scope_text, str) or not scope_text.strip():
+                raise ValueError("missing granted scope")
+            self._granted_scopes = frozenset(scope_text.split())
+            expires_in = token_response.get("expires_in", 3600)
+            if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)) or not 1 <= expires_in <= 86400:
+                raise ValueError("invalid token lifetime")
         except (ValueError, KeyError, TypeError):
             raise YouTubeIntegrationError("Google OAuth returned an invalid token response") from None
         if not isinstance(token, str) or not token:
             raise YouTubeIntegrationError("Google OAuth returned an empty access token")
         self._access_token = token
+        self._access_token_expires_at = time.monotonic() + max(1, float(expires_in) - 60)
         return token
 
     def _authorized_request(self, url: str, *, method: str = "GET",
@@ -310,6 +321,7 @@ class YouTubeClient:
                 or method.upper() != "GET"):
             return status, raw, response_headers
         self._access_token = None
+        self._access_token_expires_at = 0.0
         request_headers["Authorization"] = f"Bearer {self._token()}"
         return self._request(url, method=method, body=body, headers=request_headers)
 
@@ -356,6 +368,11 @@ class YouTubeClient:
         data = self._api(
             "channels", params={"part": "snippet", "mine": "true"}
         )
+        readonly_scope = "https://www.googleapis.com/auth/youtube.readonly"
+        if self._granted_scopes != frozenset({readonly_scope}):
+            raise YouTubeIntegrationError(
+                "Google OAuth grant is not restricted to the dedicated youtube.readonly scope"
+            )
         items = data.get("items", [])
         if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
             raise YouTubeIntegrationError("expected exactly one authenticated YouTube channel")
