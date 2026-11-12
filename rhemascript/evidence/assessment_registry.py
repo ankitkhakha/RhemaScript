@@ -10,7 +10,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from .artifact_verification import AssessmentBinding, EvidenceIntegrityError
+from .artifact_verification import (
+    AssessmentBinding, EvidenceIntegrityError, is_verified_assessment_binding,
+)
 
 
 class AssessmentReplayError(EvidenceIntegrityError):
@@ -46,8 +48,8 @@ class AssessmentRegistry:
             )""")
 
     def record(self, binding: AssessmentBinding) -> bool:
-        if not isinstance(binding, AssessmentBinding):
-            raise EvidenceIntegrityError("record requires an AssessmentBinding")
+        if not is_verified_assessment_binding(binding):
+            raise EvidenceIntegrityError("record requires an assessment binding issued by bind_assessment")
         payload: dict[str, Any] = {
             "assessment_id": binding.assessment_id,
             "evidence_id": binding.evidence_id,
