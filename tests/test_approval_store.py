@@ -33,6 +33,36 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             expires_at=expires_at, nonce=nonce, key_id="key-2026-01",
         )
 
+    def test_public_consume_rejects_caller_constructed_verified_approval(self):
+        forged = self.record("approval-forged-0001", "nonce-forged-0001", self.future)
+        with self.assertRaisesRegex(ApprovalStoreError, "verifier-issued"):
+            self.store.consume_many_once((forged,))
+        self.assertFalse(self.store.is_consumed(forged.approval_id, forged.nonce))
+
+    def test_checkpoint_detects_rewritten_approval_state(self):
+        entry = self.record("approval-checkpoint-0001", "nonce-checkpoint-0001", self.future)
+        self.store._consume_many_once((entry,))
+        key = b"approval-state-checkpoint-key-32-bytes!!"
+        checkpoint = self.store.checkpoint(key)
+        self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE consumed_approvals SET actor_id='tampered-actor'")
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+
+    def test_backup_is_owner_only_and_preserves_replay_state(self):
+        entry = self.record("approval-backup-0001", "nonce-backup-0001", self.future)
+        self.store._consume_many_once((entry,))
+        backup = self.store.backup_to(self.directory / "backup.sqlite3")
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        restored = SQLiteApprovalConsumptionStore(backup)
+        self.assertTrue(restored.is_consumed(entry.approval_id, entry.nonce))
+
+    def test_rejects_symlinked_ancestor_directory(self):
+        link = Path(self.temp.name) / "linked-private"
+        link.symlink_to(self.directory, target_is_directory=True)
+        with self.assertRaisesRegex(ApprovalStoreError, "symlinked directories"):
+            SQLiteApprovalConsumptionStore(link / "approvals.sqlite3")
+
     def test_database_is_owner_only(self):
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
@@ -43,7 +73,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             self.record("approval-publish-0001", "nonce-publish-0001", self.future,
                         actor_id="publisher-0001"),
         )
-        self.assertTrue(self.store.consume_many_once(entries))
+        self.assertTrue(self.store._consume_many_once(entries))
         reopened = SQLiteApprovalConsumptionStore(self.path)
         self.assertTrue(reopened.is_consumed("approval-final-0001", "nonce-final-0001"))
         self.assertTrue(reopened.is_consumed("approval-publish-0001", "nonce-publish-0001"))
@@ -67,7 +97,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
 
     def test_revoked_second_entry_prevents_consuming_first(self):
         self.store.revoke("approval-revoked-0001", "nonce-revoked-0001",
-                          reason="operator requested revocation")
+                          revoked_by="operator-0001", reason="operator requested revocation")
         first = self.record("approval-valid-0001", "nonce-valid-0001", self.future)
         second = self.record("approval-revoked-0001", "nonce-revoked-0001", self.future)
         self.assertFalse(self.store.consume_many_once((first, second)))
