@@ -60,8 +60,11 @@ def validate_project(record: Any) -> list[str]:
             errors.append(f"chain item {index} must be an object")
             continue
         stage = item.get("stage")
-        if not isinstance(stage, str) or not stage:
-            errors.append(f"chain item {index} has no stage")
+        if not isinstance(stage, str) or not stage.strip() or stage != stage.strip():
+            errors.append(f"chain item {index} has no valid stage identifier")
+            continue
+        if stage not in CHAIN:
+            errors.append(f"unknown chain stage: {stage}")
             continue
         if stage in seen:
             errors.append(f"duplicate chain stage: {stage}")
@@ -90,8 +93,11 @@ def validate_project(record: Any) -> list[str]:
             errors.append(f"approval gate {index} must be an object")
             continue
         gate_id = gate.get("gate")
-        if not isinstance(gate_id, str) or not gate_id:
-            errors.append(f"approval gate {index} has no gate identifier")
+        if not isinstance(gate_id, str) or not gate_id.strip() or gate_id != gate_id.strip():
+            errors.append(f"approval gate {index} has no valid gate identifier")
+            continue
+        if gate_id not in GATES:
+            errors.append(f"unknown approval gate: {gate_id}")
             continue
         if gate_id in gate_seen:
             errors.append(f"duplicate approval gate: {gate_id}")
@@ -116,7 +122,7 @@ def validate_project(record: Any) -> list[str]:
         authorities = {}
     for field in AUTHORITY_FIELDS:
         decision = authorities.get(field)
-        if decision not in ("not_authorised", "authorised"):
+        if not isinstance(decision, str) or decision not in ("not_authorised", "authorised"):
             errors.append(f"{field} must be explicitly not_authorised or authorised")
 
     # This validator is a readiness check, not an execution switch.
