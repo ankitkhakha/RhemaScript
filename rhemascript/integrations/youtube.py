@@ -40,7 +40,7 @@ class YouTubeIntegrationError(RuntimeError):
 
 def _validate_publish_at(value: Any) -> None:
     """Require a future RFC3339 timestamp with an explicit UTC offset."""
-    pattern = r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})"
+    pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
     if not isinstance(value, str) or not re.fullmatch(pattern, value):
         raise YouTubeIntegrationError("publish_at must be a future RFC3339 timestamp with an explicit timezone")
     try:
