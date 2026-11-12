@@ -89,13 +89,51 @@ def get_progress(registry: ReadinessRunRegistry) -> dict[str, dict[str, Any]]:
     if not registry.verify():
         raise RAEITrainingError("learning registry integrity verification failed")
     progress: dict[str, dict[str, Any]] = {}
+    units = _units_by_id()
     for stored in registry.list_all():
+        if (stored.get("assessment_is_approval") is not False
+                or stored.get("assessment_is_execution_authorisation") is not False):
+            raise RAEITrainingError("learning records cannot carry approval or execution authority")
         report = stored.get("report", {})
         if not isinstance(report, dict) or report.get("record_type") != RECORD_TYPE:
             continue
         unit_id = report.get("unit_id")
-        if unit_id not in _units_by_id():
+        if unit_id not in units:
             raise RAEITrainingError("stored learning record references an unknown curriculum unit")
+        if (stored.get("run_id") != report.get("attempt_id")
+                or report.get("curriculum_version") != CURRICULUM_VERSION
+                or report.get("learner_id") != "RAEI"
+                or report.get("assessor_id") != "RAEI"
+                or report.get("assessor_role") != "RAEI_SELF"):
+            raise RAEITrainingError("stored learning record has invalid identity or curriculum binding")
+        if report.get("status") not in {"PROVISIONAL_PASS", "NEEDS_REMEDIATION"}:
+            raise RAEITrainingError("stored learning record contains a status that self-assessment cannot grant")
+        scores = report.get("criterion_scores")
+        if (not isinstance(scores, dict) or set(scores) != set(units[unit_id]["rubric"])
+                or any(not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 4
+                       for value in scores.values())):
+            raise RAEITrainingError("stored learning record has invalid rubric scores")
+        overall_score = min(scores.values())
+        failures = report.get("critical_failures")
+        if (not isinstance(failures, list)
+                or any(not isinstance(value, str) or not value.strip() for value in failures)
+                or report.get("overall_score") != overall_score):
+            raise RAEITrainingError("stored learning record has invalid score or critical-failure data")
+        expected_status = "NEEDS_REMEDIATION" if overall_score < 3 or failures else "PROVISIONAL_PASS"
+        if report.get("status") != expected_status:
+            raise RAEITrainingError("stored learning status does not match its rubric evidence")
+        binding = report.get("assessment_binding")
+        evidence_items = stored.get("byte_verified_evidence")
+        if not isinstance(binding, dict) or not isinstance(evidence_items, list) or len(evidence_items) != 1:
+            raise RAEITrainingError("stored learning record lacks one exact evidence-bound assessment")
+        evidence_item = evidence_items[0]
+        if (not isinstance(evidence_item, dict)
+                or binding.get("assessment_id") != report.get("attempt_id")
+                or binding.get("evidence_id") != evidence_item.get("evidence_id")
+                or binding.get("evidence_version") != evidence_item.get("version")
+                or binding.get("evidence_sha256") != evidence_item.get("sha256")
+                or binding.get("score") != overall_score):
+            raise RAEITrainingError("stored assessment binding does not match its exact evidence version")
         progress[unit_id] = dict(report)
     return progress
 
