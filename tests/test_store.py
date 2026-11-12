@@ -264,7 +264,7 @@ class EvidenceStoreTests(unittest.TestCase):
             db.execute("PRAGMA foreign_keys=OFF")
             db.execute("UPDATE idempotency SET event_sequence=999 WHERE idempotency_key='create-u1'")
         destination = Path(self.temp.name) / "restore-orphan-idempotency.sqlite3"
-        with self.assertRaisesRegex(StoreError, "missing idempotency event"):
+        with self.assertRaisesRegex(StoreError, "foreign-key violations"):
             EvidenceStore.restore_from(backup, destination)
         self.assertFalse(destination.exists())
 
