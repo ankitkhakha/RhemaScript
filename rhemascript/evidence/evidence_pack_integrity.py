@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import hmac
 from pathlib import Path
-from typing import Any
 
 from .artifact_verification import EvidenceIntegrityError, EvidenceVersion, verify_artifact
 from .evidence_pack import ValidatedEvidencePack
 
 
 class EvidencePackIntegrityError(EvidenceIntegrityError):
-    pass
+    """A validated pack cannot be reconciled with its local evidence bytes."""
 
 
 def verify_pack_artifacts(pack: ValidatedEvidencePack, evidence_root: str | Path) -> tuple[EvidenceVersion, ...]:
@@ -36,10 +35,15 @@ def verify_pack_artifacts(pack: ValidatedEvidencePack, evidence_root: str | Path
             raise EvidencePackIntegrityError(
                 f"artifact {artifact['artifact_id']} claims {status} without SHA-256"
             )
-        actual = verify_artifact(
-            evidence_root, local_path, evidence_id=artifact["artifact_id"],
-            version=artifact["version"],
-        )
+        try:
+            actual = verify_artifact(
+                evidence_root, local_path, evidence_id=artifact["artifact_id"],
+                version=artifact["version"],
+            )
+        except EvidenceIntegrityError as exc:
+            raise EvidencePackIntegrityError(
+                f"artifact {artifact['artifact_id']} could not be byte-verified"
+            ) from exc
         if not hmac.compare_digest(actual.sha256, expected_digest.lower()):
             raise EvidencePackIntegrityError(
                 f"artifact {artifact['artifact_id']} content does not match declared SHA-256"
