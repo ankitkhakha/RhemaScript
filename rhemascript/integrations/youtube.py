@@ -419,11 +419,6 @@ class YouTubeClient:
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
-        _authorise_project_video(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            video_id=video_id,
-        )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
         self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
@@ -532,6 +527,11 @@ class YouTubeClient:
             final_film_evidence_ref=final_film_evidence_ref,
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
+        )
+        _authorise_project_video(
+            evidence_pack=evidence_pack,
+            final_film_evidence_ref=final_film_evidence_ref,
+            video_id=video_id,
         )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
