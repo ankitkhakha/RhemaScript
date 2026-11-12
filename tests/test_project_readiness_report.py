@@ -59,6 +59,87 @@ class ReadinessReportTests(unittest.TestCase):
         self.assertFalse(report["execution"]["publishing_performed"])
         self.assertIn("does not execute", report["interpretation"])
 
+
+    def test_readiness_assessment_retains_exact_resolved_source_version(self):
+        import hashlib
+        import tempfile
+        from pathlib import Path
+        from rhemascript.evidence.local_source_resolver import LocalSourceEntry, LocalSourceResolver
+        from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
+        from rhemascript.reports import run_project_assessment
+
+        with tempfile.TemporaryDirectory() as root:
+            content = b"source bytes for readiness traceability"
+            (Path(root) / "source.txt").write_bytes(content)
+            reference = "local-source:readiness:source"
+            digest = hashlib.sha256(content).hexdigest()
+            manifest = {
+                "manifest_id": "RS-READINESS-SOURCE-001",
+                "schema_version": "1.0",
+                "project_record": dict(PROJECT),
+                "artifacts": [{
+                    "artifact_id": "SOURCE-1",
+                    "project_id": PROJECT["project_id"],
+                    "project_version": PROJECT["version"],
+                    "artifact_type": "BIBLICAL_SOURCE",
+                    "version": "source-v7",
+                    "status": "VERIFIED",
+                    "local_source_reference": reference,
+                    "sha256": digest,
+                    "evidence_refs": [reference],
+                }],
+                "evidence_records": [{
+                    "evidence_id": "CAP01-SOURCE-EVIDENCE",
+                    "capability_id": "CAP-01",
+                    "payload": {"sources": [{"source_ref": reference}]},
+                    "evidence_refs": [reference],
+                    "artifact_refs": ["SOURCE-1"],
+                }],
+                "source_to_final_links": [],
+            }
+            resolver = LocalSourceResolver(root, {
+                reference: LocalSourceEntry(
+                    reference=reference,
+                    source_id="SOURCE-1",
+                    relative_path="source.txt",
+                    version="source-v7",
+                    expected_sha256=digest,
+                    media_type="text/plain",
+                    catalog_revision="catalog-v7",
+                    project_id=PROJECT["project_id"],
+                    project_version=PROJECT["version"],
+                )
+            })
+            registry = ReadinessRunRegistry(Path(root) / "readiness.sqlite3")
+            validated, result, report = run_project_assessment(
+                manifest,
+                actor_role="TEST_HARNESS",
+                run_id="RUN-READINESS-SOURCE-001",
+                orchestrator=CreativeProductionOrchestrator(ReadyEngine()),
+                local_source_resolver=resolver,
+                readiness_registry=registry,
+            )
+            self.assertEqual(len(validated.source_resolution_receipts), 1)
+            receipt = validated.source_resolution_receipts[0]
+            self.assertEqual(receipt.version, "source-v7")
+            self.assertEqual(receipt.sha256, digest)
+            self.assertEqual(report["evidence_integrity"]["source_resolution_receipts"][0]["catalog_revision"],
+                             "catalog-v7")
+            trace = report["evidence_traceability"]["artifacts"][0]["local_source_resolution"]
+            self.assertEqual(report["evidence_traceability"]["records"][0]["evidence_refs"][0]["resolution_status"],
+                             "CONTENT_VERIFIED")
+            self.assertEqual(report["evidence_traceability"]["artifacts"][0]["declared_evidence_refs"][0]["resolution_status"],
+                             "CONTENT_VERIFIED")
+            self.assertEqual(trace["version"], "source-v7")
+            self.assertEqual(trace["sha256"], digest)
+            saved = registry.get(result.run_id)
+            saved_receipt = saved["source_resolution_receipts"][0]
+            self.assertEqual(saved_receipt["catalog_fingerprint"], receipt.catalog_fingerprint)
+            self.assertEqual(saved_receipt["project_id"], PROJECT["project_id"])
+            self.assertEqual(saved_receipt["project_version"], PROJECT["version"])
+            self.assertFalse(report["execution"]["generation_performed"])
+            self.assertFalse(report["execution"]["publishing_performed"])
+
     def test_rejects_non_orchestration_input(self):
         with self.assertRaises(TypeError):
             build_readiness_report({"status": "READY"})

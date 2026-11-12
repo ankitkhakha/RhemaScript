@@ -5,7 +5,7 @@ retained independently from this database and the key kept secret.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 import hashlib
 import hmac
 import json
@@ -45,7 +45,11 @@ class ReadinessRunRegistry:
     @staticmethod
     def _normalise(value: Any) -> Any:
         if is_dataclass(value):
-            return asdict(value)
+            # Internal verification tokens are process-local capabilities, not persisted data.
+            return {
+                item.name: ReadinessRunRegistry._normalise(getattr(value, item.name))
+                for item in fields(value) if not item.name.startswith("_")
+            }
         if isinstance(value, dict):
             return {str(k): ReadinessRunRegistry._normalise(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
@@ -54,13 +58,17 @@ class ReadinessRunRegistry:
             return value
         raise TypeError(f"unsupported readiness payload value: {type(value).__name__}")
 
-    def record(self, run_id: str, report: dict[str, Any], evidence_versions: tuple[Any, ...]) -> bool:
+    def record(
+        self, run_id: str, report: dict[str, Any], evidence_versions: tuple[Any, ...],
+        source_resolution_receipts: tuple[Any, ...] = (),
+    ) -> bool:
         if not isinstance(run_id, str) or not run_id.strip():
             raise ValueError("run_id must be a non-empty string")
         payload = {
             "run_id": run_id,
             "report": self._normalise(report),
             "byte_verified_evidence": self._normalise(evidence_versions),
+            "source_resolution_receipts": self._normalise(source_resolution_receipts),
             "assessment_is_approval": False,
             "assessment_is_execution_authorisation": False,
         }

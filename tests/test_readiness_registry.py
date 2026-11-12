@@ -33,6 +33,51 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         self.assertFalse(saved["assessment_is_execution_authorisation"])
         self.assertTrue(reopened.verify())
 
+
+    def test_persists_exact_local_source_receipt_and_catalog_identity(self):
+        from rhemascript.evidence.local_source_resolver import LocalSourceReceipt
+        receipt = LocalSourceReceipt(
+            original_reference="local-source:source",
+            source_id="ART-1",
+            relative_path="source.txt",
+            version="v3",
+            sha256="c" * 64,
+            size_bytes=19,
+            media_type="text/plain",
+            catalog_revision="catalog-v3",
+            catalog_fingerprint="d" * 64,
+            project_id="PROJECT-1",
+            project_version="2.0",
+            resolved_at_utc="2026-11-12T00:00:00+00:00",
+        )
+        self.registry.record("RUN-RECEIPT", self.report, self.evidence, (receipt,))
+        saved = ReadinessRunRegistry(self.path).get("RUN-RECEIPT")
+        retained = saved["source_resolution_receipts"][0]
+        self.assertEqual(retained["source_id"], "ART-1")
+        self.assertEqual(retained["version"], "v3")
+        self.assertEqual(retained["sha256"], "c" * 64)
+        self.assertEqual(retained["catalog_revision"], "catalog-v3")
+        self.assertEqual(retained["catalog_fingerprint"], "d" * 64)
+        self.assertEqual(retained["project_id"], "PROJECT-1")
+        self.assertEqual(retained["project_version"], "2.0")
+        self.assertEqual(retained["outcome"], "CONTENT_VERIFIED")
+
+    def test_changed_receipt_on_same_run_is_rejected(self):
+        from rhemascript.evidence.local_source_resolver import LocalSourceReceipt
+        first = LocalSourceReceipt(
+            "local-source:source", "ART-1", "source.txt", "v1", "a" * 64,
+            10, "text/plain", "catalog-v1", "b" * 64, "PROJECT-1", "1.0",
+            "2026-11-12T00:00:00+00:00",
+        )
+        changed = LocalSourceReceipt(
+            "local-source:source", "ART-1", "source.txt", "v2", "c" * 64,
+            10, "text/plain", "catalog-v2", "d" * 64, "PROJECT-1", "1.0",
+            "2026-11-12T00:01:00+00:00",
+        )
+        self.registry.record("RUN-STALE", self.report, self.evidence, (first,))
+        with self.assertRaises(ReadinessReplayError):
+            self.registry.record("RUN-STALE", self.report, self.evidence, (changed,))
+
     def test_identical_run_replay_is_idempotent(self):
         self.assertTrue(self.registry.record("RUN-1", self.report, self.evidence))
         self.assertFalse(self.registry.record("RUN-1", self.report, self.evidence))

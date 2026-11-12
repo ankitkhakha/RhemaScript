@@ -26,6 +26,7 @@ class ValidatedEvidencePack:
     capability_evidence: dict[str, dict[str, Any]]
     gate_records: tuple[dict[str, Any], ...]
     byte_verified_artifacts: tuple[Any, ...] = ()
+    source_resolution_receipts: tuple[Any, ...] = ()
     evidence_integrity_mode: str = "STRUCTURAL_ONLY"
 
 def _required_string(value: Any, field: str) -> str:
@@ -164,18 +165,60 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
 
 def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_authorisation: bool = False,
                       run_id: str | None = None, orchestrator: CreativeProductionOrchestrator | None = None,
-                      evidence_root: str | Path | None = None):
+                      evidence_root: str | Path | None = None, local_source_resolver: Any | None = None):
     """Assess a pack; evidence_root opts into mandatory byte verification.
 
     Without evidence_root this is legacy structural/provenance validation only.
     Status labels in that mode do not prove that local artifact bytes were checked.
     """
     validated = validate_evidence_pack(pack)
+    versions = []
+    receipts = []
     if evidence_root is not None:
         from .evidence_pack_integrity import verify_pack_artifacts
-        versions = verify_pack_artifacts(validated, evidence_root)
+        versions.extend(verify_pack_artifacts(validated, evidence_root))
+    if local_source_resolver is not None:
+        from .local_source_resolver import LocalSourceResolver, LocalSourceResolutionError
+        if not isinstance(local_source_resolver, LocalSourceResolver):
+            raise EvidencePackError("local_source_resolver must be an approved LocalSourceResolver")
+        for artifact in validated.artifacts:
+            reference = artifact.get("local_source_reference")
+            if reference is None:
+                continue
+            try:
+                version, receipt = local_source_resolver.resolve(
+                    reference, project_id=validated.project_id,
+                    project_version=validated.project_version,
+                )
+            except LocalSourceResolutionError as exc:
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} local source reference could not be verified"
+                ) from exc
+            if version.evidence_id != artifact["artifact_id"] or version.version != artifact["version"]:
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} does not match the resolver's source identity/version"
+                )
+            declared_digest = artifact.get("sha256")
+            if not isinstance(declared_digest, str) or declared_digest.lower() != version.sha256:
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} SHA-256 does not match resolved local source"
+                )
+            versions.append(version)
+            receipts.append(receipt)
+    if versions or receipts:
+        # One artifact ID must never acquire conflicting byte identities through
+        # overlapping verification paths (evidence_root and local resolver).
+        unique_versions = {}
+        for version in versions:
+            previous = unique_versions.get(version.evidence_id)
+            if previous is not None and previous != version:
+                raise EvidencePackError(
+                    f"artifact {version.evidence_id} has conflicting byte-verification identities"
+                )
+            unique_versions[version.evidence_id] = version
         from dataclasses import replace
-        validated = replace(validated, byte_verified_artifacts=versions,
+        validated = replace(validated, byte_verified_artifacts=tuple(unique_versions.values()),
+                            source_resolution_receipts=tuple(receipts),
                             evidence_integrity_mode="BYTE_VERIFIED")
     result = (orchestrator or CreativeProductionOrchestrator()).run(
         validated.project_record, capability_evidence=validated.capability_evidence,
