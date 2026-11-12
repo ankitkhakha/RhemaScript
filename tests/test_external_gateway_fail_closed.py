@@ -224,5 +224,46 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(events, [])
 
 
+    def test_provider_binding_rejects_method_contract_host_widening(self):
+        with self.assertRaisesRegex(ExternalIntegrationError, "host exceeds binding allowlist"):
+            ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"READ": {"method": "GET", "hosts": ("evil.example",),
+                                     "path_prefix": "/youtube/v3/channels"}},
+            ).validate()
+
+    def test_provider_binding_rejects_unsafe_method_contract_path_prefix(self):
+        for path in ("//evil.example", "/youtube/../admin", "/youtube\\\\admin", "/youtube?x=1"):
+            with self.subTest(path=path):
+                with self.assertRaises(ExternalIntegrationError):
+                    ProviderBinding(
+                        interface_id="IF-18", provider_name="youtube",
+                        endpoint="https://www.googleapis.com",
+                        allowed_hosts=("www.googleapis.com",),
+                        operations={"READ": {"method": "GET", "hosts": ("www.googleapis.com",),
+                                             "path_prefix": path}},
+                    ).validate()
+
+    def test_method_aware_request_rejects_encoded_path_traversal(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"CHANNEL_READ": {"method": "GET", "hosts": ("www.googleapis.com",),
+                                             "path_prefix": "/youtube/v3/channels"}},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        for path in ("/youtube/v3/channels/%2e%2e/videos", "/youtube/v3/channels/%5c..%5cadmin"):
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ExternalIntegrationError, "outside the provider operation allowlist"):
+                    gateway.request("IF-18", "CHANNEL_READ", "https://www.googleapis.com" + path,
+                        method="GET", request_id="r1", project_id="p1", source_version="1")
+        self.assertEqual(transport.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
