@@ -295,9 +295,8 @@ class YouTubeClient:
             token_response = json.loads(raw)
             token = token_response["access_token"]
             scope_text = token_response.get("scope")
-            if not isinstance(scope_text, str) or not scope_text.strip():
-                raise ValueError("missing granted scope")
-            self._granted_scopes = frozenset(scope_text.split())
+            self._granted_scopes = (frozenset(scope_text.split())
+                                    if isinstance(scope_text, str) and scope_text.strip() else None)
             expires_in = token_response.get("expires_in", 3600)
             if isinstance(expires_in, bool) or not isinstance(expires_in, (int, float)) or not 1 <= expires_in <= 86400:
                 raise ValueError("invalid token lifetime")
