@@ -38,7 +38,11 @@ def verify_chain(events, units):
             raise LedgerError(f"event sequence broken at position {index + 1}")
         if event.get("previous_hash") != previous:
             raise LedgerError(f"event predecessor mismatch at position {index + 1}")
-        if event.get("hash") != event_hash(event):
+        try:
+            actual_hash = event_hash(event)
+        except (TypeError, ValueError) as exc:
+            raise LedgerError(f"event {index + 1} contains non-canonical data") from exc
+        if event.get("hash") != actual_hash:
             raise LedgerError(f"event hash mismatch at position {index + 1}")
         previous = event["hash"]
     if events and events[-1].get("state_hash") != digest(units):
@@ -47,15 +51,16 @@ def verify_chain(events, units):
 def validate(data):
     if not isinstance(data, dict):
         raise LedgerError("ledger root must be an object")
-    if data.get("schema_version") != SCHEMA:
+    if (not isinstance(data.get("schema_version"), int) or isinstance(data.get("schema_version"), bool) or data.get("schema_version") != SCHEMA):
         raise LedgerError("unsupported schema version")
     if not isinstance(data.get("units"), dict) or not isinstance(data.get("events"), list):
         raise LedgerError("units must be an object and events must be an array")
     verify_chain(data["events"], data["units"])
     for unit_id, unit in data["units"].items():
-        if not unit_id or unit.get("id") != unit_id:
+        if not isinstance(unit_id, str) or not unit_id.strip() or not isinstance(unit, dict) or unit.get("id") != unit_id:
             raise LedgerError(f"invalid unit identity: {unit_id!r}")
-        if unit.get("status") not in STATUSES:
+        status = unit.get("status")
+        if not isinstance(status, str) or status not in STATUSES:
             raise LedgerError(f"invalid status for {unit_id}")
         if not isinstance(unit.get("prerequisites", []), list) or any(
             not isinstance(item, str) or not item.strip() for item in unit.get("prerequisites", [])
@@ -75,6 +80,19 @@ def validate(data):
                 raise LedgerError(f"passed unit {unit_id} lacks verified evidence or score >= 3")
             if any(data["units"][p]["status"] != "passed" for p in unit.get("prerequisites", [])):
                 raise LedgerError(f"passed unit {unit_id} has incomplete prerequisites")
+    visiting, visited = set(), set()
+    def visit(unit_id):
+        if unit_id in visiting:
+            raise LedgerError(f"dependency cycle detected at {unit_id}")
+        if unit_id in visited:
+            return
+        visiting.add(unit_id)
+        for prerequisite in data["units"][unit_id].get("prerequisites", []):
+            visit(prerequisite)
+        visiting.remove(unit_id)
+        visited.add(unit_id)
+    for unit_id in data["units"]:
+        visit(unit_id)
 
 def append_event(data, action, unit_id, details):
     events = data["events"]
@@ -131,6 +149,8 @@ def add_unit(data, unit_id, title, prerequisites):
     append_event(data, "unit_created", unit_id, {"title": title, "prerequisites": prerequisites})
 
 def record_assessment(data, unit_id, score, evidence_ref, evidence_status, note=""):
+    if not isinstance(unit_id, str) or not unit_id.strip():
+        raise LedgerError("unit id must be a non-empty string")
     if unit_id not in data["units"]:
         raise LedgerError(f"unknown unit: {unit_id}")
     unit = data["units"][unit_id]
@@ -140,8 +160,12 @@ def record_assessment(data, unit_id, score, evidence_ref, evidence_status, note=
         raise LedgerError("score must be an integer from 0 to 4")
     if not isinstance(evidence_status, str) or evidence_status not in {"verified", "reported_unverified", "planned"}:
         raise LedgerError("invalid evidence status")
-    if evidence_status == "verified" and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
+    if evidence_ref is not None and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
+        raise LedgerError("evidence reference must be null or a non-empty string")
+    if evidence_status == "verified" and evidence_ref is None:
         raise LedgerError("verified evidence requires a non-empty evidence reference")
+    if not isinstance(note, str):
+        raise LedgerError("assessment note must be a string")
     if any(data["units"][p]["status"] != "passed" for p in unit["prerequisites"]):
         raise LedgerError("cannot assess unit before prerequisites pass")
     passed = score >= 3 and evidence_status == "verified"
