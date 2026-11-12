@@ -1,6 +1,6 @@
 # YouTube provider gateway adapter — architecture decision record
 
-**Status:** IF-18 client routing and local JSONL audit sink implemented; mocked gateway-backed resumable upload, video verification, thumbnail-write, and audit-sink tests pass CI; owner-controlled OAuth and live channel validation not performed.
+**Status:** IF-18 client routing and local JSONL audit sink implemented; mocked gateway-backed upload, verification and thumbnail tests pass CI. The owner-operated read-only OAuth connection and expected channel-ID match have been completed using exactly `youtube.readonly`. No upload-scope consent, live upload, thumbnail write, Analytics query or publication has been performed. The current read-only result does not validate broader write permissions or production provider behavior.
 **Scope:** RhemaScript YouTube Data API v3 and YouTube Analytics API.
 **Cost boundary:** Python standard library only. No paid service, dependency, hosted proxy, or credential relay.
 
