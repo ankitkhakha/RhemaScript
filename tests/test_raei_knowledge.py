@@ -63,9 +63,14 @@ class RAEIKnowledgeTests(unittest.TestCase):
         }
         if source_type == "BIBLE":
             payload.update({
+                "source_name": "HINOVBSI",
+                "source_version": "HINOVBSI-2026",
+                "source_reference": "Bible:John 3:16-21",
                 "language": "hi",
                 "translation_version": "HINOVBSI",
                 "direct_scripture_quote": True,
+                "book": "John",
+                "passage": "John 3:16-21",
             })
         if source_type == "LESSON_FROM_FAILURE":
             payload.update({
@@ -139,6 +144,16 @@ class RAEIKnowledgeTests(unittest.TestCase):
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "HINOVBSI"):
             record_knowledge(self.registry, changed, changed_evidence)
+
+    def test_knowledge_search_supports_hindi_terms(self):
+        payload, evidence = self.make_item(source_type="BIBLE")
+        payload["title"] = "यीशु का परिचय"
+        payload["summary"] = "यीशु मसीह के जीवन और शिक्षा का अध्ययन"
+        payload["claims"] = ["यीशु के जीवन का बाइबिलीय संदर्भ"]
+        payload["tags"] = ["यीशु", "बाइबल"]
+        evidence = self.reverify(payload, evidence)
+        record_knowledge(self.registry, payload, evidence)
+        self.assertEqual(len(search_knowledge(self.registry, "यीशु", include_pending=True)), 1)
 
     def test_failure_lesson_requires_root_cause_remediation_and_regression_tests(self):
         payload, evidence = self.make_item(source_type="LESSON_FROM_FAILURE")
