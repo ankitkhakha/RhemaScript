@@ -8,6 +8,7 @@ from pathlib import Path
 
 from rhemascript.evidence.artifact_verification import verify_artifact, EvidenceVersion
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry, ReadinessReplayError
+from raei.training import build_training_brief
 from raei.knowledge import (
     RAEIKnowledgeError,
     SCHEMA,
@@ -103,6 +104,14 @@ class RAEIKnowledgeTests(unittest.TestCase):
         record_knowledge(self.registry, payload, evidence)
         self.assertEqual(search_knowledge(self.registry, "Python packaging"), [])
         self.assertEqual(len(search_knowledge(self.registry, "Python packaging", include_pending=True)), 1)
+
+    def test_training_brief_surfaces_pending_knowledge_without_approving_it(self):
+        payload, evidence = self.make_item()
+        record_knowledge(self.registry, payload, evidence)
+        brief = build_training_brief("CS-FOUND", self.registry)
+        self.assertEqual(brief["approved_knowledge"], [])
+        self.assertEqual(len(brief["pending_knowledge_review"]), 1)
+        self.assertEqual(brief["knowledge_status"], "NO_APPROVED_KNOWLEDGE")
 
     def test_payload_must_match_exact_verified_bytes(self):
         payload, evidence = self.make_item()
