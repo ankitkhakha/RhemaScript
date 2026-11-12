@@ -2,6 +2,7 @@ import unittest
 
 from rhemascript.core.approval_issuer import (
     ApprovalCredentialSource, ApprovalScope, required_publish_scopes,
+    request_publish_approval_credentials,
 )
 
 
@@ -31,6 +32,36 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
 
         self.assertIsInstance(TestIssuer(), ApprovalCredentialSource)
         self.assertNotIn("actor_id", ApprovalScope.__dataclass_fields__)
+
+
+    def test_request_helper_obtains_two_scoped_credentials_without_actor_input(self):
+        class TestIssuer:
+            def __init__(self):
+                self.scopes = []
+            def request_approval(self, scope):
+                self.scopes.append(scope)
+                return {"action": scope.action, "request_id": scope.request_id}
+
+        issuer = TestIssuer()
+        final, publish = request_publish_approval_credentials(
+            issuer, project_id="RS-PWW-001", project_version="3.2",
+            request_id="request-publish-001",
+        )
+        self.assertEqual(final["action"], "FINAL_ACCEPTANCE")
+        self.assertEqual(publish["action"], "PUBLISH")
+        self.assertEqual(len(issuer.scopes), 2)
+        self.assertEqual(issuer.scopes[0].request_id, issuer.scopes[1].request_id)
+
+    def test_request_helper_rejects_noncredential_issuer_response(self):
+        class InvalidIssuer:
+            def request_approval(self, scope):
+                return "not-a-credential"
+
+        with self.assertRaisesRegex(TypeError, "credential object"):
+            request_publish_approval_credentials(
+                InvalidIssuer(), project_id="RS-PWW-001",
+                project_version="3.2", request_id="request-publish-001",
+            )
 
 
 if __name__ == "__main__":
