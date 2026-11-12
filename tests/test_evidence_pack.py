@@ -144,6 +144,32 @@ class EvidencePackTests(unittest.TestCase):
             with self.assertRaisesRegex(EvidencePackError, "SHA-256 does not match"):
                 run_evidence_pack(p, actor_role="TEST_HARNESS", local_source_resolver=resolver)
 
+
+    def test_local_source_reference_from_another_project_is_rejected(self):
+        import hashlib
+        import tempfile
+        from pathlib import Path
+        from rhemascript.evidence.local_source_resolver import LocalSourceEntry, LocalSourceResolver
+        with tempfile.TemporaryDirectory() as root:
+            content = b"foreign project source"
+            (Path(root) / "source.txt").write_bytes(content)
+            reference = "local-source:foreign-project"
+            p = pack()
+            p["artifacts"][0].update({
+                "local_source_reference": reference,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            })
+            resolver = LocalSourceResolver(root, {
+                reference: LocalSourceEntry(
+                    reference=reference, source_id="SRC-1", relative_path="source.txt",
+                    version="1", expected_sha256=hashlib.sha256(content).hexdigest(),
+                    media_type="text/plain", catalog_revision="catalog-v1",
+                    project_id="RS-OTHER-PROJECT", project_version="1.0",
+                )
+            })
+            with self.assertRaisesRegex(EvidencePackError, "could not be verified"):
+                run_evidence_pack(p, actor_role="TEST_HARNESS", local_source_resolver=resolver)
+
     def test_unknown_capability_id_rejected(self):
         p=pack(); p["evidence_records"][0]["capability_id"]="CAP-99"
         with self.assertRaisesRegex(EvidencePackError,"unknown capability"): validate_evidence_pack(p)
