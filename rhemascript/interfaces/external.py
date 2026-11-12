@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import threading
@@ -125,16 +125,20 @@ class ExternalIntegrationGateway:
 
         operation = request["operation"].upper()
         path = binding.operations.get(operation)
-        if not path or path.startswith("//") or "://" in path:
+        if not isinstance(path, str) or not path:
             raise ExternalIntegrationError("operation is not mapped by provider contract")
-        if operation in self.CONSEQUENT_OPERATIONS:
-            try:
-                authorise_action(operation, authority or {})
-            except AuthorityError as exc:
-                raise ExternalIntegrationError("consequential operation lacks explicit authority") from exc
+        relative = urlparse(path)
+        decoded_path = unquote(path)
+        if (relative.scheme or relative.netloc or relative.query or relative.fragment
+                or path.startswith("/") or "\\" in path
+                or any(part in {".", ".."} for part in decoded_path.split("/"))
+                or any(ord(char) < 32 for char in path)):
+            raise ExternalIntegrationError("operation path is not a safe relative provider path")
 
         parsed = urlparse(binding.endpoint)
-        url = binding.endpoint.rstrip("/") + "/" + path.lstrip("/")
+        url = binding.endpoint.rstrip("/") + "/" + path
+        if urlparse(url).hostname != parsed.hostname:
+            raise ExternalIntegrationError("operation mapping changed provider host")
         if urlparse(url).hostname != parsed.hostname:
             raise ExternalIntegrationError("operation mapping changed provider host")
         canonical = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -145,6 +149,12 @@ class ExternalIntegrationGateway:
 
         if self.audit_sink is None:
             raise ExternalIntegrationError("auditable integration requires an audit sink")
+        # This legacy entry point always transmits POST. Without a method-aware
+        # operation contract, treat every invocation as an external write.
+        try:
+            authorise_action("EXTERNAL_WRITE", authority or {})
+        except AuthorityError as exc:
+            raise ExternalIntegrationError("generic POST invocation requires explicit external-write authority") from exc
         event = {"interface_id": interface_id, "provider": binding.provider_name,
                  "request_id": request["request_id"], "operation": operation,
                  "idempotency_key": key, "phase": "REQUESTED"}
