@@ -156,6 +156,15 @@ def compare_project_records(before, after):
         current_artifact_ref = (
             stage_record.get("artifact_ref") if isinstance(stage_record, dict) else None
         )
+        prior_approvals = before.get("approvals", {})
+        if not isinstance(prior_approvals, dict):
+            raise IntegrityError("prior approval collection must be an object")
+        prior_approval = prior_approvals.get(gate)
+        approval_is_fresh = (
+            isinstance(approval, dict)
+            and isinstance(prior_approval, dict)
+            and approval != prior_approval
+        )
         if (
             not isinstance(approval, dict)
             or approval.get("status") != "approved"
@@ -164,6 +173,7 @@ def compare_project_records(before, after):
             or not isinstance(current_artifact_ref, str)
             or not current_artifact_ref.strip()
             or approval.get("artifact_ref") != current_artifact_ref
+            or not approval_is_fresh
         ):
             invalidated.append(gate)
     return {
