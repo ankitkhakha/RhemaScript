@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
@@ -509,6 +509,52 @@ class YouTubeIntegrationTests(unittest.TestCase):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
+
+    def test_upload_rejects_invalid_tags_and_category_before_network(self):
+        client = YouTubeClient(
+            self.config(),
+            transport=lambda *args: self.fail("network must not be called"),
+        )
+        invalid_options = (
+            {"tags": ["valid", ""]},
+            {"tags": ["   "]},
+            {"tags": [1]},
+            {"tags": ["x" * 501]},
+            {"category_id": True},
+            {"category_id": "not-numeric"},
+            {"category_id": 22.5},
+        )
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for options in invalid_options:
+                with self.subTest(options=options):
+                    with self.assertRaises(YouTubeIntegrationError):
+                        client.upload_video(
+                            video.name, title="Approved", description="Test",
+                            **self.publish_context(), **options,
+                        )
+
+    def test_analytics_rejects_datetime_and_malformed_parameters_before_network(self):
+        client = YouTubeClient(
+            self.config(),
+            transport=lambda *args: self.fail("network must not be called"),
+        )
+        valid = date(2026, 11, 1)
+        invalid_calls = (
+            {"start_date": datetime(2026, 11, 1), "end_date": valid},
+            {"start_date": valid, "end_date": datetime(2026, 11, 2)},
+            {"start_date": valid, "end_date": valid, "metrics": ""},
+            {"start_date": valid, "end_date": valid, "metrics": "x" * 501},
+            {"start_date": valid, "end_date": valid, "dimensions": " "},
+            {"start_date": valid, "end_date": valid, "dimensions": "x" * 201},
+            {"start_date": valid, "end_date": valid, "filters": 42},
+            {"start_date": valid, "end_date": valid, "filters": "x" * 501},
+        )
+        for kwargs in invalid_calls:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(YouTubeIntegrationError):
+                    client.analytics(**kwargs)
 
     def test_resumable_upload_retries_unacknowledged_bytes(self):
         chunk_size = 256 * 1024
