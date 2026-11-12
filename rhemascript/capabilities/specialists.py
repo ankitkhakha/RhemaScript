@@ -166,7 +166,7 @@ def _cap05(e):
     uncovered=sorted(narration_set-covered_segments)
     unmapped_human=sorted(narration_set-mapped_segments)
     duration=e.get("target_duration_seconds")
-    if duration is not None and (isinstance(duration,bool) or not isinstance(duration,(int,float)) or duration<=0):
+    if duration is not None and (isinstance(duration,bool) or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<=0):
         raise SpecialistInputError("target_duration_seconds must be positive")
     structural_issues=bool(duplicate_segments or duplicate_beats or uncovered or unmapped_human or
         any(x["flags"] for x in human_map_flags) or any(x["flags"] for x in beat_flags))
