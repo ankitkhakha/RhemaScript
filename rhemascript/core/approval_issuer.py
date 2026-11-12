@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Mapping, Protocol, runtime_checkable
+import re
+
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 
 
 @dataclass(frozen=True)
@@ -21,8 +24,8 @@ class ApprovalScope:
     def __post_init__(self) -> None:
         for field in ("action", "project_id", "project_version", "request_id"):
             value = getattr(self, field)
-            if not isinstance(value, str) or not value.strip():
-                raise ValueError(f"{field} is required")
+            if not isinstance(value, str) or not _ID.fullmatch(value):
+                raise ValueError(f"{field} must be a valid non-empty identifier")
 
 
 @runtime_checkable
