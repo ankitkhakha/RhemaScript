@@ -166,7 +166,7 @@ A thumbnail write requires a `YOUTUBE_VIDEO_VERIFICATION` artifact in the same v
 - State `verification_method: YOUTUBE_API_VIDEO_READ`.
 - Record a successful upload status (`uploaded` or `processed`) and processing status (`succeeded` or `processed`).
 
-The verification artifact is evidence, not authority. The normal six-gate final-film approval, Human Director acceptance and separate publishing authorisation remain mandatory. A video ID copied from another project or an unverified upload response is not sufficient.
+The verification artifact is evidence, not authority. In addition, the YouTube client requires a matching successful API read-back held in its current process-local session; a caller-authored `VERIFIED` artifact alone is insufficient. This trust anchor is not persisted across process restarts, so the video must be re-established through the authorised upload-and-read-back workflow before a thumbnail write in a new session. The normal six-gate final-film approval, Human Director acceptance and separate publishing authorisation remain mandatory. A video ID copied from another project or an unverified upload response is not sufficient.
 
 ## 11. Stop conditions
 
