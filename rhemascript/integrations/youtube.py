@@ -115,7 +115,7 @@ class YouTubeConfig:
         values = [os.environ.get(name, "").strip() for name in names]
         if not all(values):
             raise YouTubeIntegrationError(
-                "YouTube credentials are not configured; set the three RHEMASCRIPT_YOUTUBE_* environment variables"
+                "YouTube credentials are not configured; set the client ID and refresh token environment variables"
             )
         return cls(values[0], "", values[1])
 
@@ -134,7 +134,7 @@ class YouTubeConfig:
         )
 
     def validate(self) -> None:
-        if not all((self.client_id, self.client_secret, self.refresh_token)):
+        if not all((self.client_id, self.refresh_token)):
             raise YouTubeIntegrationError("OAuth configuration is incomplete")
         if not 1 <= self.timeout_seconds <= 120:
             raise YouTubeIntegrationError("timeout_seconds must be between 1 and 120")
