@@ -52,3 +52,26 @@ SQLite plus a local hash is not immutable storage. Retain HMAC checkpoints indep
 It can accumulate approved project knowledge, curriculum progress, practical code/test evidence, failure lessons and measured competency. It can improve its task selection and project-specific guidance.
 
 It cannot silently retrain ChatGPT's base-model weights, learn while no execution environment is running, or autonomously grant itself authority. Any model-weight training would require a separate, explicitly approved training pipeline, data governance, compute and evaluation plan.
+
+
+## Local operator workflow
+
+The local CLI uses one owner-only SQLite registry and a configured evidence directory. Run it from the repository root after installing the project in the current Python environment:
+
+```bash
+python -m raei init --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
+python -m raei status --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
+python -m raei next --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
+python -m raei brief --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --unit-id CS-FOUND
+python -m raei verify --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
+```
+
+For knowledge intake or a self-assessment, first place the canonical JSON artifact inside the configured evidence root. The CLI verifies the exact file bytes before it records the item:
+
+```bash
+python -m raei record-knowledge --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence" --artifact-path knowledge-item.json
+python -m raei knowledge-search --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --query "python packaging"
+python -m raei record-attempt --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence" --artifact-path assessment.json
+```
+
+The database parent must already exist, be owner-controlled and private (POSIX mode 0700 or stricter); the database is created owner-only (0600). The CLI refuses symlinked paths and does not create a missing registry during read operations. Pending knowledge is excluded from default search. RAEI self-assessments can earn only PROVISIONAL_PASS or NEEDS_REMEDIATION; they cannot create independent-review or production-approval status.
