@@ -29,7 +29,7 @@ The verifier enforces exact fields, trusted issuer and key ID, Ed25519 signature
 ## Key custody
 
 1. The Ed25519 private signing key remains with the separately controlled issuer. RhemaScript receives only 32-byte Ed25519 public verification keys and cannot mint credentials.
-2. The verifier accepts a key-ID-to-public-key mapping, allowing controlled overlap during key rotation. Production key provisioning, rotation and revocation policy must be operated by the issuer owner.
+2. The verifier accepts a key-ID-to-public-key mapping, allowing controlled overlap during key rotation. Production key provisioning, rotation and revocation policy must be operated by the issuer owner. Provision each replacement under a new immutable key ID, independently verify its fingerprint, overlap only for the maximum credential lifetime plus clock skew, then remove the old key. Never reuse a key ID for different key material. For compromise, disable the affected key immediately, stop issuance, revoke outstanding approvals where known, invalidate active authorization-cache sessions, preserve audit records and re-provision trust through a separately authenticated administrative process. Recovery must restore consumed and revoked state from an integrity-checked backup; never roll back replay protection.
 3. Test private keys are synthetic and exist only in unit tests. No production private key is stored in the repository.
 
 ## Durable approval state and audit
@@ -38,13 +38,13 @@ The verifier enforces exact fields, trusted issuer and key ID, Ed25519 signature
 
 Atomic batch consumption records both approvals or neither. Durable consumed records include issuer, actor, action, project, project version, request ID, key ID, issue/expiry timestamps and consumption time. Provider audit events include the two approval IDs, actor IDs and issuer, but never signatures, private keys or credentials.
 
-Production deployment still requires controlled database placement, backups, access controls, retention, restore testing and operational revocation procedures. The current local SQLite adapter is a tested implementation, not a deployed production service.
+Production deployment still requires controlled database placement, backups, access controls, retention, restore testing and operational revocation procedures. The current local SQLite adapter is a tested implementation, not a deployed production service. Its pathname checks and owner-only parent directory reduce exposure, but SQLite opens the pathname itself; the adapter does not claim race-free descriptor-relative database opening. Production placement therefore requires OS-level directory ownership, service isolation and filesystem controls.
 
 ## YouTube/provider enforcement
 
 `YouTubeClient.upload_video` and `set_thumbnail` require two separate signed credentials: `FINAL_ACCEPTANCE` and `PUBLISH`. Both must bind to the same project, immutable project version and request ID, and must identify distinct authenticated actors.
 
-When IF-18 is configured, `ExternalIntegrationGateway` independently verifies and atomically consumes both credentials before the first provider write. Boolean-only publishing authority and fabricated audit claims are rejected. The request-bound authorization context is reused only across resumable upload chunks, then cleared after the final chunk; thumbnail authorization is cleared after the thumbnail request. A request that begins with `UPLOAD_SESSION` may continue only with `UPLOAD_CHUNK`; the same approval request cannot start another upload or be repurposed for a thumbnail write. Reusing a completed request ID or consumed credential is rejected by durable replay protection.
+When IF-18 is configured, `ExternalIntegrationGateway` independently verifies and atomically consumes both credentials before the first provider write. Boolean-only publishing authority and fabricated audit claims are rejected. The request-bound authorization context is reused only across resumable upload chunks, then cleared after the final chunk, terminal client error, transport failure or audit failure. Abandoned cache entries expire after 15 minutes and the cache is bounded to 256 requests. Thumbnail authorization is cleared after its request. A request that begins with `UPLOAD_SESSION` may continue only with `UPLOAD_CHUNK`; the same approval request cannot start another upload or be repurposed for a thumbnail write. Reusing a completed request ID or consumed credential is rejected by durable replay protection.
 
 For direct synthetic transport tests, the client verifies and consumes the credentials itself. The live provider path still requires an explicitly configured IF-18 gateway.
 
