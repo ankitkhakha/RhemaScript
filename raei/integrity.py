@@ -36,6 +36,12 @@ def validate_project_chain(project):
     approvals = project.get("approvals")
     if not isinstance(stages, dict) or not isinstance(approvals, dict):
         raise IntegrityError("stages and approvals must be objects")
+    unknown_stages = set(stages) - set(STAGES)
+    unknown_gates = set(approvals) - set(GATES)
+    for stage in sorted(unknown_stages, key=str):
+        errors.append("unknown source-to-final stage: " + str(stage))
+    for gate in sorted(unknown_gates, key=str):
+        errors.append("unknown approval gate: " + str(gate))
 
     for stage in STAGES:
         record = stages.get(stage)
