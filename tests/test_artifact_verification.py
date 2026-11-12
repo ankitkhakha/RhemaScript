@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from rhemascript.evidence.artifact_verification import (
@@ -72,6 +73,18 @@ class ArtifactVerificationTests(unittest.TestCase):
         evidence = self.verify()
         forged = AssessmentBinding("AS-1", "EV-1", "v1", evidence.sha256, 4)
         self.assertFalse(verify_assessment_binding(forged, evidence))
+
+    def test_dataclass_copy_cannot_forge_verified_evidence(self):
+        verified = self.verify()
+        copied = replace(verified, sha256="a" * 64)
+        with self.assertRaises(EvidenceIntegrityError):
+            bind_assessment("AS-COPY", copied, 4)
+
+    def test_dataclass_copy_cannot_forge_assessment_binding(self):
+        evidence = self.verify()
+        binding = bind_assessment("AS-1", evidence, 4)
+        copied = replace(binding, evidence_sha256="a" * 64)
+        self.assertFalse(verify_assessment_binding(copied, evidence))
 
     def test_forged_string_status_cannot_be_assessed(self):
         with self.assertRaises(EvidenceIntegrityError):
