@@ -291,6 +291,69 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
 
+    def test_publish_request_cannot_be_reused_for_a_different_write_flow(self):
+        context = self.publish_context()
+        transport = None
+        gateway = None
+
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+                self.reuse_denials = []
+                self.checked_reuse = False
+
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method))
+                if url.startswith("https://oauth2.googleapis.com/token"):
+                    return 200, b'{"access_token":"gateway-access"}', {}
+                if url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                    if not self.checked_reuse:
+                        self.checked_reuse = True
+                        for operation, target in (
+                            ("UPLOAD_SESSION", "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable"),
+                            ("THUMBNAIL_WRITE", "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=other"),
+                        ):
+                            try:
+                                gateway.request(
+                                    YOUTUBE_INTERFACE_ID, operation, target,
+                                    method="POST", request_id=context["approval_request_id"],
+                                    project_id="RS-TEST-001", source_version="1.0",
+                                    approval_request_id=context["approval_request_id"],
+                                    approval_credentials=context["approval_credentials"],
+                                )
+                            except Exception as exc:
+                                self.reuse_denials.append(str(exc))
+                            else:
+                                raise AssertionError("a different write flow reused the same approval request")
+                    return 200, b"", {
+                        "Location": "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=private-session"
+                    }
+                if url.endswith("/session?upload_id=private-session") and method == "PUT":
+                    return 201, b'{"id":"gateway-video"}', {}
+                raise AssertionError("unexpected provider request: " + method + " " + url)
+
+        transport = MethodTransport()
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),), transport=transport,
+            credential_resolver=lambda provider: {}, audit_sink=lambda event: None,
+            approval_verifier=context["approval_verifier"], enabled=True,
+        )
+        client = YouTubeClient(self.config(), gateway=gateway)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"approved-video-bytes")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                result = client.upload_video(
+                    video.name, title="Approved", description="Test", **context,
+                )
+        self.assertEqual(result["video_id"], "gateway-video")
+        self.assertEqual(len(transport.reuse_denials), 2)
+        self.assertTrue(all(
+            "may only continue its original video upload" in denial
+            for denial in transport.reuse_denials
+        ))
+        self.assertEqual([method for _, method in transport.calls], ["POST", "POST", "PUT"])
+
     def test_verify_video_rejects_different_returned_video_id(self):
         def transport(request, timeout):
             if request.full_url.startswith("https://oauth2.googleapis.com/token"):
