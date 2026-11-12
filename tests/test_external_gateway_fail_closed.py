@@ -185,6 +185,9 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 body=b"chunk", request_id="upload-2", project_id="RS-1",
                 source_version="1.0",
                 authority={"publishing_authorisation": True},
+                audit_context={"approval_ids": ["approval-final-001", "approval-publish-001"],
+                               "approval_actor_ids": ["director-001", "publisher-001"],
+                               "approval_issuer": "test-issuer"},
             )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
@@ -218,12 +221,17 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             method="PUT", headers={"Authorization": "Bearer secret"},
             body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
             authority={"publishing_authorisation": True},
+            audit_context={"approval_ids": ["approval-final-001", "approval-publish-001"],
+                           "approval_actor_ids": ["director-001", "publisher-001"],
+                           "approval_issuer": "test-issuer"},
         )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
         self.assertEqual(response_headers["Range"], "bytes=0-9")
         self.assertEqual(transport.calls[0][1], "PUT")
         self.assertEqual([event["phase"] for event in events], ["REQUESTED", "COMPLETED"])
+        self.assertEqual(events[0]["approval_actor_ids"], ["director-001", "publisher-001"])
+        self.assertEqual(events[0]["approval_ids"], ["approval-final-001", "approval-publish-001"])
         self.assertNotIn("secret", repr(events))
         self.assertNotIn("opaque", repr(events))
         self.assertNotIn("video bytes", repr(events))
