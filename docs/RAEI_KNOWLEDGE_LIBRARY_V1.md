@@ -42,4 +42,4 @@ Authority labels distinguish Scripture, official primary sources, approved inter
 
 ## Current limitation
 
-This feature implements evidence-bound intake and pending-review search. It does not yet implement signed human knowledge approval or automatic source acquisition. Those are separate, controlled steps. No paid API, external connector or background model-weight training is used.
+Training briefs surface pending items for review but never treat them as approved sources. This feature implements evidence-bound intake and pending-review search. It does not yet implement signed human knowledge approval or automatic source acquisition. Those are separate, controlled steps. No paid API, external connector or background model-weight training is used.
