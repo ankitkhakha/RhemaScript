@@ -28,7 +28,7 @@ def write_report(path: str | Path, rendered: str) -> None:
     nofollow = getattr(os, "O_NOFOLLOW", None)
     if nofollow is None:
         raise OSError("platform does not support no-follow report creation")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | nofollow
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
     descriptor = os.open(destination, flags, 0o600)
     try:
         info = os.fstat(descriptor)
