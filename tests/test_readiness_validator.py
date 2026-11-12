@@ -93,6 +93,24 @@ class ReadinessValidatorTests(unittest.TestCase):
         data["domains"]["engineering"]["critical_failure"] = True
         self.assertTrue(any("critical failure" in x for x in validate(data)))
 
+    def test_passed_domain_requires_explicit_false_critical_failure(self):
+        data = ready_ledger()
+        del data["domains"]["engineering"]["critical_failure"]
+        self.assertTrue(any("critical_failure explicitly false" in x for x in validate(data)))
+
+    def test_malformed_domain_status_fails_closed_without_exception(self):
+        data = ready_ledger()
+        data["domains"]["engineering"]["status"] = []
+        errors = validate(data)
+        self.assertTrue(any("invalid or missing status" in x for x in errors))
+
+    def test_non_boolean_critical_failure_fails_closed(self):
+        data = ready_ledger()
+        data["domains"]["engineering"]["critical_failure"] = "false"
+        errors = validate(data)
+        self.assertTrue(any("critical_failure must be a boolean" in x for x in errors))
+        self.assertTrue(any("critical_failure explicitly false" in x for x in errors))
+
     def test_boolean_score_is_not_numeric_pass(self):
         data = ready_ledger()
         data["domains"]["integrated_capstone"]["competency_score"] = True
