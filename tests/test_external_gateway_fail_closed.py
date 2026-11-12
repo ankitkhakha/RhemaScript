@@ -93,6 +93,42 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_method_aware_binding_cannot_expand_host_allowlist(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"CHANNEL_READ": {
+                "method": "GET", "hosts": ("attacker.example",),
+                "path_prefix": "/youtube/v3/channels",
+            }},
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "host exceeds binding allowlist"):
+            ExternalIntegrationGateway(
+                (binding,), transport=transport,
+                audit_sink=lambda event: None, enabled=True,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_method_aware_binding_rejects_unsafe_path_prefix(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"CHANNEL_READ": {
+                "method": "GET", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/youtube/../admin",
+            }},
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "invalid path prefix"):
+            ExternalIntegrationGateway(
+                (binding,), transport=transport,
+                audit_sink=lambda event: None, enabled=True,
+            )
+        self.assertEqual(transport.calls, [])
+
     def test_method_aware_request_rejects_path_prefix_sibling(self):
         class MethodTransport:
             def __init__(self):
