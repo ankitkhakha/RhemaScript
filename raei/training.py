@@ -19,6 +19,7 @@ from rhemascript.evidence.artifact_verification import (
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 
 from .curriculum import CURRICULUM_VERSION, build_registry
+from .knowledge import search_knowledge
 
 SCHEMA = "raei-training-assessment-v1"
 RECORD_TYPE = "RAEI_TRAINING_ATTEMPT_V1"
@@ -163,8 +164,13 @@ def build_training_brief(unit_id: str, registry: ReadinessRunRegistry) -> dict[s
     progress = get_progress(registry)
     if not _prerequisites_met(unit, progress):
         raise RAEITrainingError("curriculum prerequisites are not yet satisfied")
+    approved_knowledge = search_knowledge(registry, unit["domain"])
+    pending_knowledge = search_knowledge(registry, unit["domain"], include_pending=True)
     return {
         **unit,
+        "approved_knowledge": approved_knowledge,
+        "pending_knowledge_review": pending_knowledge,
+        "knowledge_status": "APPROVED_SOURCES_AVAILABLE" if approved_knowledge else "NO_APPROVED_KNOWLEDGE",
         "assessment_schema": SCHEMA,
         "required_evidence": [
             "canonical assessment JSON artifact",
