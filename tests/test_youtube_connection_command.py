@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 from pathlib import Path
 
+from rhemascript.interfaces.external import ExternalIntegrationError, ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.connection import (
     read_only_youtube_binding,
     main,
@@ -90,6 +91,33 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
         binding = read_only_youtube_binding()
         self.assertEqual(binding.interface_id, "IF-18")
         self.assertEqual(set(binding.operations), {"OAUTH_TOKEN", "CHANNEL_READ"})
+
+
+    def test_read_only_gateway_rejects_upload_operation_before_transport(self):
+        class NeverTransport:
+            def __init__(self):
+                self.calls = []
+
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, headers, body))
+                raise AssertionError("read-only gateway must reject before transport")
+
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (read_only_youtube_binding(),),
+            transport=transport,
+            audit_sink=lambda event: None,
+            enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "no method-aware provider contract"):
+            gateway.request(
+                "IF-18", "UPLOAD_SESSION",
+                "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                method="POST", body=b"{}", headers={"Content-Type": "application/json"},
+                request_id="read-only-test", project_id="RS-TEST",
+                source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
 
     def test_rejects_group_or_world_accessible_audit_directory_before_network(self):
         self.root.chmod(0o755)
