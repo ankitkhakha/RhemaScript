@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Local IF-18 read-only validation and redacted certification report.
+
+This harness uses synthetic tests only. It never loads operator credentials or
+contacts Google. Live channel verification remains a separate owner-run action.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import stat
+
+
+ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_OPERATIONS = {"OAUTH_TOKEN", "CHANNEL_READ"}
+
+
+def write_report(path: str | Path, rendered: str) -> None:
+    """Write a redacted report without following a symlink or creating a public file."""
+    destination = Path(path).expanduser()
+    if not destination.parent.is_dir():
+        raise OSError("report parent directory must already exist")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise OSError("platform does not support no-follow report creation")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow
+    descriptor = os.open(destination, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise OSError("report target must be an owner-owned regular file")
+        os.fchmod(descriptor, 0o600)
+        payload = rendered.encode("utf-8")
+        offset = 0
+        while offset < len(payload):
+            offset += os.write(descriptor, payload[offset:])
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--report-file",
+        help="optional path for a JSON certification report (no secrets or channel identifiers)",
+    )
+    args = parser.parse_args(argv)
+
+    checks: dict[str, dict[str, object]] = {}
+    try:
+        sys.path.insert(0, str(ROOT))
+        from rhemascript.integrations.connection import read_only_youtube_binding
+
+        binding = read_only_youtube_binding()
+        actual = set(binding.operations)
+        checks["if18_read_only_allowlist"] = {
+            "status": "PASS" if binding.interface_id == "IF-18" and actual == EXPECTED_OPERATIONS else "FAIL",
+            "interface_id": binding.interface_id,
+            "operations": sorted(actual),
+            "publishing_operations_present": bool(actual - EXPECTED_OPERATIONS),
+        }
+    except Exception as exc:
+        checks["if18_read_only_allowlist"] = {
+            "status": "FAIL",
+            "error_type": type(exc).__name__,
+        }
+
+    test_run = subprocess.run(
+        [sys.executable, "ci/run_ci.py"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    checks["full_contract_and_synthetic_test_suite"] = {
+        "status": "PASS" if test_run.returncode == 0 else "FAIL",
+        "exit_code": test_run.returncode,
+        "runner": "ci/run_ci.py",
+    }
+
+    passed = all(item.get("status") == "PASS" for item in checks.values())
+    report = {
+        "schema": "RhemaScript.IF18.ReadOnlyValidationReport.v1",
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "overall_status": "PASS" if passed else "FAIL",
+        "validation_mode": "SYNTHETIC_ONLY",
+        "live_google_connection_attempted": False,
+        "publishing_enabled": False,
+        "checks": checks,
+        "limitations": [
+            "This report validates local code contracts and synthetic tests only.",
+            "It does not prove live OAuth consent, account access, or channel identity.",
+            "A channel owner must run the separate read-only connection command locally.",
+        ],
+    }
+    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    print(rendered, end="")
+
+    if args.report_file:
+        try:
+            write_report(args.report_file, rendered)
+        except OSError:
+            print("Could not write validation report to the requested path.", file=sys.stderr)
+            return 2
+
+    # Keep raw test output out of the certification report and normal console
+    # result; emit only a bounded failure hint for troubleshooting.
+    if test_run.returncode:
+        tail = "\n".join(test_run.stdout.splitlines()[-12:])
+        print("TEST RUNNER FAILURE (last 12 lines):", file=sys.stderr)
+        print(tail, file=sys.stderr)
+    return 0 if passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

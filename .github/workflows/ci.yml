@@ -2,7 +2,7 @@ name: RhemaScript CI
 
 on:
   push:
-    branches: ["main", "ci/**"]
+    branches: ["main", "ci/**", "feat/**"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -27,4 +27,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run full local CI suite
-        run: python ci/run_ci.py
+        run: python ci/validate_if18_read_only.py --report-file if18-validation-report.json
+
+      - name: Upload redacted IF-18 validation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: if18-read-only-validation-report
+          path: if18-validation-report.json
+          if-no-files-found: warn
+          retention-days: 14

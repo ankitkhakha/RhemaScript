@@ -17,7 +17,13 @@ Conversational activation: `ACTIVATE RAEI`. Activation does not grant permission
 
 See [Creative Filmmaking Intelligence V1.0](docs/CREATIVE_FILMMAKING_INTELLIGENCE_V1.md) for the integrated biblical, human-experience, creative-story, filmmaking, AI-tool, production, and quality-learning operating model, including the Gemini/Google Flow capability snapshot verified 2026-11-11.
 
-This operating specification is adopted in main. It does not claim that live Google integrations, account-specific capability checks, automated visual analysis, or media generation have been implemented; those remain separately tracked implementation work.
+## YouTube integration
+
+The zero-cost official API client is in `rhemascript.integrations.youtube`. See [YouTube Integration — Zero Cost V1.0](docs/YOUTUBE_INTEGRATION_ZERO_COST_V1.md) and the [Google Connection Readiness Checklist V1](docs/YOUTUBE_GOOGLE_CONNECTION_READINESS_V1.md) for owner-led Cloud/OAuth setup, least-privilege scopes, local secret handling and staged activation.
+
+The client supports authenticated channel retrieval, resumable video upload, metadata, scheduled publication, custom thumbnails, upload verification and YouTube Analytics queries. It uses Python's standard library and has no added package dependencies. Credentials are injected from local environment variables; no secrets are stored in source control. Publishing operations fail closed without explicit publishing authority and uploaded videos default to private.
+
+**Activation is not yet complete:** the channel owner must configure an existing Google Cloud project, enable the official APIs, complete OAuth consent and provide a refresh token locally. No real channel connection, upload, public release or analytics retrieval has been performed by CI. The client code and mockable tests are not proof of live provider access or production readiness. Run the offline local preflight before owner-led OAuth setup: `python -m rhemascript.integrations.preflight --audit-log /absolute/path/in-an-existing-private-directory/youtube-audit.jsonl`. It checks local configuration only and makes no network request or file write.
 
 ## Local CI
 
@@ -27,10 +33,10 @@ Run:
 python ci/run_ci.py
 ```
 
-The suite validates shared record envelopes, authority separation, CTMNDS disclosure controls, six project approval gates, all 15 capability contract entry points, all 18 local interface adapters, RAEI governance and education documents, and a synthetic end-to-end contract flow.
+The suite validates shared record envelopes, authority separation, CTMNDS disclosure controls, six project approval gates, all 15 capability contract entry points, all 18 local interface adapters, RAEI governance and education documents, a synthetic end-to-end contract flow, and YouTube integration guardrails.
 
 ## Scope and limitations
 
-Capability execution currently provides evidence-gated contract infrastructure. It does not replace specialist biblical interpretation, legal/rights review, audience analytics, security assurance, visual analysis, or human editorial decisions. Interface adapters are local only; they make no external network calls or writes. The synthetic E2E test validates contract orchestration, not production business outcomes.
+Capability execution provides evidence-gated contract infrastructure. It does not replace specialist biblical interpretation, legal/rights review, security assurance, visual analysis, or human editorial decisions. The original IF-01..IF-18 adapters remain local-only; the YouTube client is a separate explicit provider integration and makes no request until invoked.
 
-No media generation, spending, external platform writes, publishing, or deployment is performed by this repository baseline.
+No media generation, spending, deployment, or live YouTube publishing is performed automatically. External writes require explicit publishing authorisation and real API credentials.
