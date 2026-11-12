@@ -27,7 +27,7 @@
 - `SECONDARY`: commentary or secondary research, clearly labelled.
 - `LESSON_FROM_FAILURE`: retained failure, root cause, remediation and regression-test references.
 
-Authority labels distinguish Scripture, official primary sources, approved internal specifications, secondary sources and unverified material. They are metadata for review, not automatic truth scores.
+Authority labels distinguish Scripture, official primary sources, secondary sources and unverified material. An internal specification is initially UNVERIFIED; its file location or category alone never proves that it was approved. Authority labels are metadata for review, not automatic truth scores.
 
 ## Continuous improvement loop
 
