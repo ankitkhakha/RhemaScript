@@ -38,6 +38,20 @@ class IntegrityChainTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertTrue(any("predecessor dependency: approved_script" in e for e in result["errors"]))
 
+    def test_extra_upstream_dependency_is_rejected(self):
+        project = complete_project()
+        project["stages"]["approved_script"]["upstream_refs"].append("unrelated-artifact")
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("must match exactly: approved_script" in e for e in result["errors"]))
+
+    def test_substituted_upstream_dependency_is_rejected(self):
+        project = complete_project()
+        project["stages"]["approved_script"]["upstream_refs"] = ["not-the-predecessor"]
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("must match exactly: approved_script" in e for e in result["errors"]))
+
     def test_invalid_revision_is_rejected(self):
         project=complete_project()
         project["stages"]["storyboard"]["revision"]=0
