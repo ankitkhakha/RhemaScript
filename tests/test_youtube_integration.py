@@ -313,6 +313,27 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("thumb-access", repr(events))
         self.assertNotIn("thumbnail-bytes", repr(events))
 
+    def test_thumbnail_rejects_video_id_without_project_verification_evidence(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        context = self.publish_context()
+        with tempfile.NamedTemporaryFile(suffix=".png") as image:
+            image.write(b"thumbnail")
+            image.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "VERIFIED YouTube read-back artifact"):
+                    client.set_thumbnail("video-123", image.name, **context)
+
+    def test_thumbnail_rejects_verified_video_bound_to_another_final_film(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        context = self.add_verified_video_evidence(self.publish_context())
+        context["evidence_pack"]["artifacts"][-1]["verified_final_film_artifact_id"] = "ART-7"
+        with tempfile.NamedTemporaryFile(suffix=".png") as image:
+            image.write(b"thumbnail")
+            image.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "not bound to verified project evidence"):
+                    client.set_thumbnail("video-123", image.name, **context)
+
     def test_thumbnail_rejects_oversized_file_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
