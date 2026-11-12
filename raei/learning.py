@@ -5,8 +5,11 @@ from .ledger import LedgerError, append_event, now
 def create_lesson(data, unit_id, objectives, source_refs, practice_prompt, rubric):
     if unit_id not in data["units"]:
         raise LedgerError(f"unknown unit: {unit_id}")
-    if not objectives or not source_refs or not practice_prompt or not rubric:
-        raise LedgerError("lesson requires objectives, source references, practice and rubric")
+    if (not isinstance(objectives, list) or not objectives or any(not isinstance(x, str) or not x.strip() for x in objectives)
+        or not isinstance(source_refs, list) or not source_refs or any(not isinstance(x, str) or not x.strip() for x in source_refs)
+        or not isinstance(practice_prompt, str) or not practice_prompt.strip()
+        or not isinstance(rubric, dict) or not rubric or any(not isinstance(k, str) or not k.strip() or not isinstance(v, str) or not v.strip() for k, v in rubric.items())):
+        raise LedgerError("lesson requires non-empty objective/source lists, a practice prompt and a valid rubric")
     unit = data["units"][unit_id]
     if unit["status"] == "passed":
         raise LedgerError("passed units are immutable; create a versioned unit to extend learning")
@@ -28,7 +31,7 @@ def record_practice(data, unit_id, artifact_ref, method, result, status="verifie
         raise LedgerError("cannot record practice before lesson or seeded curriculum is defined")
     if not all(isinstance(value, str) and value.strip() for value in (artifact_ref, method, result)):
         raise LedgerError("practice requires artifact reference, method and result")
-    if status not in {"verified", "reported_unverified", "planned"}:
+    if not isinstance(status, str) or status not in {"verified", "reported_unverified", "planned"}:
         raise LedgerError("invalid practice evidence status")
     unit=data["units"][unit_id]
     unit.setdefault("practice", []).append({"artifact_ref":artifact_ref,"method":method,
@@ -51,12 +54,16 @@ def record_rubric_assessment(data, unit_id, criterion_scores, evidence_ref, evid
         raise LedgerError("criterion scores must be an object mapping rubric criteria to scores")
     if not isinstance(evidence_status, str) or evidence_status not in {"verified", "reported_unverified", "planned"}:
         raise LedgerError("invalid evidence status")
-    if set(criterion_scores) != set(rubric):
+    if any(not isinstance(key, str) for key in criterion_scores) or set(criterion_scores) != set(rubric):
         raise LedgerError("criterion scores must match every rubric criterion exactly")
     if any(not isinstance(score,int) or isinstance(score,bool) or not 0 <= score <= 4 for score in criterion_scores.values()):
         raise LedgerError("each criterion score must be an integer from 0 to 4")
     if evidence_status == "verified" and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
         raise LedgerError("verified assessment requires an evidence reference")
+    if evidence_ref is not None and not isinstance(evidence_ref, str):
+        raise LedgerError("assessment evidence reference must be a string when supplied")
+    if not isinstance(assessor_note, str):
+        raise LedgerError("assessor_note must be a string")
     if not any(p["status"]=="verified" for p in unit.get("practice",[])):
         raise LedgerError("at least one verified practice record is required")
     if any(data["units"][p]["status"] != "passed" for p in unit["prerequisites"]):
