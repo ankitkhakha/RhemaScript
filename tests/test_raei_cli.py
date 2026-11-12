@@ -38,7 +38,7 @@ class RAEICLITests(unittest.TestCase):
         self.run_cli("init", "--database", str(self.database))
         code, _, errors = self.run_cli("init", "--database", str(self.database))
         self.assertEqual(code, 2)
-        self.assertIn("File exists", errors)
+        self.assertIn("already exists", errors)
 
     def test_status_requires_existing_database(self):
         code, _, errors = self.run_cli("status", "--database", str(self.database))
