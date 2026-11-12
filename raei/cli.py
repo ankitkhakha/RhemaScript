@@ -65,7 +65,10 @@ def _database(path_value: str, *, create: bool = False) -> ReadinessRunRegistry:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, indent=2, allow_nan=False)
+    # Use the same safe normalizer as durable records; process-local capability
+    # tokens must never be exposed or serialized into operator output.
+    normalised = ReadinessRunRegistry._normalise(value)
+    return json.dumps(normalised, sort_keys=True, ensure_ascii=False, indent=2, allow_nan=False)
 
 
 def _parser() -> argparse.ArgumentParser:
