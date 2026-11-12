@@ -1,6 +1,6 @@
 # Read-only YouTube connection command V1.0
 
-**Status:** Implementation added to the YouTube integration pull-request branch; automated CI validation pending. No live owner OAuth or channel connection has been performed.
+**Status:** Implementation is on the YouTube integration pull-request branch. GitHub Actions synthetic CI passed on 2026-11-12 (run 43144908406, commit `d3ae502766af642fa638fd36290fa13e74b11af3`). No live owner OAuth or channel connection has been performed.
 
 ## Purpose
 
@@ -55,7 +55,7 @@ python ci/validate_if18_read_only.py --report-file if18-validation-report.json
 
 The harness checks that the IF-18 binding contains exactly `OAUTH_TOKEN` and `CHANNEL_READ`, then runs the full contract and synthetic test suite through `ci/run_ci.py`. The JSON report contains the overall pass/fail result, check statuses, UTC generation time, and explicit limitations. It contains no credentials, access tokens, channel IDs, or channel titles.
 
-The harness is synthetic-only: it does not load the operator's credential file and does not contact Google. A PASS is not a live channel-identity certification. CI uploads the redacted report as a short-retention workflow artifact when the workflow runs.
+The harness is synthetic-only: it does not load the operator's credential file and does not contact Google. A PASS is not a live channel-identity certification. CI uploads the redacted report as a short-retention workflow artifact when the workflow runs. The workflow runs on pull requests targeting `main` and pushes to `main`, `ci/**`, and `feat/**` branches.
 
 ## Validation
 
