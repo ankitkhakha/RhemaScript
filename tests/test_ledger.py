@@ -99,5 +99,35 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaises(LedgerError):
             record_assessment(self.data, "A", 4, "ref", [])
 
+    def test_malformed_unit_and_status_fail_cleanly(self):
+        self.data["units"]["A"] = []
+        with self.assertRaises(LedgerError):
+            validate(self.data)
+        self.data["units"]["A"] = {"id": "A", "status": [], "prerequisites": []}
+        append_event(self.data, "tampered_fixture", None, {})
+        with self.assertRaises(LedgerError):
+            validate(self.data)
+
+    def test_dependency_cycle_in_imported_ledger_is_rejected(self):
+        self.data["units"] = {
+            "A": {"id": "A", "status": "in_progress", "prerequisites": ["B"]},
+            "B": {"id": "B", "status": "in_progress", "prerequisites": ["A"]},
+        }
+        append_event(self.data, "fixture", None, {})
+        with self.assertRaises(LedgerError):
+            validate(self.data)
+
+    def test_assessment_rejects_unhashable_unit_and_invalid_note(self):
+        add_unit(self.data, "A", "Foundations", [])
+        with self.assertRaises(LedgerError):
+            record_assessment(self.data, [], 3, "ref", "verified")
+        with self.assertRaises(LedgerError):
+            record_assessment(self.data, "A", 3, "ref", "verified", note=[])
+
+    def test_boolean_schema_version_is_rejected(self):
+        self.data["schema_version"] = True
+        with self.assertRaises(LedgerError):
+            validate(self.data)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
