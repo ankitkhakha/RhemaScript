@@ -82,6 +82,7 @@ def run_project_assessment(
     generation_authorisation: bool = False,
     run_id: str | None = None,
     orchestrator: Any = None,
+    evidence_root: str | None = None,
 ) -> tuple[Any, OrchestrationResult, dict[str, Any]]:
     """Validate a project pack, assess it, and return its read-only readiness report."""
     from rhemascript.evidence import run_evidence_pack
@@ -92,5 +93,15 @@ def run_project_assessment(
         generation_authorisation=generation_authorisation,
         run_id=run_id,
         orchestrator=orchestrator,
+        evidence_root=evidence_root,
     )
-    return validated, result, build_readiness_report(result)
+    report = build_readiness_report(result)
+    report["evidence_integrity"] = {
+        "mode": validated.evidence_integrity_mode,
+        "byte_verified_artifact_count": len(validated.byte_verified_artifacts),
+        "structural_only_warning": (
+            "Artifact status labels were not checked against local file bytes."
+            if validated.evidence_integrity_mode == "STRUCTURAL_ONLY" else None
+        ),
+    }
+    return validated, result, report
