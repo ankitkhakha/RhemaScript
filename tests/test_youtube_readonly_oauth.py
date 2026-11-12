@@ -84,7 +84,7 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             r"HTTP 400, invalid_request:missing_code_verifier",
         ):
             oauth_readonly._exchange_code(
-                client_id="client-id",
+                client_id="client-id", client_secret="test-client-secret",
                 code="one-time-code", redirect_uri="http://127.0.0.1",
                 verifier="pkce-verifier",
             )
