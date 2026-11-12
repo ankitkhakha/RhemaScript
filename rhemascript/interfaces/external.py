@@ -4,6 +4,7 @@ No provider is configured by default and network access is disabled by default.
 This module deliberately does not infer what IF-01..IF-18 connect to.
 """
 from dataclasses import dataclass
+from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
@@ -12,6 +13,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import math
 import threading
+from types import MappingProxyType
 
 
 class ExternalIntegrationError(RuntimeError):
@@ -45,7 +47,7 @@ class ProviderBinding:
     provider_name: str
     endpoint: str
     allowed_hosts: tuple[str, ...]
-    operations: dict[str, str]
+    operations: Mapping[str, Any]
     timeout_seconds: float = 10.0
     idempotency_header: str = "Idempotency-Key"
 
@@ -71,7 +73,7 @@ class ProviderBinding:
         allowed = {host.rstrip(".").lower() for host in self.allowed_hosts}
         if parsed.hostname.rstrip(".").lower() not in allowed:
             raise ExternalIntegrationError("provider host is not explicitly allowlisted")
-        if not isinstance(self.operations, dict) or not self.operations:
+        if not isinstance(self.operations, Mapping) or not self.operations:
             raise ExternalIntegrationError("provider binding requires operation contracts")
         if (not isinstance(self.timeout_seconds, (int, float))
                 or isinstance(self.timeout_seconds, bool)
@@ -86,7 +88,7 @@ class ProviderBinding:
                 if not spec.strip():
                     raise ExternalIntegrationError("provider operation path must be non-empty")
                 continue
-            if not isinstance(spec, dict):
+            if not isinstance(spec, Mapping):
                 raise ExternalIntegrationError("provider operation contract must be a path or object")
             method = spec.get("method")
             hosts = spec.get("hosts")
@@ -144,12 +146,34 @@ class ExternalIntegrationGateway:
                  credential_resolver: Callable[[str], dict[str, str]] | None = None,
                  audit_sink: Callable[[dict[str, Any]], None] | None = None,
                  enabled: bool = False):
-        self.bindings = {}
+        configured_bindings = {}
         for binding in bindings:
             binding.validate()
-            if binding.interface_id in self.bindings:
+            if binding.interface_id in configured_bindings:
                 raise ExternalIntegrationError("duplicate interface provider binding")
-            self.bindings[binding.interface_id] = binding
+            # Snapshot and freeze caller-owned configuration. A frozen dataclass
+            # alone does not freeze nested dictionaries or lists.
+            frozen_operations = {}
+            for operation, spec in binding.operations.items():
+                if isinstance(spec, Mapping):
+                    spec_copy = dict(spec)
+                    if isinstance(spec_copy.get("hosts"), (tuple, list)):
+                        spec_copy["hosts"] = tuple(spec_copy["hosts"])
+                    frozen_operations[operation] = MappingProxyType(spec_copy)
+                else:
+                    frozen_operations[operation] = spec
+            frozen_binding = ProviderBinding(
+                interface_id=binding.interface_id,
+                provider_name=binding.provider_name,
+                endpoint=binding.endpoint,
+                allowed_hosts=tuple(binding.allowed_hosts),
+                operations=MappingProxyType(frozen_operations),
+                timeout_seconds=binding.timeout_seconds,
+                idempotency_header=binding.idempotency_header,
+            )
+            frozen_binding.validate()
+            configured_bindings[frozen_binding.interface_id] = frozen_binding
+        self.bindings = MappingProxyType(configured_bindings)
         self.transport = transport or UrllibTransport()
         self.credential_resolver = credential_resolver or (lambda _provider: {})
         self.audit_sink = audit_sink
