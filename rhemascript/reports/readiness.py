@@ -82,7 +82,7 @@ def run_project_assessment(
     generation_authorisation: bool = False,
     run_id: str | None = None,
     orchestrator: Any = None,
-    evidence_root: str | None = None,
+    evidence_root: str | None = None,\n    readiness_registry: Any = None,
 ) -> tuple[Any, OrchestrationResult, dict[str, Any]]:
     """Validate a project pack, assess it, and return its read-only readiness report."""
     from rhemascript.evidence import run_evidence_pack
@@ -104,4 +104,22 @@ def run_project_assessment(
             if validated.evidence_integrity_mode == "STRUCTURAL_ONLY" else None
         ),
     }
+    if readiness_registry is not None:
+        from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
+        if not isinstance(readiness_registry, ReadinessRunRegistry):
+            raise TypeError("readiness_registry must be a ReadinessRunRegistry")
+        if validated.evidence_integrity_mode != "BYTE_VERIFIED":
+            raise ValueError("durable readiness registration requires byte-verified evidence_root")
+        readiness_registry.record(result.run_id, report, validated.byte_verified_artifacts)
+        report["durable_assessment"] = {
+            "registered": True,
+            "registry_type": "LOCAL_SQLITE",
+            "assessment_is_approval": False,
+            "assessment_is_execution_authorisation": False,
+        }
+    else:
+        report["durable_assessment"] = {
+            "registered": False,
+            "reason": "No readiness registry was supplied.",
+        }
     return validated, result, report
