@@ -50,6 +50,37 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         with self.assertRaises(ReadinessReplayError):
             self.registry.record("RUN-1", changed, self.evidence)
 
+    def test_external_checkpoint_detects_database_changes_and_wrong_key(self):
+        key = b"independent-secret-key-material-32bytes!"
+        self.registry.record("RUN-1", self.report, self.evidence)
+        checkpoint = self.registry.checkpoint(key)
+        self.assertTrue(self.registry.verify_checkpoint(checkpoint, key))
+        self.assertFalse(self.registry.verify_checkpoint(checkpoint, b"x" * 40))
+        self.registry.record("RUN-2", {"overall_status": "NEW"}, ())
+        self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
+        self.assertFalse(self.registry.verify_checkpoint(checkpoint, b"short"))
+
+    def test_checkpoint_rejects_short_key(self):
+        with self.assertRaises(ValueError):
+            self.registry.checkpoint(b"short")
+
+    def test_backup_restores_and_matches_external_checkpoint(self):
+        key = b"backup-checkpoint-secret-material-32bytes"
+        self.registry.record("RUN-1", self.report, self.evidence)
+        checkpoint = self.registry.checkpoint(key)
+        backup_path = Path(self.tmp.name) / "backup.sqlite3"
+        self.registry.backup_to(backup_path)
+        restored = ReadinessRunRegistry(backup_path)
+        self.assertEqual(restored.get("RUN-1")["run_id"], "RUN-1")
+        self.assertTrue(restored.verify_checkpoint(checkpoint, key))
+
+    def test_backup_refuses_existing_destination(self):
+        destination = Path(self.tmp.name) / "existing.sqlite3"
+        destination.write_text("do not overwrite", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            self.registry.backup_to(destination)
+        self.assertEqual(destination.read_text(encoding="utf-8"), "do not overwrite")
+
     def test_rejects_symlink_database(self):
         alias = Path(self.tmp.name) / "alias.sqlite3"
         alias.symlink_to(self.path)
