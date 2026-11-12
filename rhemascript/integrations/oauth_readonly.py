@@ -155,7 +155,19 @@ def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tup
     finally:
         server.server_close()
     if "error" in result:
-        raise OAuthBootstrapError("Google authorization was denied or cancelled")
+        # Emit only a fixed internal category; never include callback values.
+        category = result["error"]
+        safe_categories = {
+            "invalid_request", "invalid_query", "unexpected_parameters",
+            "duplicate_parameters", "scope_mismatch", "invalid_issuer",
+            "state_mismatch", "authorization_denied",
+            "authorization_error_details", "missing_code",
+        }
+        if category not in safe_categories:
+            category = "callback_rejected"
+        raise OAuthBootstrapError(
+            f"Google callback rejected ({category}); no credentials were saved"
+        )
     if "code" not in result:
         raise OAuthBootstrapError("Timed out waiting for the local Google OAuth callback")
     return result["code"], verifier, redirect_uri
