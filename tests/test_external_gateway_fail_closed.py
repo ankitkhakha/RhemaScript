@@ -265,5 +265,43 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
 
 
+
+    def test_expired_publish_authorization_cache_cannot_continue_upload(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method))
+                return 200, b"{}", {}
+
+        transport = MethodTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {"method": "PUT", "hosts": ("www.googleapis.com",),
+                                         "path_prefix": "/upload/youtube/v3/videos"}},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None,
+            approval_verifier=object(), enabled=True,
+        )
+        gateway._authorized_publish_requests["expired-request"] = (
+            "project-1", "version-1", {
+                "approval_ids": ["approval-1", "approval-2"],
+                "approval_actor_ids": ["actor-1", "actor-2"],
+                "approval_issuer": "trusted-issuer",
+            }, "VIDEO_UPLOAD", 0.0,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "must begin with an upload session"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", request_id="expired-request", project_id="project-1",
+                source_version="version-1",
+            )
+        self.assertNotIn("expired-request", gateway._authorized_publish_requests)
+        self.assertEqual(transport.calls, [])
+
 if __name__ == "__main__":
     unittest.main()
