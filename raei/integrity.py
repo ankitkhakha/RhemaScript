@@ -112,7 +112,9 @@ def validate_project_chain(project):
             expected_revision = 1
             previous_ref = None
             for event in events:
-                if event.get("revision") != expected_revision:
+                event_revision = event.get("revision")
+                if (not isinstance(event_revision, int) or isinstance(event_revision, bool)
+                        or event_revision != expected_revision):
                     errors.append("non-contiguous revision history: " + stage)
                     break
                 if event.get("previous_artifact_ref") != previous_ref:
@@ -152,7 +154,10 @@ def validate_project_chain(project):
         ):
             errors.append("generation output does not match the recorded asset")
 
-    if project.get("published") is True:
+    published = project.get("published", False)
+    if not isinstance(published, bool):
+        errors.append("published flag must be boolean")
+    elif published:
         errors.append("publication is outside this validator's authority and requires separate authorization")
 
     return {
