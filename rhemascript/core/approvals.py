@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-import hashlib
-import hmac
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 import json
 import re
 from typing import Callable, Mapping, Sequence
@@ -27,7 +27,7 @@ _FIELDS = {
 }
 _SCHEMA = "RhemaScript.ApprovalCredential.v1"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
-_HEX = re.compile(r"^[0-9a-f]{64}$")
+_SIGNATURE_HEX = re.compile(r"^[0-9a-f]{128}$")
 
 
 @dataclass(frozen=True)
@@ -63,9 +63,9 @@ class ApprovalVerifier:
         if not verification_keys:
             raise ValueError("at least one verification key is required")
         if any(not isinstance(k, str) or not k.strip()
-               or not isinstance(v, bytes) or len(v) < 32
+               or not isinstance(v, bytes) or len(v) != 32
                for k, v in verification_keys.items()):
-            raise ValueError("verification keys require non-empty IDs and at least 32 secret bytes")
+            raise ValueError("Ed25519 verification keys require non-empty IDs and exactly 32 public-key bytes")
         if not callable(consume_many_once):
             raise ValueError("an atomic consume_many_once callback is required")
         if max_lifetime <= timedelta(0) or max_lifetime > timedelta(hours=1):
@@ -124,13 +124,17 @@ class ApprovalVerifier:
             raise ApprovalError("approval action or project scope does not match")
         if token["project_version"] != project_version or token["request_id"] != request_id:
             raise ApprovalError("approval version or request scope does not match")
-        key = self._keys.get(token["key_id"])
+        public_key = self._keys.get(token["key_id"])
         signature = token.get("signature")
-        if key is None or not isinstance(signature, str) or not _HEX.fullmatch(signature):
+        if (public_key is None or not isinstance(signature, str)
+                or not _SIGNATURE_HEX.fullmatch(signature)):
             raise ApprovalError("approval signature is invalid")
-        expected = hmac.new(key, self._canonical(token), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(signature, expected):
-            raise ApprovalError("approval signature is invalid")
+        try:
+            Ed25519PublicKey.from_public_bytes(public_key).verify(
+                bytes.fromhex(signature), self._canonical(token)
+            )
+        except (InvalidSignature, ValueError):
+            raise ApprovalError("approval signature is invalid") from None
 
         issued_at = self._timestamp(token["issued_at"], "issued_at")
         expires_at = self._timestamp(token["expires_at"], "expires_at")
