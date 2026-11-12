@@ -17,6 +17,7 @@ from rhemascript.integrations.credentials import PrivateCredentialError, load_pr
 
 CREDENTIAL_ENV = (
     "RHEMASCRIPT_YOUTUBE_CLIENT_ID",
+    "RHEMASCRIPT_YOUTUBE_CLIENT_SECRET",
     "RHEMASCRIPT_YOUTUBE_REFRESH_TOKEN",
 )
 
