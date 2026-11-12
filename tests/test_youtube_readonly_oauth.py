@@ -56,6 +56,10 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             oauth_readonly._safe_google_error_detail("Invalid code verifier."),
             "invalid_code_verifier",
         )
+        self.assertEqual(
+            oauth_readonly._safe_google_error_detail("client_secret is missing."),
+            "missing_client_secret",
+        )
         self.assertIsNone(
             oauth_readonly._safe_google_error_detail("DO_NOT_EXPOSE_SECRET")
         )
