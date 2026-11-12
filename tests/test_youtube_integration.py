@@ -157,6 +157,22 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "publishing_authorisation": authorised,
         }
 
+    def add_verified_video_evidence(self, context, video_id="video-123"):
+        context["evidence_pack"]["artifacts"].append({
+            "artifact_id": "YT-VERIFY-1",
+            "project_id": "RS-TEST-001",
+            "project_version": "1.0",
+            "artifact_type": "YOUTUBE_VIDEO_VERIFICATION",
+            "version": "1",
+            "status": "VERIFIED",
+            "youtube_video_id": video_id,
+            "verified_final_film_artifact_id": "ART-8",
+            "verification_method": "YOUTUBE_API_VIDEO_READ",
+            "upload_status": "uploaded",
+            "processing_status": "succeeded",
+        })
+        return context
+
     def test_config_rejects_upload_chunk_larger_than_32_mib(self):
         with self.assertRaisesRegex(YouTubeIntegrationError, "between 256 KiB and 32 MiB"):
             YouTubeConfig("client", "secret", "refresh", chunk_size=33 * 1024 * 1024).validate()
@@ -285,7 +301,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.set_thumbnail(
-                    "video-123", image.name, **self.publish_context(),
+                    "video-123", image.name, **self.add_verified_video_evidence(self.publish_context()),
                 )
 
         self.assertIn("items", result)
@@ -304,7 +320,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 with self.assertRaisesRegex(YouTubeIntegrationError, "no larger than 2 MB"):
-                    client.set_thumbnail("video-123", image.name, **self.publish_context())
+                    client.set_thumbnail("video-123", image.name, **self.add_verified_video_evidence(self.publish_context()))
 
     def test_thumbnail_rejects_unknown_extension_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
@@ -382,6 +398,38 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(YouTubeIntegrationError, "1 to 100"):
                 client.upload_video(video.name, title="", description="Test",
                                     **self.publish_context())
+
+    def test_scheduled_publication_timestamp_requires_timezone_and_future_time(self):
+        from datetime import datetime, timezone
+        from rhemascript.integrations.youtube import _validate_publish_at
+        now = datetime(2026, 11, 12, 12, 0, 0, tzinfo=timezone.utc)
+        for invalid in (
+            "2026-11-12T13:00:00",
+            "2026-02-30T13:00:00Z",
+            "2026-11-12T11:59:59Z",
+            "2026-11-12T12:00:00Z",
+            "not-a-date",
+        ):
+            with self.subTest(value=invalid):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_publish_at(invalid, now=now)
+        self.assertEqual(
+            _validate_publish_at("2026-11-12T18:00:00+05:30", now=now),
+            "2026-11-12T18:00:00+05:30",
+        )
+
+    def test_invalid_scheduled_timestamp_is_rejected_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for invalid in ("2026-12-01T12:00:00", "2020-01-01T00:00:00Z"):
+                with self.subTest(value=invalid):
+                    with self.assertRaises(YouTubeIntegrationError):
+                        client.upload_video(
+                            video.name, title="Approved", description="Test",
+                            publish_at=invalid, **self.publish_context(),
+                        )
 
     def test_scheduled_publication_must_use_private_upload(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
