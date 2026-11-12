@@ -56,6 +56,18 @@ class ReadinessValidatorTests(unittest.TestCase):
         data["domains"]["whole_bible"]["books"].append(data["domains"]["whole_bible"]["books"][0])
         self.assertTrue(any("duplicate book_id" in x for x in validate(data)))
 
+    def test_whitespace_only_book_identifier_fails(self):
+        data = ready_ledger()
+        data["domains"]["whole_bible"]["books"][0]["book_id"] = "   "
+        self.assertTrue(any("malformed book_id" in x for x in validate(data)))
+
+    def test_whitespace_padded_ethics_identifier_fails(self):
+        data = ready_ledger()
+        data["domains"]["bible_only_ethics"]["cases"][0]["case_id"] = " ETH-TRUTH "
+        errors = validate(data)
+        self.assertTrue(any("malformed case_id" in x for x in errors))
+        self.assertTrue(any("ETH-TRUTH" in x for x in errors))
+
     def test_unverified_ethics_case_fails(self):
         data = ready_ledger()
         data["domains"]["bible_only_ethics"]["cases"][0]["biblical_context_reviewed"] = False
