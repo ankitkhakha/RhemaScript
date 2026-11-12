@@ -371,6 +371,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
     def test_thumbnail_rejects_unknown_extension_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".gif") as image:
             image.write(b"image")
             image.flush()
