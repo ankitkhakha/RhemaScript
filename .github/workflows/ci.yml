@@ -2,9 +2,10 @@ name: RhemaScript CI
 
 on:
   push:
-    branches: ["main", "ci/**", "feat/**"]
+    branches: ["main", "ci/**", "feat/**", "work/**"]
   pull_request:
     branches: ["main"]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
