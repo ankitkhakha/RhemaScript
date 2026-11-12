@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
@@ -392,6 +392,37 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 client.upload_video(video.name, title="Approved", description="Test",
                     privacy_status="public", publish_at="2026-12-01T12:00:00Z",
                     **self.publish_context())
+
+    def test_scheduled_publication_rejects_invalid_or_non_future_timestamps(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        invalid_values = (
+            "not-a-timestamp",
+            "2026-12-01T12:00:00",  # timezone is required
+            "2020-01-01T12:00:00Z",  # scheduled time must be in the future
+        )
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for value in invalid_values:
+                with self.subTest(publish_at=value):
+                    with self.assertRaisesRegex(YouTubeIntegrationError, "publish_at"):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            privacy_status="private", publish_at=value, **self.publish_context())
+
+    def test_valid_future_rfc3339_schedule_passes_timestamp_validation(self):
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            return 400, b"{}", {}
+        client = YouTubeClient(self.config(), transport=transport)
+        scheduled = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "resumable upload session"):
+                    client.upload_video(video.name, title="Approved", description="Test",
+                        privacy_status="private", publish_at=scheduled, **self.publish_context())
 
     def test_analytics_date_range_is_validated_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
