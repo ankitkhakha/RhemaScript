@@ -227,6 +227,29 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
 
+    def test_verify_video_rejects_different_returned_video_id(self):
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"verify-token"}', {}
+            return 200, b'{"items":[{"id":"different-video","snippet":{"title":"Wrong"},"status":{"privacyStatus":"private"},"processingDetails":{"processingStatus":"succeeded"}}]}', {}
+        client = YouTubeClient(self.config(), transport=transport)
+        with self.assertRaisesRegex(YouTubeIntegrationError, "different video ID"):
+            client.verify_video("expected-video")
+
+    def test_verify_video_rejects_incomplete_status_objects(self):
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"verify-token"}', {}
+            return 200, b'{"items":[{"id":"expected-video","snippet":{},"status":null,"processingDetails":{}}]}', {}
+        client = YouTubeClient(self.config(), transport=transport)
+        with self.assertRaisesRegex(YouTubeIntegrationError, "incomplete video verification"):
+            client.verify_video("expected-video")
+
+    def test_verify_video_rejects_empty_video_id_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with self.assertRaisesRegex(YouTubeIntegrationError, "non-empty exact ID"):
+            client.verify_video(" ")
+
     def test_thumbnail_write_uses_if18_gateway_and_publish_authority(self):
         class MethodTransport:
             def __init__(self):
