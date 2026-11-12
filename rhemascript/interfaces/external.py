@@ -147,7 +147,7 @@ class ExternalIntegrationGateway:
 
         operation = request["operation"].upper()
         path = binding.operations.get(operation)
-        if not path or path.startswith("//") or "://" in path:
+        if not isinstance(path, str) or not path or path.startswith("//") or "://" in path:
             raise ExternalIntegrationError("operation is not mapped by provider contract")
         if operation in self.CONSEQUENT_OPERATIONS:
             try:
