@@ -36,8 +36,9 @@ def _unique_records(items: Any, key_name: str, label: str, errors: list[str]) ->
             errors.append(f"{label} contains a malformed record")
             continue
         key = item.get(key_name)
-        if not isinstance(key, str) or not key or key in records:
-            errors.append(f"{label} has missing or duplicate {key_name}: {key!r}")
+        if (not isinstance(key, str) or not key.strip() or key != key.strip()
+                or key in records):
+            errors.append(f"{label} has missing, malformed or duplicate {key_name}: {key!r}")
             continue
         records[key] = item
     return records
