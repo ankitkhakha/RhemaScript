@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import threading
@@ -39,28 +39,6 @@ class ProviderBinding:
             raise ExternalIntegrationError("provider binding is incomplete")
         if self.timeout_seconds <= 0 or self.timeout_seconds > 60:
             raise ExternalIntegrationError("timeout must be between 0 and 60 seconds")
-
-        # Method-aware contracts must not widen the binding's host boundary.
-        # Validate these at configuration time, before any request can be sent.
-        for operation, spec in self.operations.items():
-            if not isinstance(operation, str) or not operation.strip():
-                raise ExternalIntegrationError("provider operation names must be non-empty strings")
-            if isinstance(spec, dict):
-                method = spec.get("method")
-                hosts = spec.get("hosts")
-                path_prefix = spec.get("path_prefix")
-                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
-                    raise ExternalIntegrationError("method-aware provider contract has an invalid HTTP method")
-                if (not isinstance(hosts, (tuple, list)) or not hosts
-                        or any(not isinstance(host, str) or not host.strip() for host in hosts)):
-                    raise ExternalIntegrationError("method-aware provider contract has invalid hosts")
-                allowed = {host.lower() for host in self.allowed_hosts}
-                if any(host.lower() not in allowed for host in hosts):
-                    raise ExternalIntegrationError("method-aware provider contract host exceeds binding allowlist")
-                if (not isinstance(path_prefix, str) or not path_prefix.startswith("/")
-                        or path_prefix.startswith("//") or "?" in path_prefix or "#" in path_prefix
-                        or "\\\\" in path_prefix or any(part in {".", ".."} for part in path_prefix.split("/"))):
-                    raise ExternalIntegrationError("method-aware provider contract has an invalid path prefix")
 
 
 class Transport(Protocol):
@@ -100,6 +78,7 @@ class ExternalIntegrationGateway:
                  transport: Transport | None = None,
                  credential_resolver: Callable[[str], dict[str, str]] | None = None,
                  audit_sink: Callable[[dict[str, Any]], None] | None = None,
+                 approval_verifier=None,
                  enabled: bool = False):
         self.bindings = {}
         for binding in bindings:
@@ -110,8 +89,11 @@ class ExternalIntegrationGateway:
         self.transport = transport or UrllibTransport()
         self.credential_resolver = credential_resolver or (lambda _provider: {})
         self.audit_sink = audit_sink
+        self.approval_verifier = approval_verifier
         self.enabled = enabled
         self._lock = threading.Lock()
+        self._approval_lock = threading.Lock()
+        self._authorized_publish_requests: dict[str, tuple[str, str, dict[str, Any]]] = {}
         self._responses = {}
 
     def invoke(self, interface_id: str, request: dict[str, Any], *,
@@ -147,9 +129,7 @@ class ExternalIntegrationGateway:
 
         operation = request["operation"].upper()
         path = binding.operations.get(operation)
-        if isinstance(path, dict):
-            raise ExternalIntegrationError("operation is not mapped as a path; use the method-aware request contract")
-        if not isinstance(path, str) or not path or path.startswith("//") or "://" in path:
+        if not path or path.startswith("//") or "://" in path:
             raise ExternalIntegrationError("operation is not mapped by provider contract")
         if operation in self.CONSEQUENT_OPERATIONS:
             try:
@@ -217,6 +197,8 @@ class ExternalIntegrationGateway:
                 recipient_clearance: str = "OPERATIONAL",
                 task_need: bool = True, approved_scope: bool = True,
                 authority: dict[str, bool] | None = None,
+                approval_credentials: tuple[dict[str, Any], ...] | None = None,
+                approval_request_id: str | None = None,
                 max_response_bytes: int = 8_000_000) -> tuple[int, bytes, dict[str, str]]:
         """Audited method-aware provider request for OAuth and resumable protocols."""
         from rhemascript.core.authority import authorise_action, AuthorityError
@@ -245,13 +227,10 @@ class ExternalIntegrationGateway:
         if not isinstance(path_prefix, str) or not path_prefix.startswith("/") or ".." in path_prefix.split("/"):
             raise ExternalIntegrationError("provider path contract is invalid")
         parsed = urlparse(url)
-        decoded_path = unquote(parsed.path)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                 or parsed.port not in (None, 443) or parsed.fragment
                 or parsed.hostname.lower() not in {h.lower() for h in hosts}
-                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))
-                or "\\" in decoded_path or "\x00" in decoded_path
-                or any(part in {".", ".."} for part in decoded_path.split("/"))):
+                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))):
             raise ExternalIntegrationError("request URL is outside the provider operation allowlist")
         if not isinstance(body, (bytes, type(None))) or not 0 < max_response_bytes <= 8_000_000:
             raise ExternalIntegrationError("request body or response limit is invalid")
@@ -263,7 +242,47 @@ class ExternalIntegrationGateway:
         authority_operation = "PUBLISH" if operation.upper() in {
             "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
         } else operation.upper()
-        if authority_operation in self.CONSEQUENT_OPERATIONS or authority_operation == "PUBLISH":
+        if authority_operation == "PUBLISH":
+            if self.approval_verifier is None:
+                raise ExternalIntegrationError("publishing requires a trusted signed approval verifier")
+            with self._approval_lock:
+                cached = self._authorized_publish_requests.get(request_id)
+                if cached is not None:
+                    cached_project, cached_version, audit_context = cached
+                    if cached_project != project_id or cached_version != source_version:
+                        raise ExternalIntegrationError("approval request cannot be reused across project versions")
+                else:
+                    if (approval_request_id != request_id
+                            or not isinstance(approval_credentials, (tuple, list))
+                            or len(approval_credentials) != 2):
+                        raise ExternalIntegrationError("publishing requires two signed approvals bound to this request")
+                    try:
+                        from rhemascript.core.approvals import ApprovalVerifier
+                        if not isinstance(self.approval_verifier, ApprovalVerifier):
+                            raise ExternalIntegrationError("trusted approval verifier is not configured")
+                        approvals = self.approval_verifier.verify_many_and_consume(
+                            approval_credentials,
+                            (
+                                {"action": "FINAL_ACCEPTANCE", "project_id": project_id,
+                                 "project_version": source_version, "request_id": request_id},
+                                {"action": "PUBLISH", "project_id": project_id,
+                                 "project_version": source_version, "request_id": request_id},
+                            ),
+                            require_distinct_actors=True,
+                        )
+                    except Exception as exc:
+                        if isinstance(exc, ExternalIntegrationError):
+                            raise
+                        raise ExternalIntegrationError("signed publishing approvals were denied") from None
+                    audit_context = {
+                        "approval_ids": [item.approval_id for item in approvals],
+                        "approval_actor_ids": [item.actor_id for item in approvals],
+                        "approval_issuer": approvals[0].issuer,
+                    }
+                    self._authorized_publish_requests[request_id] = (
+                        project_id, source_version, audit_context,
+                    )
+        elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
                 authorise_action(authority_operation, authority or {})
             except AuthorityError:
@@ -279,6 +298,12 @@ class ExternalIntegrationGateway:
                  "operation": operation.upper(), "method": method.upper(),
                  "host": parsed.hostname, "request_fingerprint": fingerprint,
                  "request_bytes": len(body or b""), "phase": "REQUESTED"}
+        if authority_operation == "PUBLISH":
+            event.update({
+                "approval_ids": list(audit_context["approval_ids"]),
+                "approval_actor_ids": list(audit_context["approval_actor_ids"]),
+                "approval_issuer": audit_context["approval_issuer"],
+            })
         self.audit_sink(dict(event))
         try:
             secret_headers = self.credential_resolver(binding.provider_name)
@@ -303,6 +328,11 @@ class ExternalIntegrationGateway:
             event.update({"phase": "COMPLETED", "http_status": status,
                           "response_bytes": len(raw)})
             self.audit_sink(dict(event))
+            if (authority_operation == "PUBLISH"
+                    and (operation.upper() == "THUMBNAIL_WRITE"
+                         or (operation.upper() == "UPLOAD_CHUNK" and status in (200, 201)))):
+                with self._approval_lock:
+                    self._authorized_publish_requests.pop(request_id, None)
             return status, raw, response_headers
         except Exception as exc:
             event.update({"phase": "FAILED", "error_type": type(exc).__name__})
