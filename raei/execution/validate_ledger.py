@@ -22,7 +22,7 @@ def _score_ok(score: Any) -> bool:
 def _verified_evidence(item: Any) -> bool:
     if not _record(item) or item.get("status") != "verified":
         return False
-    ref = item.get("evidence_ref") or item.get("evidence")
+    ref = item.get("evidence_ref") if "evidence_ref" in item else item.get("evidence")
     score = item.get("score", item.get("competency_score"))
     return isinstance(ref, str) and bool(ref.strip()) and _score_ok(score)
 
