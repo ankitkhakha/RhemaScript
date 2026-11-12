@@ -91,6 +91,7 @@ class ExternalIntegrationGateway:
         self.enabled = enabled
         self._lock = threading.Lock()
         self._responses = {}
+        self._inflight: dict[str, dict[str, Any]] = {}
 
     def invoke(self, interface_id: str, request: dict[str, Any], *,
                recipient_clearance: str = "OPERATIONAL", task_need: bool = True,
@@ -143,33 +144,43 @@ class ExternalIntegrationGateway:
             raise ExternalIntegrationError("operation mapping changed provider host")
         canonical = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         key = sha256((interface_id + ":" + canonical).encode()).hexdigest()
-        with self._lock:
-            if key in self._responses:
-                return self._responses[key]
-
         if self.audit_sink is None:
             raise ExternalIntegrationError("auditable integration requires an audit sink")
-        # This legacy entry point always transmits POST. Without a method-aware
-        # operation contract, treat every invocation as an external write.
-        try:
-            authorise_action("EXTERNAL_WRITE", authority or {})
-        except AuthorityError as exc:
-            raise ExternalIntegrationError("generic POST invocation lacks explicit authority: external-write authority is required") from exc
+        # Claim the key before transport. Duplicates wait for this request's
+        # terminal result instead of racing into a second provider POST.
+        with self._lock:
+            cached = self._responses.get(key)
+            if cached is not None:
+                return json.loads(json.dumps(cached))
+            flight = self._inflight.get(key)
+            owner = flight is None
+            if owner:
+                flight = {"event": threading.Event(), "result": None, "error": None}
+                self._inflight[key] = flight
+        if not owner:
+            flight["event"].wait()
+            if flight["result"] is not None:
+                return json.loads(json.dumps(flight["result"]))
+            error = flight["error"]
+            if isinstance(error, ExternalIntegrationError):
+                raise ExternalIntegrationError(str(error)) from None
+            raise ExternalIntegrationError("concurrent duplicate provider invocation failed") from None
+
         event = {"interface_id": interface_id, "provider": binding.provider_name,
                  "request_id": request["request_id"], "operation": operation,
                  "idempotency_key": key, "phase": "REQUESTED"}
-        self.audit_sink(dict(event))
-        headers = {"Content-Type": "application/json", "Accept": "application/json",
-                   binding.idempotency_header: key}
-        secret_headers = self.credential_resolver(binding.provider_name)
-        if not isinstance(secret_headers, dict) or any(not isinstance(k, str) or not isinstance(v, str)
-                                                       for k, v in secret_headers.items()):
-            raise ExternalIntegrationError("credential resolver returned invalid headers")
-        headers.update(secret_headers)
-        body = json.dumps({"project_id": request["project_id"], "request_id": request["request_id"],
-                           "operation": operation, "source_version": request["source_version"],
-                           "payload": request["payload"]}, separators=(",", ":")).encode()
         try:
+            self.audit_sink(dict(event))
+            headers = {"Content-Type": "application/json", "Accept": "application/json",
+                       binding.idempotency_header: key}
+            secret_headers = self.credential_resolver(binding.provider_name)
+            if not isinstance(secret_headers, dict) or any(not isinstance(k, str) or not isinstance(v, str)
+                                                           for k, v in secret_headers.items()):
+                raise ExternalIntegrationError("credential resolver returned invalid headers")
+            headers.update(secret_headers)
+            body = json.dumps({"project_id": request["project_id"], "request_id": request["request_id"],
+                               "operation": operation, "source_version": request["source_version"],
+                               "payload": request["payload"]}, separators=(",", ":")).encode()
             status, raw = self.transport.send(url, headers, body, binding.timeout_seconds)
             if len(raw) > 2_000_000:
                 raise ExternalIntegrationError("provider response exceeds size limit")
@@ -186,15 +197,25 @@ class ExternalIntegrationGateway:
                       "idempotency_key": key, "http_status": status, "payload": payload}
             event.update({"phase": "COMPLETED", "http_status": status})
             self.audit_sink(dict(event))
+            with self._lock:
+                self._responses[key] = result
+                flight["result"] = result
+            return json.loads(json.dumps(result))
         except Exception as exc:
-            event.update({"phase": "FAILED", "error_type": type(exc).__name__})
-            self.audit_sink(dict(event))
+            flight["error"] = (exc if isinstance(exc, ExternalIntegrationError)
+                               else ExternalIntegrationError("provider invocation failed"))
+            try:
+                event.update({"phase": "FAILED", "error_type": type(exc).__name__})
+                self.audit_sink(dict(event))
+            except Exception:
+                pass
             if isinstance(exc, ExternalIntegrationError):
                 raise
             raise ExternalIntegrationError("provider invocation failed") from exc
-        with self._lock:
-            self._responses[key] = result
-        return result
+        finally:
+            with self._lock:
+                self._inflight.pop(key, None)
+                flight["event"].set()
 
     def request(self, interface_id: str, operation: str, url: str, *,
                 method: str, headers: dict[str, str] | None = None,
