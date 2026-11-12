@@ -119,6 +119,46 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
                 else:
                     self.assertIn("error", result)
 
+    def test_callback_accepts_google_context_and_enforces_returned_scope(self):
+        from http.client import HTTPConnection
+        from threading import Thread
+
+        cases = (
+            (
+                "?state=expected-state&code=test-code"
+                "&iss=https%3A%2F%2Faccounts.google.com"
+                "&scope=" + oauth_readonly.READ_ONLY_SCOPE.replace(":", "%3A").replace("/", "%2F")
+                + "&authuser=0&prompt=consent",
+                200,
+            ),
+            (
+                "?state=expected-state&code=test-code&scope="
+                "https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fyoutube.upload",
+                400,
+            ),
+        )
+        for suffix, expected_status in cases:
+            with self.subTest(expected_status=expected_status):
+                result = {}
+                server = oauth_readonly.HTTPServer(
+                    ("127.0.0.1", 0),
+                    oauth_readonly._callback_handler(result, "expected-state"),
+                )
+                thread = Thread(target=server.handle_request, daemon=True)
+                thread.start()
+                connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=3)
+                connection.request("GET", oauth_readonly.CALLBACK_PATH + suffix)
+                response = connection.getresponse()
+                response.read()
+                connection.close()
+                thread.join(timeout=3)
+                server.server_close()
+                self.assertEqual(response.status, expected_status)
+                if expected_status == 200:
+                    self.assertEqual(result.get("code"), "test-code")
+                else:
+                    self.assertIn("error", result)
+
     def test_callback_accepts_one_valid_state_and_code_once(self):
         from http.client import HTTPConnection
         from threading import Thread
