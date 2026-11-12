@@ -1,3 +1,5 @@
+import os
+import stat
 import tempfile
 import threading
 import unittest
@@ -134,6 +136,48 @@ class EvidenceStoreTests(unittest.TestCase):
         self.store.assess("U1", 2, "attempt", "verified", 1)
         self.assertTrue(self.store.verify_event_chain())
         self.assertEqual(self.store.event_count(), 2)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions required")
+    def test_backup_and_restore_files_are_owner_only(self):
+        self.store.create_unit("U1", "Foundations")
+        backup = Path(self.temp.name) / "private-backup.sqlite3"
+        restored_path = Path(self.temp.name) / "private-restored.sqlite3"
+        self.store.backup_to(backup)
+        self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o600)
+        restored = EvidenceStore.restore_from(backup, restored_path)
+        self.assertEqual(stat.S_IMODE(restored_path.stat().st_mode), 0o600)
+        self.assertTrue(restored.verify_event_chain())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory permissions required")
+    def test_backup_rejects_group_or_world_accessible_directory(self):
+        backup = Path(self.temp.name) / "unsafe-backup.sqlite3"
+        root = Path(self.temp.name)
+        root.chmod(0o755)
+        try:
+            with self.assertRaisesRegex(StoreError, "owner-controlled"):
+                self.store.backup_to(backup)
+        finally:
+            root.chmod(0o700)
+        self.assertFalse(backup.exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file permissions required")
+    def test_restore_rejects_group_or_world_accessible_backup(self):
+        backup = Path(self.temp.name) / "broad-backup.sqlite3"
+        self.store.backup_to(backup)
+        backup.chmod(0o644)
+        destination = Path(self.temp.name) / "must-not-restore.sqlite3"
+        with self.assertRaisesRegex(StoreError, "owner-owned"):
+            EvidenceStore.restore_from(backup, destination)
+        self.assertFalse(destination.exists())
+
+    def test_backup_refuses_symlink_destination_without_touching_target(self):
+        target = Path(self.temp.name) / "existing-target.sqlite3"
+        target.write_text("preserve")
+        link = Path(self.temp.name) / "backup-link.sqlite3"
+        link.symlink_to(target)
+        with self.assertRaisesRegex(StoreError, "already exists"):
+            self.store.backup_to(link)
+        self.assertEqual(target.read_text(), "preserve")
 
     def test_backup_restore_preserves_state_and_audit_chain(self):
         self.store.create_unit("U1", "Foundations")
