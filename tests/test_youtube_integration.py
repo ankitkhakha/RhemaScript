@@ -1,9 +1,15 @@
+import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from rhemascript.core.approvals import ApprovalVerifier
+from rhemascript.core.approval_store import SQLiteApprovalConsumptionStore
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
@@ -150,11 +156,55 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "source_to_final_links": links,
             "gate_records": records,
         }
+        private_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(private_directory.cleanup)
+        os.chmod(private_directory.name, 0o700)
+        store = SQLiteApprovalConsumptionStore(
+            os.path.join(private_directory.name, "approvals.sqlite3")
+        )
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        issuer = "RhemaScript-Test-Approval-Issuer"
+        key_id = "test-ed25519-key-01"
+        request_id = "youtube-write-request-0001"
+        now = datetime.now(timezone.utc)
+        credentials = []
+        actions = [
+            ("FINAL_ACCEPTANCE", "director-actor-0001"),
+            ("PUBLISH", "publisher-actor-0001"),
+        ]
+        if not authorised:
+            actions = actions[:1]
+        for index, (action, actor_id) in enumerate(actions, start=1):
+            payload = {
+                "schema": "RhemaScript.ApprovalCredential.v1",
+                "approval_id": f"approval-test-{index:04d}",
+                "issuer": issuer,
+                "actor_id": actor_id,
+                "action": action,
+                "project_id": "RS-TEST-001",
+                "project_version": "1.0",
+                "request_id": request_id,
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "nonce": f"nonce-test-{index:04d}",
+                "key_id": key_id,
+            }
+            payload["signature"] = private_key.sign(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode()
+            ).hex()
+            credentials.append(payload)
+        verifier = ApprovalVerifier(
+            issuer=issuer, verification_keys={key_id: public_key},
+            consume_many_once=store.consume_many_once,
+        )
         return {
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
-            "human_director_acceptance": True,
-            "publishing_authorisation": authorised,
+            "approval_verifier": verifier,
+            "approval_credentials": tuple(credentials),
+            "approval_request_id": request_id,
         }
 
     def test_config_rejects_upload_chunk_larger_than_32_mib(self):
@@ -347,7 +397,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "approval batch"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
