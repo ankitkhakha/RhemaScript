@@ -1,12 +1,13 @@
 """Durable registry for read-only readiness runs and exact byte evidence.
 
-This registry records assessments, not approvals or execution authority. SQLite is
-local persistence, not tamper-proof or independently anchored storage.
+SQLite is local persistence, not tamper-proof storage. HMAC checkpoints must be
+retained independently from this database and the key kept secret.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 import hashlib
+import hmac
 import json
 import sqlite3
 from pathlib import Path
@@ -82,8 +83,66 @@ class ReadinessRunRegistry:
             row = db.execute("SELECT payload_json FROM readiness_runs WHERE run_id=?", (run_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
+    def _snapshot_digest(self) -> tuple[int, str]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT run_id,payload_sha256,payload_json FROM readiness_runs ORDER BY run_id"
+            ).fetchall()
+        canonical_rows = [
+            {"run_id": run_id, "payload_sha256": digest, "payload_json": encoded}
+            for run_id, digest, encoded in rows
+        ]
+        encoded = json.dumps(canonical_rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return len(rows), hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
     def verify(self) -> bool:
         with self._connect() as db:
             rows = db.execute("SELECT payload_sha256,payload_json FROM readiness_runs").fetchall()
         return all(hashlib.sha256(encoded.encode("utf-8")).hexdigest() == digest
                    for digest, encoded in rows)
+
+    def checkpoint(self, key: bytes) -> dict[str, Any]:
+        """Create an HMAC checkpoint for independent retention outside the database."""
+        if not isinstance(key, bytes) or len(key) < 32:
+            raise ValueError("checkpoint key must contain at least 32 bytes")
+        if not self.verify():
+            raise ValueError("cannot checkpoint an invalid readiness registry")
+        count, snapshot = self._snapshot_digest()
+        body = {"schema": "rhemascript-readiness-checkpoint-v1",
+                "record_count": count, "registry_sha256": snapshot}
+        encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        signature = hmac.new(key, encoded, hashlib.sha256).hexdigest()
+        return {**body, "algorithm": "HMAC-SHA256", "signature": signature}
+
+    def verify_checkpoint(self, checkpoint: dict[str, Any], key: bytes) -> bool:
+        """Compare current registry contents with an independently retained checkpoint."""
+        if not isinstance(checkpoint, dict) or not isinstance(key, bytes) or len(key) < 32:
+            return False
+        if checkpoint.get("schema") != "rhemascript-readiness-checkpoint-v1":
+            return False
+        if checkpoint.get("algorithm") != "HMAC-SHA256":
+            return False
+        body = {name: checkpoint.get(name) for name in ("schema", "record_count", "registry_sha256")}
+        encoded = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        expected = hmac.new(key, encoded, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(str(checkpoint.get("signature", "")), expected):
+            return False
+        if not self.verify():
+            return False
+        count, snapshot = self._snapshot_digest()
+        return count == body["record_count"] and hmac.compare_digest(snapshot, str(body["registry_sha256"]))
+
+    def backup_to(self, destination: str | Path) -> Path:
+        """Create a consistent SQLite backup at a new destination; never overwrite."""
+        target = Path(destination).expanduser()
+        if target.exists() or target.is_symlink():
+            raise ValueError("backup destination must not already exist")
+        if not target.parent.is_dir():
+            raise ValueError("backup destination parent directory must exist")
+        with self._connect() as source:
+            backup = sqlite3.connect(target)
+            try:
+                source.backup(backup)
+            finally:
+                backup.close()
+        return target
