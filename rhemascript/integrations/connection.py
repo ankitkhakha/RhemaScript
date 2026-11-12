@@ -110,8 +110,17 @@ def run_connection_check(credential_file: str | Path,
             or stat.S_IMODE(parent_info.st_mode) & 0o077):
         raise YouTubeIntegrationError("audit parent directory must be owner-controlled with 0700 permissions")
     audit_target = Path(audit_file).expanduser()
-    if audit_target.exists() and audit_target.lstat().st_uid != os.getuid():
-        raise YouTubeIntegrationError("audit file must be owned by the current user")
+    try:
+        audit_info = audit_target.lstat()
+    except FileNotFoundError:
+        audit_info = None
+    except OSError:
+        raise YouTubeIntegrationError("audit file is inaccessible") from None
+    if audit_info is not None:
+        if stat.S_ISLNK(audit_info.st_mode):
+            raise YouTubeIntegrationError("audit file must not be a symbolic link")
+        if not stat.S_ISREG(audit_info.st_mode) or audit_info.st_uid != os.getuid():
+            raise YouTubeIntegrationError("audit file must be an owner-owned regular file")
     sink = JsonlAuditSink(audit_file)
     try:
         config = YouTubeConfig.from_private_file(credential_file)
