@@ -52,6 +52,7 @@ def _authorise_project_publish(
     approval_verifier,
     approval_credentials,
     approval_request_id: str,
+    defer_approval_consumption: bool = False,
 ):
     """Validate project evidence and atomically consume two signed approvals."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
@@ -107,9 +108,14 @@ def _authorise_project_publish(
                 "request_id": approval_request_id,
             },
         )
-        verified = approval_verifier.verify_many_and_consume(
-            approval_credentials, expectations, require_distinct_actors=True,
-        )
+        if defer_approval_consumption:
+            if not isinstance(approval_credentials, (tuple, list)) or len(approval_credentials) != 2:
+                raise ApprovalError("exactly two signed approval credentials are required")
+            verified = ()
+        else:
+            verified = approval_verifier.verify_many_and_consume(
+                approval_credentials, expectations, require_distinct_actors=True,
+            )
         return validated.project_id, validated.project_version, verified
     except (EvidencePackError, ApprovalError, GateError, ValueError, TypeError) as exc:
         raise YouTubeIntegrationError(
@@ -196,7 +202,8 @@ class YouTubeClient:
         self._gateway_project_id = project_id
         self._gateway_source_version = source_version
         self._gateway_authority: dict[str, bool] = {}
-        self._gateway_audit_context: dict[str, Any] = {}
+        self._gateway_approval_credentials: tuple[dict[str, Any], ...] = ()
+        self._gateway_approval_request_id: str | None = None
         self._access_token: str | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
@@ -229,10 +236,12 @@ class YouTubeClient:
                     raise YouTubeIntegrationError("request has no approved IF-18 operation")
                 status, raw, response_headers = self._gateway.request(
                     YOUTUBE_INTERFACE_ID, operation, url, method=method,
-                    headers=headers or {}, body=body, request_id=str(uuid.uuid4()),
+                    headers=headers or {}, body=body,
+                    request_id=self._gateway_approval_request_id or str(uuid.uuid4()),
                     project_id=self._gateway_project_id, source_version=self._gateway_source_version,
                     authority=self._gateway_authority,
-                    audit_context=self._gateway_audit_context,
+                    approval_credentials=self._gateway_approval_credentials,
+                    approval_request_id=self._gateway_approval_request_id,
                 )
             elif self._transport:
                 status, raw, response_headers = self._transport(req, self.config.timeout_seconds)
@@ -373,15 +382,15 @@ class YouTubeClient:
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
+            defer_approval_consumption=self._gateway is not None,
         )
+        if self._gateway is not None and getattr(self._gateway, "approval_verifier", None) is not approval_verifier:
+            raise YouTubeIntegrationError("IF-18 gateway must use the same trusted approval verifier")
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": True}
-        self._gateway_audit_context = {
-            "approval_ids": [item.approval_id for item in approvals],
-            "approval_actor_ids": [item.actor_id for item in approvals],
-            "approval_issuer": approvals[0].issuer,
-        }
+        self._gateway_authority = {}
+        self._gateway_approval_credentials = tuple(approval_credentials)
+        self._gateway_approval_request_id = approval_request_id
         path = Path(file_path)
         if not path.is_file() or path.stat().st_size == 0:
             raise YouTubeIntegrationError("video file is missing or empty")
@@ -487,15 +496,15 @@ class YouTubeClient:
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
+            defer_approval_consumption=self._gateway is not None,
         )
+        if self._gateway is not None and getattr(self._gateway, "approval_verifier", None) is not approval_verifier:
+            raise YouTubeIntegrationError("IF-18 gateway must use the same trusted approval verifier")
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": True}
-        self._gateway_audit_context = {
-            "approval_ids": [item.approval_id for item in approvals],
-            "approval_actor_ids": [item.actor_id for item in approvals],
-            "approval_issuer": approvals[0].issuer,
-        }
+        self._gateway_authority = {}
+        self._gateway_approval_credentials = tuple(approval_credentials)
+        self._gateway_approval_request_id = approval_request_id
         path = Path(image_path)
         if not path.is_file():
             raise YouTubeIntegrationError("thumbnail file does not exist")
