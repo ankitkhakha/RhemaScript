@@ -13,17 +13,22 @@ class EvidencePackIntegrityError(EvidenceIntegrityError):
 
 
 def verify_pack_artifacts(pack: ValidatedEvidencePack, evidence_root: str | Path) -> tuple[EvidenceVersion, ...]:
-    """Require byte-level proof for every artifact the pack labels verified/approved.
+    """Verify approved artifacts and every artifact used by a capability record.
 
-    Artifact records must carry local_path and sha256. These are checked against
-    the file bytes; caller-provided status strings are never treated as proof.
+    Referenced draft artifacts are also hashed: byte verification establishes
+    identity, not approval. Artifact records must carry local_path and sha256;
+    caller-provided status strings are never treated as proof.
     """
     if not isinstance(pack, ValidatedEvidencePack):
         raise EvidencePackIntegrityError("a validated evidence pack is required")
     versions = []
+    referenced_ids = {artifact_id for record in pack.evidence_records
+                      for artifact_id in record.get("artifact_refs", [])}
     for artifact in pack.artifacts:
         status = str(artifact.get("status", "")).upper()
-        if status not in {"VERIFIED", "APPROVED", "ACCEPTED"}:
+        # Capability-referenced artifacts must be byte-verified regardless of
+        # their workflow status; status labels alone never establish integrity.
+        if status not in {"VERIFIED", "APPROVED", "ACCEPTED"} and artifact["artifact_id"] not in referenced_ids:
             continue
         local_path = artifact.get("local_path")
         expected_digest = artifact.get("sha256")
