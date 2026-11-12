@@ -67,3 +67,35 @@ class RAEIReadOnlyAdapter:
             "generation_authority": "not_granted_by_adapter",
             "publishing_authority": "not_granted_by_adapter",
         }
+
+    def invoke(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Dispatch only the three explicitly approved read-only service operations.
+
+        This is a local service boundary, not an IF-01..IF-18 registration.
+        """
+        if not isinstance(operation, str) or not operation.strip():
+            raise RAEIAdapterError("operation must be a non-empty string")
+        if not isinstance(payload, dict):
+            raise RAEIAdapterError("operation payload must be an object")
+        if operation == "VALIDATE_PROJECT_SNAPSHOT":
+            if set(payload) != {"snapshot"}:
+                raise RAEIAdapterError("validation payload must contain only snapshot")
+            result = self.validate_project_snapshot(payload["snapshot"])
+        elif operation == "COMPARE_PROJECT_SNAPSHOTS":
+            if set(payload) != {"before", "after"}:
+                raise RAEIAdapterError("comparison payload must contain before and after")
+            result = self.compare_project_snapshots(payload["before"], payload["after"])
+        elif operation == "READ_LEARNING_UNIT":
+            if set(payload) != {"unit_id"}:
+                raise RAEIAdapterError("learning read payload must contain only unit_id")
+            result = self.read_learning_unit(payload["unit_id"])
+        else:
+            raise RAEIAdapterError("operation is not registered on the read-only RAEI adapter")
+        return {
+            "status": "COMPLETED_READ_ONLY",
+            "operation": operation,
+            "result": result,
+            "write_performed": False,
+            "generation_authority": "not_granted_by_adapter",
+            "publishing_authority": "not_granted_by_adapter",
+        }
