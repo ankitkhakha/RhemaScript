@@ -2,10 +2,9 @@ name: RhemaScript CI
 
 on:
   push:
-    branches: ["main", "ci/**", "feat/**", "work/**"]
+    branches: ["main", "ci/**", "feat/**"]
   pull_request:
     branches: ["main"]
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +26,8 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Install project and cryptographic dependencies
+        run: python -m pip install -e .
       - name: Run full local CI suite
         run: python ci/validate_if18_read_only.py --report-file if18-validation-report.json
 
