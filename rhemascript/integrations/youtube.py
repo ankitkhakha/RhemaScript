@@ -139,8 +139,9 @@ class YouTubeConfig:
             raise YouTubeIntegrationError("OAuth configuration is incomplete")
         if not 1 <= self.timeout_seconds <= 120:
             raise YouTubeIntegrationError("timeout_seconds must be between 1 and 120")
-        if self.chunk_size < 256 * 1024 or self.chunk_size % (256 * 1024):
-            raise YouTubeIntegrationError("chunk_size must be a multiple of 256 KiB")
+        if (self.chunk_size < 256 * 1024 or self.chunk_size % (256 * 1024)
+                or self.chunk_size > 32 * 1024 * 1024):
+            raise YouTubeIntegrationError("chunk_size must be a multiple of 256 KiB between 256 KiB and 32 MiB")
 
 
 def youtube_provider_binding() -> ProviderBinding:
