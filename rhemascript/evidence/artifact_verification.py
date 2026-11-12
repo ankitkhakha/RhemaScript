@@ -5,7 +5,7 @@ shared-secret authenticity anchors, not public-key signatures or immutable stora
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 import hashlib
 import hmac
 import json
@@ -19,8 +19,14 @@ class EvidenceIntegrityError(ValueError):
     pass
 
 
+_VERIFIED_EVIDENCE_TOKEN = object()
+_VERIFIED_BINDING_TOKEN = object()
+
+
 def _canonical(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8")
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,7 @@ class EvidenceVersion:
     version: str
     sha256: str
     size_bytes: int
+    _verification_token: object = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -39,75 +46,113 @@ class AssessmentBinding:
     evidence_version: str
     evidence_sha256: str
     score: int
+    _verification_token: object = field(default=None, repr=False, compare=False)
 
 
 def verify_artifact(root: str | os.PathLike[str], relative_path: str, *,
                     evidence_id: str, version: str) -> EvidenceVersion:
-    """Hash one regular file strictly beneath root; reject traversal and symlinks."""
+    """Hash one regular file beneath root without following any path-component symlink."""
     if not all(isinstance(x, str) and x.strip() for x in (relative_path, evidence_id, version)):
         raise EvidenceIntegrityError("path, evidence_id and version must be non-empty strings")
     rel = PurePosixPath(relative_path)
-    if rel.is_absolute() or any(part in ("", ".", "..") for part in rel.parts):
-        raise EvidenceIntegrityError("artifact path must be a clean relative path beneath evidence root")
+    if rel.is_absolute() or not rel.parts or any(part in ("", ".", "..") for part in rel.parts):
+        raise EvidenceIntegrityError("artifact path must name a file beneath the evidence root")
+
     root_path = Path(root).expanduser()
     try:
         root_info = root_path.lstat()
+        if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+            raise EvidenceIntegrityError("evidence root must be a real directory, not a symlink")
+        root_real = root_path.resolve(strict=True)
+    except EvidenceIntegrityError:
+        raise
     except OSError as exc:
         raise EvidenceIntegrityError("evidence root is unavailable") from exc
-    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
-        raise EvidenceIntegrityError("evidence root must be a real directory, not a symlink")
-    root_real = root_path.resolve(strict=True)
-    candidate = root_real
+
+    # Descriptor-relative traversal closes the lstat/open race on parent components.
+    # On platforms without these primitives, fail closed instead of reverting to
+    # path-based checks that can be raced by replacing a directory with a symlink.
+    if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+        raise EvidenceIntegrityError("safe descriptor-relative verification is unavailable on this platform")
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+    file_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    opened_directories: list[int] = []
+    file_fd: int | None = None
     try:
-        for part in rel.parts:
-            candidate = candidate / part
-            info = candidate.lstat()
-            if stat.S_ISLNK(info.st_mode):
-                raise EvidenceIntegrityError("symlink components are not permitted")
-        if not stat.S_ISREG(info.st_mode):
+        root_fd = os.open(root_real, directory_flags)
+        opened_directories.append(root_fd)
+        opened_root = os.fstat(root_fd)
+        if (opened_root.st_dev, opened_root.st_ino) != (root_info.st_dev, root_info.st_ino):
+            raise EvidenceIntegrityError("evidence root changed during verification")
+
+        parent_fd = root_fd
+        for component in rel.parts[:-1]:
+            child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            opened_directories.append(child_fd)
+            parent_info = os.fstat(child_fd)
+            if not stat.S_ISDIR(parent_info.st_mode):
+                raise EvidenceIntegrityError("artifact parent must be a real directory")
+            parent_fd = child_fd
+
+        file_fd = os.open(rel.parts[-1], file_flags, dir_fd=parent_fd)
+        opened = os.fstat(file_fd)
+        if not stat.S_ISREG(opened.st_mode):
             raise EvidenceIntegrityError("artifact must be a regular file")
-        if not candidate.resolve(strict=True).is_relative_to(root_real):
-            raise EvidenceIntegrityError("artifact resolves outside evidence root")
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(candidate, flags)
-        try:
-            opened = os.fstat(fd)
-            if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
-                raise EvidenceIntegrityError("artifact changed during verification")
-            digest = hashlib.sha256()
-            size = 0
-            while True:
-                chunk = os.read(fd, 1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                size += len(chunk)
-        finally:
-            os.close(fd)
+
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+            size += len(chunk)
     except EvidenceIntegrityError:
         raise
     except OSError as exc:
         raise EvidenceIntegrityError("artifact is missing or could not be safely read") from exc
-    return EvidenceVersion(evidence_id, rel.as_posix(), version, digest.hexdigest(), size)
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        for descriptor in reversed(opened_directories):
+            os.close(descriptor)
+
+    return EvidenceVersion(
+        evidence_id, rel.as_posix(), version, digest.hexdigest(), size,
+        _VERIFIED_EVIDENCE_TOKEN,
+    )
 
 
 def bind_assessment(assessment_id: str, evidence: EvidenceVersion, score: int) -> AssessmentBinding:
     if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
         raise EvidenceIntegrityError("score must be an integer from 0 through 4")
-    if not isinstance(evidence, EvidenceVersion):
-        raise EvidenceIntegrityError("assessment requires a verified EvidenceVersion")
+    if (not isinstance(evidence, EvidenceVersion)
+            or evidence._verification_token is not _VERIFIED_EVIDENCE_TOKEN):
+        raise EvidenceIntegrityError("assessment requires evidence returned by verify_artifact")
+    if (not isinstance(evidence.sha256, str)
+            or len(evidence.sha256) != 64
+            or any(char not in "0123456789abcdef" for char in evidence.sha256)):
+        raise EvidenceIntegrityError("verified evidence has an invalid SHA-256 digest")
     if not isinstance(assessment_id, str) or not assessment_id.strip():
         raise EvidenceIntegrityError("assessment_id must be non-empty")
-    return AssessmentBinding(assessment_id, evidence.evidence_id, evidence.version, evidence.sha256, score)
+    return AssessmentBinding(
+        assessment_id, evidence.evidence_id, evidence.version, evidence.sha256, score,
+        _VERIFIED_BINDING_TOKEN,
+    )
 
 
 def verify_assessment_binding(binding: AssessmentBinding, current: EvidenceVersion) -> bool:
-    """Return true only for exact evidence identity, version and content digest."""
-    return (isinstance(binding, AssessmentBinding)
-            and isinstance(current, EvidenceVersion)
-            and binding.evidence_id == current.evidence_id
-            and binding.evidence_version == current.version
-            and hmac.compare_digest(binding.evidence_sha256, current.sha256))
+    """Return true only for an authentic binding and exact verified evidence identity."""
+    return (
+        isinstance(binding, AssessmentBinding)
+        and binding._verification_token is _VERIFIED_BINDING_TOKEN
+        and isinstance(current, EvidenceVersion)
+        and current._verification_token is _VERIFIED_EVIDENCE_TOKEN
+        and binding.evidence_id == current.evidence_id
+        and binding.evidence_version == current.version
+        and hmac.compare_digest(binding.evidence_sha256, current.sha256)
+    )
 
 
 class IntegrityLedger:
@@ -117,27 +162,37 @@ class IntegrityLedger:
 
     @property
     def events(self) -> tuple[dict[str, Any], ...]:
-        return tuple(dict(event) for event in self._events)
+        # Return detached JSON snapshots, including nested payload values.
+        return tuple(json.loads(_canonical(event).decode("utf-8")) for event in self._events)
 
     def append(self, event: dict[str, Any]) -> str:
         if not isinstance(event, dict):
             raise EvidenceIntegrityError("ledger event must be an object")
+        try:
+            payload = json.loads(_canonical(event).decode("utf-8"))
+        except (TypeError, ValueError) as exc:
+            raise EvidenceIntegrityError("ledger event must contain canonical JSON values") from exc
         previous = self._events[-1]["event_hash"] if self._events else "0" * 64
-        body = {"sequence": len(self._events) + 1, "previous_hash": previous, "payload": event}
+        body = {"sequence": len(self._events) + 1, "previous_hash": previous, "payload": payload}
         digest = hashlib.sha256(_canonical(body)).hexdigest()
         self._events.append({**body, "event_hash": digest})
         return digest
 
     def verify(self) -> bool:
         previous = "0" * 64
-        for index, event in enumerate(self._events, 1):
-            if event.get("sequence") != index or event.get("previous_hash") != previous:
-                return False
-            body = {key: event[key] for key in ("sequence", "previous_hash", "payload")}
-            digest = hashlib.sha256(_canonical(body)).hexdigest()
-            if not hmac.compare_digest(str(event.get("event_hash", "")), digest):
-                return False
-            previous = digest
+        try:
+            for index, event in enumerate(self._events, 1):
+                if not isinstance(event, dict):
+                    return False
+                if event.get("sequence") != index or event.get("previous_hash") != previous:
+                    return False
+                body = {key: event[key] for key in ("sequence", "previous_hash", "payload")}
+                digest = hashlib.sha256(_canonical(body)).hexdigest()
+                if not hmac.compare_digest(str(event.get("event_hash", "")), digest):
+                    return False
+                previous = digest
+        except (KeyError, TypeError, ValueError):
+            return False
         return True
 
     def checkpoint(self, key: bytes) -> dict[str, Any]:
