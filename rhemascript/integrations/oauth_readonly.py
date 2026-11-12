@@ -44,6 +44,32 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _load_desktop_client_config(path: str | Path) -> tuple[str, str]:
+    """Load a matching Google Desktop OAuth client pair from local JSON."""
+    target = Path(path).expanduser()
+    try:
+        info = target.lstat()
+        if target.is_symlink() or not target.is_file() or info.st_size > 16_384:
+            raise OAuthBootstrapError("OAuth client config must be a regular, non-symlink file under 16 KB")
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except OAuthBootstrapError:
+        raise
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise OAuthBootstrapError("OAuth client config could not be read as valid JSON") from None
+    if not isinstance(payload, dict) or set(payload) != {"installed"}:
+        raise OAuthBootstrapError("OAuth client config must be a Google Desktop app installed JSON file")
+    installed = payload.get("installed")
+    if not isinstance(installed, dict):
+        raise OAuthBootstrapError("OAuth Desktop app config is malformed")
+    if installed.get("auth_uri") != AUTHORIZATION_URL or installed.get("token_uri") != TOKEN_URL:
+        raise OAuthBootstrapError("OAuth Desktop app config contains unexpected Google endpoints")
+    client_id = installed.get("client_id")
+    client_secret = installed.get("client_secret")
+    if (not isinstance(client_id, str) or not client_id.strip()
+            or not isinstance(client_secret, str) or not client_secret.strip()):
+        raise OAuthBootstrapError("OAuth Desktop app config is missing its client ID or client secret")
+    return client_id.strip(), client_secret.strip()
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -339,6 +365,7 @@ def run_bootstrap(*, client_id: str, client_secret: str,
         write_private_credentials(
             credential_path,
             client_id=client_id.strip(),
+            client_secret=client_secret.strip(),
             refresh_token=refresh_token,
         )
     except PrivateCredentialError as exc:
@@ -352,16 +379,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Authorize RhemaScript for YouTube channel reads only"
     )
-    parser.add_argument("--client-id", help="Desktop OAuth client ID")
+    parser.add_argument("--client-config",
+                        help="path to downloaded Google Desktop OAuth client JSON (keep it outside the repository)")
     parser.add_argument("--credential-path", default=DEFAULT_CREDENTIAL_PATH,
                         help="new private credential file path (must not already exist)")
     parser.add_argument("--timeout", type=int, default=300,
                         help="seconds to wait for the browser callback (default: 300)")
     args = parser.parse_args(argv)
     try:
-        from getpass import getpass
-        client_id = (args.client_id or input("Google Desktop OAuth client ID: ")).strip()
-        client_secret = getpass("Google Desktop OAuth client secret (input hidden): ")
+        config_path = args.client_config or input(
+            "Path to downloaded Google Desktop OAuth client JSON: "
+        ).strip()
+        client_id, client_secret = _load_desktop_client_config(config_path)
         run_bootstrap(
             client_id=client_id,
             client_secret=client_secret,
