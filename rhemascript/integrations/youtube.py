@@ -448,7 +448,7 @@ class YouTubeClient:
             raise YouTubeIntegrationError("upload response contained an invalid video ID")
         return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
                 "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
-                "upload_verified": True}
+                "upload_completed": True, "verification_required": True}
 
     def set_thumbnail(self, video_id: str, image_path: str, *,
                       evidence_pack: dict[str, Any],
