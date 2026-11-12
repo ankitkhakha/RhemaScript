@@ -248,10 +248,18 @@ class ExternalIntegrationGateway:
             with self._approval_lock:
                 cached = self._authorized_publish_requests.get(request_id)
                 if cached is not None:
-                    cached_project, cached_version, audit_context = cached
+                    cached_project, cached_version, audit_context, flow_type = cached
                     if cached_project != project_id or cached_version != source_version:
                         raise ExternalIntegrationError("approval request cannot be reused across project versions")
+                    if flow_type != "VIDEO_UPLOAD" or operation.upper() != "UPLOAD_CHUNK":
+                        raise ExternalIntegrationError(
+                            "a publishing approval request may only continue its original video upload"
+                        )
                 else:
+                    if operation.upper() not in {"UPLOAD_SESSION", "THUMBNAIL_WRITE"}:
+                        raise ExternalIntegrationError(
+                            "a publishing approval request must begin with an upload session or thumbnail write"
+                        )
                     if (approval_request_id != request_id
                             or not isinstance(approval_credentials, (tuple, list))
                             or len(approval_credentials) != 2):
@@ -279,8 +287,9 @@ class ExternalIntegrationGateway:
                         "approval_actor_ids": [item.actor_id for item in approvals],
                         "approval_issuer": approvals[0].issuer,
                     }
+                    flow_type = "VIDEO_UPLOAD" if operation.upper() == "UPLOAD_SESSION" else "THUMBNAIL"
                     self._authorized_publish_requests[request_id] = (
-                        project_id, source_version, audit_context,
+                        project_id, source_version, audit_context, flow_type,
                     )
         elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
