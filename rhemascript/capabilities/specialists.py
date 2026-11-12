@@ -35,6 +35,11 @@ def _score(value: Any, name: str) -> float:
         raise SpecialistInputError(f"{name} must be a finite number from 0 to 100")
     return float(value)
 
+def _duration(value: Any, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int,float)) or not math.isfinite(value) or value <= 0:
+        raise SpecialistInputError(f"{name} must be a finite positive number of seconds")
+    return float(value)
+
 def _cap01(e):
     sources=_seq(e,"sources")
     ids=[s.get("source_id") for s in sources if isinstance(s,dict)]
@@ -79,6 +84,10 @@ def _cap04(e):
     if missing or extra: raise SpecialistInputError(f"dimension_scores keys mismatch; missing={missing}, extra={extra}")
     total=sum(_score(scores[k],k)*w for k,w in weights.items())/100
     gates=_obj(e,"eligibility_gates")
+    if not gates:
+        raise SpecialistInputError("eligibility_gates must contain explicit gate results; missing gates cannot be treated as passed")
+    if any(not isinstance(key,str) or not key.strip() for key in gates):
+        raise SpecialistInputError("eligibility_gates keys must be non-empty strings")
     failed=sorted(k for k,v in gates.items() if v is not True)
     return {"weighted_score":round(total,2),"weights":weights,"failed_eligibility_gates":failed,
             "recommendation":"INELIGIBLE" if failed else ("PRIORITISE" if total>=75 else "CONSIDER" if total>=55 else "DEFER"),
@@ -94,7 +103,7 @@ def _cap05(e):
         if not isinstance(segment,dict) or not segment.get("segment_id") or not segment.get("text"):
             raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
         start=segment.get("start_seconds"); end=segment.get("end_seconds")
-        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) for x in (start,end)) or start<0 or end<=start:
             raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
         segment_ids.append(segment["segment_id"])
     duplicate_segments=sorted({x for x in segment_ids if segment_ids.count(x)>1})
@@ -218,7 +227,7 @@ def _cap07(e):
 
 def _cap08(e):
     shots=_seq(e,"shot_plan")
-    budget=_score(e.get("runtime_budget_seconds"),"runtime_budget_seconds")
+    budget=_duration(e.get("runtime_budget_seconds"),"runtime_budget_seconds")
     assets=_seq(e,"asset_inventory")
     narration=_seq(e,"approved_narration_segments")
     audio_plan=_obj(e,"audio_caption_plan")
@@ -228,16 +237,16 @@ def _cap08(e):
         if not isinstance(segment,dict) or not segment.get("segment_id") or not isinstance(segment.get("text"),str):
             raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
         start=segment.get("start_seconds"); end=segment.get("end_seconds")
-        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) for x in (start,end)) or start<0 or end<=start:
             raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
         narration_by_id[segment["segment_id"]]=segment
     durations=[]; shot_findings=[]; required_assets=set()
     asset_ids={a.get("asset_id") for a in assets if isinstance(a,dict) and a.get("asset_id")}
     max_clip=generation.get("max_clip_seconds")
     min_clip=generation.get("min_clip_seconds",0)
-    if isinstance(max_clip,bool) or not isinstance(max_clip,(int,float)) or max_clip<=0:
+    if isinstance(max_clip,bool) or not isinstance(max_clip,(int,float)) or not math.isfinite(max_clip) or max_clip<=0:
         raise SpecialistInputError("generation_constraints.max_clip_seconds must be positive")
-    if isinstance(min_clip,bool) or not isinstance(min_clip,(int,float)) or min_clip<0 or min_clip>max_clip:
+    if isinstance(min_clip,bool) or not isinstance(min_clip,(int,float)) or not math.isfinite(min_clip) or min_clip<0 or min_clip>max_clip:
         raise SpecialistInputError("generation_constraints.min_clip_seconds must be non-negative and <= max_clip_seconds")
     target_ratio=generation.get("target_aspect_ratio")
     if target_ratio not in ("9:16","16:9","1:1"):
@@ -248,7 +257,7 @@ def _cap08(e):
         if not shot.get("shot_id"): raise SpecialistInputError(f"shot_plan[{i}] requires shot_id")
         shot_ids.append(shot["shot_id"])
         duration=shot.get("duration_seconds")
-        if isinstance(duration,bool) or not isinstance(duration,(int,float)) or duration<=0:
+        if isinstance(duration,bool) or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<=0:
             raise SpecialistInputError(f"shot_plan[{i}].duration_seconds must be positive")
         durations.append(float(duration))
         flags=[]
