@@ -52,7 +52,7 @@ def test_changed_bytes_fail_catalog_digest_check(tmp_path):
     resolver = LocalSourceResolver(str(tmp_path), {
         reference: _entry(reference, "source.txt", b"original")
     })
-    with pytest.raises(LocalSourceResolutionError):
+    with unittest.TestCase().assertRaises(LocalSourceResolutionError):
         resolver.resolve(reference)
 
 
@@ -61,7 +61,7 @@ def test_path_traversal_is_rejected(tmp_path):
     resolver = LocalSourceResolver(str(tmp_path), {
         reference: _entry(reference, "../outside.txt", b"x")
     })
-    with pytest.raises(LocalSourceResolutionError):
+    with unittest.TestCase().assertRaises(LocalSourceResolutionError):
         resolver.resolve(reference)
 
 
@@ -74,11 +74,11 @@ def test_symlink_is_rejected(tmp_path):
     resolver = LocalSourceResolver(str(tmp_path), {
         reference: _entry(reference, "source-link.txt", b"source")
     })
-    with pytest.raises(LocalSourceResolutionError):
+    with unittest.TestCase().assertRaises(LocalSourceResolutionError):
         resolver.resolve(reference)
 
 
 def test_catalog_key_must_match_entry_reference(tmp_path):
     entry = _entry("local-source:actual", "source.txt", b"x")
-    with pytest.raises(LocalSourceResolutionError):
+    with unittest.TestCase().assertRaises(LocalSourceResolutionError):
         LocalSourceResolver(str(tmp_path), {"local-source:spoofed": entry})
