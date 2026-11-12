@@ -291,7 +291,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "approval_ids": ["approval-1", "approval-2"],
                 "approval_actor_ids": ["actor-1", "actor-2"],
                 "approval_issuer": "trusted-issuer",
-            }, "VIDEO_UPLOAD", 0.0,
+            }, "VIDEO_UPLOAD", -1_000_000_000_000.0,
         )
         with self.assertRaisesRegex(ExternalIntegrationError, "must begin with an upload session"):
             gateway.request(
