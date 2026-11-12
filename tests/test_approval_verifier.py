@@ -13,18 +13,24 @@ class ApprovalVerifierTests(unittest.TestCase):
         self.key = b"test-only-signing-key-material-32-bytes-minimum"
         self.used = set()
         self.revoked = set()
+        self.consume_calls = []
 
-        def consume_once(approval_id, nonce, expires_at):
-            identity = (approval_id, nonce)
-            if identity in self.used or identity in self.revoked or expires_at <= self.now:
+        def consume_many_once(entries):
+            self.consume_calls.append(entries)
+            identities = [(approval_id, nonce) for approval_id, nonce, _ in entries]
+            if (len(set(identities)) != len(identities)
+                    or any(identity in self.used or identity in self.revoked
+                           for identity in identities)
+                    or any(expiry <= self.now for _, _, expiry in entries)):
                 return False
-            self.used.add(identity)
+            # Atomic test adapter: validate every entry before recording any.
+            self.used.update(identities)
             return True
 
         self.verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
             verification_keys={"key-2026-01": self.key},
-            consume_once=consume_once,
+            consume_many_once=consume_many_once,
             clock=lambda: self.now,
         )
 
@@ -58,6 +64,10 @@ class ApprovalVerifierTests(unittest.TestCase):
             project_version="3.2", request_id="publish-request-0001",
         )
 
+    def expectations(self, action):
+        return {"action": action, "project_id": "RS-PWW-001",
+                "project_version": "3.2", "request_id": "publish-request-0001"}
+
     def test_accepts_valid_signed_scoped_approval_once(self):
         result = self.verify(self.credential())
         self.assertEqual(result.actor_id, "director-0001")
@@ -68,7 +78,7 @@ class ApprovalVerifierTests(unittest.TestCase):
     def test_rejects_replay(self):
         token = self.credential()
         self.verify(token)
-        with self.assertRaisesRegex(ApprovalError, "already been consumed"):
+        with self.assertRaisesRegex(ApprovalError, "replayed"):
             self.verify(token)
 
     def test_rejects_tampered_actor_even_if_signature_is_unchanged(self):
@@ -126,19 +136,83 @@ class ApprovalVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(ApprovalError, "invalid shape"):
             self.verify(token)
 
-    def test_requires_atomic_replay_and_revocation_callback(self):
-        with self.assertRaisesRegex(ValueError, "consume_once"):
+    def test_requires_atomic_batch_consumption_callback(self):
+        with self.assertRaisesRegex(ValueError, "consume_many_once"):
             ApprovalVerifier(
                 issuer="trusted-issuer", verification_keys={"key": self.key},
-                consume_once=None,
+                consume_many_once=None,
             )
 
     def test_rejects_weak_verification_keys(self):
         with self.assertRaisesRegex(ValueError, "32 secret bytes"):
             ApprovalVerifier(
                 issuer="trusted-issuer", verification_keys={"key": b"weak"},
-                consume_once=lambda *_: True,
+                consume_many_once=lambda *_: True,
             )
+
+    def test_consumes_final_acceptance_and_publish_as_one_atomic_batch(self):
+        final = self.credential(
+            approval_id="approval-final-0001", nonce="nonce-final-0001",
+            action="FINAL_ACCEPTANCE", actor_id="director-0001",
+        )
+        publish = self.credential(
+            approval_id="approval-publish-0001", nonce="nonce-publish-0001",
+            action="PUBLISH", actor_id="publisher-0001",
+        )
+        results = self.verifier.verify_many_and_consume(
+            (final, publish),
+            (self.expectations("FINAL_ACCEPTANCE"), self.expectations("PUBLISH")),
+        )
+        self.assertEqual([item.action for item in results],
+                         ["FINAL_ACCEPTANCE", "PUBLISH"])
+        self.assertNotEqual(results[0].actor_id, results[1].actor_id)
+        self.assertEqual(len(self.consume_calls), 1)
+        self.assertEqual(len(self.consume_calls[0]), 2)
+        self.assertEqual(len(self.used), 2)
+
+    def test_batch_rejects_one_invalid_credential_without_consuming_any(self):
+        final = self.credential(
+            approval_id="approval-final-0001", nonce="nonce-final-0001",
+            action="FINAL_ACCEPTANCE",
+        )
+        publish = self.credential(
+            approval_id="approval-publish-0001", nonce="nonce-publish-0001",
+            action="PUBLISH",
+        )
+        publish["actor_id"] = "tampered-publisher"
+        with self.assertRaisesRegex(ApprovalError, "signature is invalid"):
+            self.verifier.verify_many_and_consume(
+                (final, publish),
+                (self.expectations("FINAL_ACCEPTANCE"), self.expectations("PUBLISH")),
+            )
+        self.assertEqual(self.used, set())
+        self.assertEqual(self.consume_calls, [])
+
+    def test_batch_storage_refusal_consumes_neither_approval(self):
+        self.revoked.add(("approval-publish-0001", "nonce-publish-0001"))
+        final = self.credential(
+            approval_id="approval-final-0001", nonce="nonce-final-0001",
+            action="FINAL_ACCEPTANCE",
+        )
+        publish = self.credential(
+            approval_id="approval-publish-0001", nonce="nonce-publish-0001",
+            action="PUBLISH",
+        )
+        with self.assertRaisesRegex(ApprovalError, "batch is revoked"):
+            self.verifier.verify_many_and_consume(
+                (final, publish),
+                (self.expectations("FINAL_ACCEPTANCE"), self.expectations("PUBLISH")),
+            )
+        self.assertEqual(self.used, set())
+
+    def test_batch_rejects_duplicate_ids_or_nonces(self):
+        token = self.credential()
+        with self.assertRaisesRegex(ApprovalError, "duplicate IDs or nonces"):
+            self.verifier.verify_many_and_consume(
+                (token, token),
+                (self.expectations("PUBLISH"), self.expectations("PUBLISH")),
+            )
+        self.assertEqual(self.consume_calls, [])
 
 
 if __name__ == "__main__":
