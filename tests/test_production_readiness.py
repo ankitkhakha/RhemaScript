@@ -41,8 +41,9 @@ class ExternalGatewayTests(unittest.TestCase):
         transport=FakeTransport(); events=[]
         gateway=ExternalIntegrationGateway((binding(),),transport=transport,
             audit_sink=events.append,credential_resolver=lambda p:{"Authorization":"Bearer test-secret"},enabled=True)
-        first=gateway.invoke("IF-01",request())
-        second=gateway.invoke("IF-01",request())
+        authority={"external_action_authorisation":True}
+        first=gateway.invoke("IF-01",request(),authority=authority)
+        second=gateway.invoke("IF-01",request(),authority=authority)
         self.assertEqual(first,second); self.assertEqual(len(transport.calls),1)
         self.assertEqual(first["status"],"PROVIDER_CONFIRMED")
         self.assertEqual([e["phase"] for e in events],["REQUESTED","COMPLETED"])
