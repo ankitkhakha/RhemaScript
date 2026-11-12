@@ -143,7 +143,10 @@ def list_knowledge(registry: ReadinessRunRegistry) -> list[dict[str, Any]]:
             )
             _validate_payload(payload, evidence_stub)
         except (KeyError, TypeError, RAEIKnowledgeError) as exc:
-            raise RAEIKnowledgeError("stored knowledge payload failed schema validation") from exc
+            # Preserve the specific failed invariant for operators and regression tests.
+            raise RAEIKnowledgeError(
+                f"stored knowledge payload failed schema validation: {exc}"
+            ) from exc
         encoded = canonical_knowledge_bytes(payload)
         digest = hashlib.sha256(encoded).hexdigest()
         if (stored.get("run_id") != f"KNOWLEDGE:{payload.get('knowledge_id')}:{payload.get('version')}"
