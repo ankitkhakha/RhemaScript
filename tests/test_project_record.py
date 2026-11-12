@@ -1,7 +1,7 @@
 import unittest
 
 from raei.integrity import GATES, STAGES, IntegrityError
-from raei.project_record import create_project_record, revise_stage
+from raei.project_record import create_project_record, revise_stage, compare_project_records
 
 
 class ProjectRecordTests(unittest.TestCase):
