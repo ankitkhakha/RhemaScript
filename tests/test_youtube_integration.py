@@ -470,10 +470,9 @@ class YouTubeIntegrationTests(unittest.TestCase):
         calls = []
         client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
         context = self.publish_context()
-        context["evidence_pack"]["artifacts"] = [
-            item for item in context["evidence_pack"]["artifacts"]
-            if item["artifact_type"] != "EDITED_FILM"
-        ]
+        for item in context["evidence_pack"]["artifacts"]:
+            if item["artifact_type"] == "EDITED_FILM":
+                item["status"] = "DRAFT"
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
