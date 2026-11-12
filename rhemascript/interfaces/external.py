@@ -154,7 +154,7 @@ class ExternalIntegrationGateway:
         try:
             authorise_action("EXTERNAL_WRITE", authority or {})
         except AuthorityError as exc:
-            raise ExternalIntegrationError("generic POST invocation requires explicit external-write authority") from exc
+            raise ExternalIntegrationError("generic POST invocation lacks explicit authority: external-write authority is required") from exc
         event = {"interface_id": interface_id, "provider": binding.provider_name,
                  "request_id": request["request_id"], "operation": operation,
                  "idempotency_key": key, "phase": "REQUESTED"}
