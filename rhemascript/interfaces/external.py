@@ -373,6 +373,9 @@ class ExternalIntegrationGateway:
                     self._authorized_publish_requests.pop(request_id, None)
             return status, raw, response_headers
         except Exception as exc:
+            if authority_operation == "PUBLISH":
+                with self._approval_lock:
+                    self._authorized_publish_requests.pop(request_id, None)
             event.update({"phase": "FAILED", "error_type": type(exc).__name__})
             self.audit_sink(dict(event))
             if isinstance(exc, ExternalIntegrationError):
