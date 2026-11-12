@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-
-import pytest
+import unittest
 
 from rhemascript.evidence.local_source_resolver import (
     LocalSourceEntry,
@@ -43,7 +42,7 @@ def test_unknown_reference_is_rejected(tmp_path):
     resolver = LocalSourceResolver(str(tmp_path), {
         "local-source:known": _entry("local-source:known", "source.txt", b"x")
     })
-    with pytest.raises(LocalSourceResolutionError):
+    with unittest.TestCase().assertRaises(LocalSourceResolutionError):
         resolver.resolve(reference)
 
 
