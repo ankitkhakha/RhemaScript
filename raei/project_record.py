@@ -115,7 +115,7 @@ def compare_project_records(before, after):
     if not isinstance(before, dict) or not isinstance(after, dict):
         raise IntegrityError("both project snapshots must be objects")
     if (not isinstance(before.get("project_id"), str) or not before["project_id"].strip()
-        or before.get("project_id") != after.get("project_id"):
+        or before.get("project_id") != after.get("project_id")):
         raise IntegrityError("snapshots must share the same non-empty project_id")
     before_stages = before.get("stages", {})
     after_stages = after.get("stages", {})
