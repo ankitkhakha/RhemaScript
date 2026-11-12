@@ -136,6 +136,15 @@ class ExternalIntegrationGateway:
                 or any(ord(char) < 32 for char in path)):
             raise ExternalIntegrationError("operation path is not a safe relative provider path")
 
+        # This legacy entry point always transmits POST. Require write
+        # authority before cache access as well as before provider transport.
+        try:
+            authorise_action("EXTERNAL_WRITE", authority or {})
+        except AuthorityError as exc:
+            raise ExternalIntegrationError(
+                "generic POST invocation lacks explicit authority: external-write authority is required"
+            ) from exc
+
         parsed = urlparse(binding.endpoint)
         url = binding.endpoint.rstrip("/") + "/" + path
         if urlparse(url).hostname != parsed.hostname:
