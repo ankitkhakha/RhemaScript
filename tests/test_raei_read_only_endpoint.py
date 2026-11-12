@@ -36,6 +36,18 @@ class RAEIReadOnlyEndpointTests(unittest.TestCase):
         self.assertFalse(result["provider_call_performed"])
         self.assertEqual(result["result"]["result"]["unit"]["unit_id"], "UNIT-ENDPOINT")
 
+    def test_endpoint_read_cannot_reach_learning_write_methods(self):
+        from unittest.mock import patch
+
+        with patch.object(self.store, "assess", side_effect=AssertionError("write path reached")) as assess, \
+             patch.object(self.store, "create_unit", side_effect=AssertionError("write path reached")) as create:
+            result = self.endpoint.invoke(self.request())
+        self.assertEqual(result["status"], "COMPLETED_READ_ONLY")
+        self.assertFalse(result["write_performed"])
+        self.assertFalse(result["provider_call_performed"])
+        assess.assert_not_called()
+        create.assert_not_called()
+
     def test_unknown_or_write_operation_is_rejected(self):
         for operation in ("PUBLISH", "GENERATE", "RECORD_LEARNING_ASSESSMENT", "UNKNOWN"):
             with self.subTest(operation=operation):
