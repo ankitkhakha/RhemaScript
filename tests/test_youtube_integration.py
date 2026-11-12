@@ -24,6 +24,25 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertIn("youtubeanalytics.googleapis.com",
                       binding.operations["ANALYTICS_READ"]["hosts"])
 
+    def test_legacy_invoke_rejects_method_aware_mapping_cleanly(self):
+        calls = []
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),),
+            transport=lambda *args: calls.append(args),
+            audit_sink=lambda event: None,
+            enabled=True,
+        )
+        request = {
+            "request_id": "req-method-aware",
+            "project_id": "RS-TEST",
+            "operation": "OAUTH_TOKEN",
+            "source_version": "1",
+            "payload": {},
+        }
+        with self.assertRaisesRegex(Exception, "method-aware request contract"):
+            gateway.invoke("IF-18", request)
+        self.assertEqual(calls, [])
+
     def test_client_routes_oauth_and_channel_reads_through_gateway(self):
         class Gateway:
             def __init__(self):
