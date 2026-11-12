@@ -186,7 +186,7 @@ def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_autho
             if reference is None:
                 continue
             try:
-                version, receipt = local_source_resolver.resolve(reference)
+                version, receipt = local_source_resolver.resolve(\n                    reference, project_id=validated.project_id,\n                    project_version=validated.project_version,\n                )
             except LocalSourceResolutionError as exc:
                 raise EvidencePackError(
                     f"artifact {artifact['artifact_id']} local source reference could not be verified"
