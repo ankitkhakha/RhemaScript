@@ -18,11 +18,11 @@ class ApprovalVerifierTests(unittest.TestCase):
 
         def consume_many_once(entries):
             self.consume_calls.append(entries)
-            identities = [(approval_id, nonce) for approval_id, nonce, _ in entries]
+            identities = [(item.approval_id, item.nonce) for item in entries]
             if (len(set(identities)) != len(identities)
                     or any(identity in self.used or identity in self.revoked
                            for identity in identities)
-                    or any(expiry <= self.now for _, _, expiry in entries)):
+                    or any(item.expires_at <= self.now for item in entries)):
                 return False
             # Atomic test adapter: validate every entry before recording any.
             self.used.update(identities)
