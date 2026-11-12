@@ -235,5 +235,38 @@ class EvidenceStoreTests(unittest.TestCase):
         with self.assertRaisesRegex(StoreError, "event reference is missing"):
             self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
 
+    def test_idempotent_replay_rejects_event_for_different_action(self):
+        import sqlite3
+        self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE events SET action='assessment_recorded' WHERE sequence=1")
+        with self.assertRaisesRegex(StoreError, "does not match the request"):
+            self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
+
+    def test_restore_rejects_invalid_idempotency_request_hash(self):
+        import sqlite3
+        self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
+        backup = Path(self.temp.name) / "bad-idempotency.sqlite3"
+        self.store.backup_to(backup)
+        with sqlite3.connect(backup) as db:
+            db.execute("UPDATE idempotency SET request_hash='invalid' WHERE idempotency_key='create-u1'")
+        destination = Path(self.temp.name) / "restore-bad-idempotency.sqlite3"
+        with self.assertRaisesRegex(StoreError, "request hash"):
+            EvidenceStore.restore_from(backup, destination)
+        self.assertFalse(destination.exists())
+
+    def test_restore_rejects_missing_idempotency_event_reference(self):
+        import sqlite3
+        self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
+        backup = Path(self.temp.name) / "orphan-idempotency.sqlite3"
+        self.store.backup_to(backup)
+        with sqlite3.connect(backup) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute("UPDATE idempotency SET event_sequence=999 WHERE idempotency_key='create-u1'")
+        destination = Path(self.temp.name) / "restore-orphan-idempotency.sqlite3"
+        with self.assertRaisesRegex(StoreError, "missing idempotency event"):
+            EvidenceStore.restore_from(backup, destination)
+        self.assertFalse(destination.exists())
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
