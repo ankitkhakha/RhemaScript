@@ -113,9 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     # Keep raw test output out of the certification report and normal console
     # result; emit only a bounded failure hint for troubleshooting.
     if test_run.returncode:
-        tail = "\n".join(test_run.stdout.splitlines()[-12:])
-        print("TEST RUNNER FAILURE (last 12 lines):", file=sys.stderr)
-        print(tail, file=sys.stderr)
+        # Synthetic unit-test failures contain no operator credentials. Emit
+        # the complete bounded test report so CI failures can be diagnosed
+        # without guessing from a truncated tail.
+        failure_output = test_run.stdout.splitlines()[-160:]
+        print("TEST RUNNER FAILURE (last 160 lines):", file=sys.stderr)
+        print("\n".join(failure_output), file=sys.stderr)
     return 0 if passed else 1
 
 
