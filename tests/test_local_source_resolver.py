@@ -12,7 +12,7 @@ from rhemascript.evidence.local_source_resolver import (
 )
 
 
-def entry(reference: str, path: str, content: bytes) -> LocalSourceEntry:
+def entry(reference: str, path: str, content: bytes, project_id="PROJECT-1", project_version="1.0") -> LocalSourceEntry:
     return LocalSourceEntry(
         reference=reference,
         source_id="SRC-001",
@@ -69,6 +69,63 @@ class LocalSourceResolverTests(unittest.TestCase):
             resolver = LocalSourceResolver(root, {reference: entry(reference, "source-link.txt", b"source")})
             with self.assertRaises(LocalSourceResolutionError):
                 resolver.resolve(reference)
+
+
+    def test_receipt_is_bound_to_exact_catalog_snapshot_and_stale_after_replacement(self):
+        with tempfile.TemporaryDirectory() as root:
+            content = b"catalog revision one"
+            (Path(root) / "source.txt").write_bytes(content)
+            reference = "local-source:source"
+            original = entry(reference, "source.txt", content)
+            resolver_v1 = LocalSourceResolver(root, {reference: original})
+            _, receipt = resolver_v1.resolve(
+                reference, project_id="PROJECT-1", project_version="1.0"
+            )
+            self.assertTrue(resolver_v1.verify_receipt(
+                receipt, project_id="PROJECT-1", project_version="1.0"
+            ))
+            replacement = LocalSourceEntry(
+                reference=reference, source_id="SRC-001", relative_path="source.txt",
+                version="v2", expected_sha256=hashlib.sha256(content).hexdigest(),
+                media_type="text/plain", catalog_revision="catalog-v2",
+                project_id="PROJECT-1", project_version="1.0",
+            )
+            resolver_v2 = LocalSourceResolver(root, {reference: replacement})
+            self.assertNotEqual(resolver_v1.catalog_fingerprint, resolver_v2.catalog_fingerprint)
+            self.assertFalse(resolver_v2.verify_receipt(
+                receipt, project_id="PROJECT-1", project_version="1.0"
+            ))
+
+    def test_receipt_is_stale_when_source_bytes_change(self):
+        with tempfile.TemporaryDirectory() as root:
+            original = b"approved bytes"
+            (Path(root) / "source.txt").write_bytes(original)
+            reference = "local-source:source"
+            resolver = LocalSourceResolver(root, {reference: entry(reference, "source.txt", original)})
+            _, receipt = resolver.resolve(reference, project_id="PROJECT-1", project_version="1.0")
+            (Path(root) / "source.txt").write_bytes(b"replacement bytes")
+            self.assertFalse(resolver.verify_receipt(
+                receipt, project_id="PROJECT-1", project_version="1.0"
+            ))
+
+    def test_cross_project_and_cross_version_resolution_are_rejected(self):
+        with tempfile.TemporaryDirectory() as root:
+            content = b"project scoped bytes"
+            (Path(root) / "source.txt").write_bytes(content)
+            reference = "local-source:project-one"
+            resolver = LocalSourceResolver(root, {reference: entry(reference, "source.txt", content)})
+            with self.assertRaises(LocalSourceResolutionError):
+                resolver.resolve(reference, project_id="PROJECT-2", project_version="1.0")
+            with self.assertRaises(LocalSourceResolutionError):
+                resolver.resolve(reference, project_id="PROJECT-1", project_version="2.0")
+
+    def test_catalog_snapshot_is_not_mutable_through_resolver(self):
+        with tempfile.TemporaryDirectory() as root:
+            content = b"immutable catalog"
+            reference = "local-source:source"
+            resolver = LocalSourceResolver(root, {reference: entry(reference, "source.txt", content)})
+            with self.assertRaises(TypeError):
+                resolver._catalog[reference] = entry(reference, "other.txt", content)
 
     def test_catalog_key_must_match_entry_reference(self):
         with tempfile.TemporaryDirectory() as root:
