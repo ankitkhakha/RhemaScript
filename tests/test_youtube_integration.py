@@ -86,6 +86,24 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [("IF-18", "OAUTH_TOKEN"), ("IF-18", "CHANNEL_READ")],
         )
 
+
+    def test_read_only_connection_rejects_broader_or_unreported_oauth_scopes(self):
+        for scope in (
+            "https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.upload",
+            None,
+        ):
+            with self.subTest(scope=scope):
+                def transport(request, timeout):
+                    if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                        payload = {"access_token": "read-only-token"}
+                        if scope is not None:
+                            payload["scope"] = scope
+                        return 200, json.dumps(payload).encode(), {}
+                    return 200, b'{"items":[{"id":"UC-EXPECTED"}]}', {}
+                client = YouTubeClient(self.config(), transport=transport)
+                with self.assertRaisesRegex(YouTubeIntegrationError, "not restricted"):
+                    client.verify_connection(expected_channel_id="UC-EXPECTED")
+
     def test_read_only_connection_rejects_wrong_channel_identity(self):
         calls = []
         def transport(request, timeout):
