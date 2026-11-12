@@ -4,7 +4,7 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
-from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
+from rhemascript.interfaces.external import ExternalIntegrationError, ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
     youtube_provider_binding,
@@ -39,7 +39,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "source_version": "1",
             "payload": {},
         }
-        with self.assertRaisesRegex(Exception, "method-aware request contract"):
+        with self.assertRaisesRegex(ExternalIntegrationError, "method-aware request contract"):
             gateway.invoke("IF-18", request)
         self.assertEqual(calls, [])
 
