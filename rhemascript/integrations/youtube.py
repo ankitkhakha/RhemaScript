@@ -7,7 +7,7 @@ No external request is made at import time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import json
 import os
+import re
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
@@ -36,6 +37,20 @@ REQUIRED_SCOPES = (
 
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
+
+def _validate_publish_at(value: Any) -> None:
+    """Require a future RFC3339 timestamp with an explicit UTC offset."""
+    pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+    if not isinstance(value, str) or not re.fullmatch(pattern, value):
+        raise YouTubeIntegrationError("publish_at must be a future RFC3339 timestamp with an explicit timezone")
+    try:
+        scheduled = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise YouTubeIntegrationError("publish_at must be a valid future RFC3339 timestamp") from None
+    if scheduled.tzinfo is None or scheduled.utcoffset() is None:
+        raise YouTubeIntegrationError("publish_at must include an explicit timezone")
+    if scheduled <= datetime.now(timezone.utc):
+        raise YouTubeIntegrationError("publish_at must be in the future")
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -367,8 +382,10 @@ class YouTubeClient:
             raise YouTubeIntegrationError("description exceeds the supported limit")
         if privacy_status not in {"private", "unlisted", "public"}:
             raise YouTubeIntegrationError("invalid privacy_status")
-        if publish_at and (privacy_status != "private" or not isinstance(publish_at, str)):
-            raise YouTubeIntegrationError("scheduled publication requires private privacy and an RFC3339 publish_at")
+        if publish_at is not None:
+            if privacy_status != "private":
+                raise YouTubeIntegrationError("scheduled publication requires private privacy")
+            _validate_publish_at(publish_at)
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
         if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
