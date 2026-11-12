@@ -81,6 +81,30 @@ class ReadinessRunRegistryTests(unittest.TestCase):
             self.registry.backup_to(destination)
         self.assertEqual(destination.read_text(encoding="utf-8"), "do not overwrite")
 
+    def test_direct_database_payload_tampering_invalidates_checkpoint(self):
+        key = b"tamper-detection-key-material-32bytes!!"
+        self.registry.record("RUN-1", self.report, self.evidence)
+        checkpoint = self.registry.checkpoint(key)
+        with self.registry._connect() as db:
+            db.execute("UPDATE readiness_runs SET payload_json=? WHERE run_id=?",
+                       ('{"run_id":"RUN-1","report":{"overall_status":"ALTERED"}}', "RUN-1"))
+        self.assertFalse(self.registry.verify())
+        self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
+
+    def test_backup_refuses_symlink_destination(self):
+        destination = Path(self.tmp.name) / "destination-link.sqlite3"
+        destination.symlink_to(self.path)
+        with self.assertRaises(ValueError):
+            self.registry.backup_to(destination)
+
+    def test_backup_refuses_symlink_parent_directory(self):
+        real_parent = Path(self.tmp.name) / "real-parent"
+        real_parent.mkdir()
+        alias_parent = Path(self.tmp.name) / "alias-parent"
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            self.registry.backup_to(alias_parent / "backup.sqlite3")
+
     def test_rejects_symlink_database(self):
         alias = Path(self.tmp.name) / "alias.sqlite3"
         alias.symlink_to(self.path)
