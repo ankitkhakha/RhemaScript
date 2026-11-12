@@ -258,7 +258,7 @@ def _cap08(e):
         if not isinstance(segment,dict) or not segment.get("segment_id") or not isinstance(segment.get("text"),str):
             raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
         start=segment.get("start_seconds"); end=segment.get("end_seconds")
-        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) for x in (start,end)) or start<0 or end<=start:
             raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
         narration_by_id[segment["segment_id"]]=segment
     durations=[]; shot_findings=[]; required_assets=set()
@@ -305,9 +305,19 @@ def _cap08(e):
             units=shot.get("generation_unit_durations")
             if not isinstance(units,list) or not units: flags.append("GENERATION_UNITS_MISSING")
             else:
-                if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) or x<=0 or x>max_clip or (min_clip and x<min_clip) for x in units):
+                valid_units = all(
+                    not isinstance(x, bool)
+                    and isinstance(x, (int, float))
+                    and math.isfinite(x)
+                    and x > 0
+                    and x <= max_clip
+                    and (not min_clip or x >= min_clip)
+                    for x in units
+                )
+                if not valid_units:
                     flags.append("GENERATION_UNIT_DURATION_UNSUPPORTED")
-                if abs(sum(units)-duration)>0.05: flags.append("GENERATION_UNITS_DO_NOT_MATCH_SHOT_DURATION")
+                elif abs(sum(units) - duration) > 0.05:
+                    flags.append("GENERATION_UNITS_DO_NOT_MATCH_SHOT_DURATION")
         shot_findings.append({"shot_id":shot["shot_id"],"flags":flags})
     duplicate_shots=sorted({x for x in shot_ids if shot_ids.count(x)>1})
     total=sum(durations)
@@ -330,8 +340,19 @@ def _cap08(e):
         if not caption: continue
         if caption.get("text")!=source.get("text"): text_mismatches.append(sid)
         for key in ("start_seconds","end_seconds"):
-            if isinstance(caption.get(key),bool) or not isinstance(caption.get(key),(int,float)) or abs(caption[key]-source.get(key,0))>0.5:
-                timing_mismatches.append(sid); break
+            caption_time = caption.get(key)
+            source_time = source.get(key)
+            if (
+                isinstance(caption_time, bool)
+                or not isinstance(caption_time, (int, float))
+                or not math.isfinite(caption_time)
+                or isinstance(source_time, bool)
+                or not isinstance(source_time, (int, float))
+                or not math.isfinite(source_time)
+                or abs(caption_time - source_time) > 0.5
+            ):
+                timing_mismatches.append(sid)
+                break
     audio_flags=[]
     audio_cues=_seq(audio_plan,"audio_cues")
     for i,cue in enumerate(audio_cues):
