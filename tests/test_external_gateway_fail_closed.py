@@ -148,7 +148,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "body": b"chunk", "request_id": "upload-1", "project_id": "RS-1",
             "source_version": "1.0",
         }
-        with self.assertRaisesRegex(ExternalIntegrationError, "explicit authority"):
+        with self.assertRaisesRegex(ExternalIntegrationError, "trusted signed approval verifier"):
             gateway.request(
                 "IF-18", "UPLOAD_CHUNK",
                 "https://www.googleapis.com/upload/youtube/v3/videos/session",
@@ -156,7 +156,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
-    def test_upload_chunk_with_publish_authority_preserves_308_acknowledgement(self):
+    def test_upload_chunk_rejects_boolean_authority_without_trusted_verifier(self):
         class MethodTransport:
             def __init__(self):
                 self.calls = []
@@ -177,21 +177,20 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         gateway = ExternalIntegrationGateway(
             (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
         )
-        with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            status, body, response_headers = gateway.request(
+        with self.assertRaisesRegex(ExternalIntegrationError, "trusted signed approval verifier"):
+            gateway.request(
                 "IF-18", "UPLOAD_CHUNK",
                 "https://www.googleapis.com/upload/youtube/v3/videos/session",
                 method="PUT", headers={"Authorization": "Bearer test"},
                 body=b"chunk", request_id="upload-2", project_id="RS-1",
                 source_version="1.0",
                 authority={"publishing_authorisation": True},
+                approval_request_id="upload-2",
+                approval_credentials=(),
             )
-        self.assertEqual(status, 308)
-        self.assertEqual(body, b"")
-        self.assertEqual(response_headers["Range"], "bytes=0-127")
-        self.assertEqual(transport.calls[0][1], "PUT")
+        self.assertEqual(transport.calls, [])
 
-    def test_method_aware_request_audits_and_preserves_response_headers(self):
+    def test_method_aware_request_rejects_fabricated_audit_claims_without_verifier(self):
         class MethodTransport:
             def __init__(self):
                 self.calls = []
@@ -212,21 +211,17 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 }},
             ),), transport=transport, audit_sink=events.append, enabled=True,
         )
-        status, body, response_headers = gateway.request(
-            "IF-18", "UPLOAD_CHUNK",
-            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
-            method="PUT", headers={"Authorization": "Bearer secret"},
-            body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
-            authority={"publishing_authorisation": True},
-        )
-        self.assertEqual(status, 308)
-        self.assertEqual(body, b"")
-        self.assertEqual(response_headers["Range"], "bytes=0-9")
-        self.assertEqual(transport.calls[0][1], "PUT")
-        self.assertEqual([event["phase"] for event in events], ["REQUESTED", "COMPLETED"])
-        self.assertNotIn("secret", repr(events))
-        self.assertNotIn("opaque", repr(events))
-        self.assertNotIn("video bytes", repr(events))
+        with self.assertRaisesRegex(ExternalIntegrationError, "trusted signed approval verifier"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
+                method="PUT", headers={"Authorization": "Bearer secret"},
+                body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
+                authority={"publishing_authorisation": True},
+                approval_request_id="r1", approval_credentials=(),
+            )
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(events, [])
 
 
 if __name__ == "__main__":

@@ -1,9 +1,15 @@
+import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+from rhemascript.core.approvals import ApprovalVerifier
+from rhemascript.core.approval_store import SQLiteApprovalConsumptionStore
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError,
@@ -150,11 +156,55 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "source_to_final_links": links,
             "gate_records": records,
         }
+        private_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(private_directory.cleanup)
+        os.chmod(private_directory.name, 0o700)
+        store = SQLiteApprovalConsumptionStore(
+            os.path.join(private_directory.name, "approvals.sqlite3")
+        )
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        issuer = "RhemaScript-Test-Approval-Issuer"
+        key_id = "test-ed25519-key-01"
+        request_id = "youtube-write-request-0001"
+        now = datetime.now(timezone.utc)
+        credentials = []
+        actions = [
+            ("FINAL_ACCEPTANCE", "director-actor-0001"),
+            ("PUBLISH", "publisher-actor-0001"),
+        ]
+        if not authorised:
+            actions = actions[:1]
+        for index, (action, actor_id) in enumerate(actions, start=1):
+            payload = {
+                "schema": "RhemaScript.ApprovalCredential.v1",
+                "approval_id": f"approval-test-{index:04d}",
+                "issuer": issuer,
+                "actor_id": actor_id,
+                "action": action,
+                "project_id": "RS-TEST-001",
+                "project_version": "1.0",
+                "request_id": request_id,
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "nonce": f"nonce-test-{index:04d}",
+                "key_id": key_id,
+            }
+            payload["signature"] = private_key.sign(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode()
+            ).hex()
+            credentials.append(payload)
+        verifier = ApprovalVerifier(
+            issuer=issuer, verification_keys={key_id: public_key},
+            consume_many_once=store.consume_many_once,
+        )
         return {
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
-            "human_director_acceptance": True,
-            "publishing_authorisation": authorised,
+            "approval_verifier": verifier,
+            "approval_credentials": tuple(credentials),
+            "approval_request_id": request_id,
         }
 
     def test_config_rejects_upload_chunk_larger_than_32_mib(self):
@@ -207,10 +257,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 raise AssertionError("unexpected method-aware gateway request: " + method + " " + url)
 
         events = []
+        context = self.publish_context()
         transport = MethodTransport()
         gateway = ExternalIntegrationGateway(
             (youtube_provider_binding(),), transport=transport,
-            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
+            credential_resolver=lambda provider: {}, audit_sink=events.append,
+            approval_verifier=context["approval_verifier"], enabled=True,
         )
         client = YouTubeClient(self.config(), gateway=gateway)
         with tempfile.NamedTemporaryFile() as video:
@@ -219,7 +271,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.upload_video(
                     video.name, title="Approved", description="Test",
-                    **self.publish_context(),
+                    **context,
                 )
                 verified = client.verify_video(result["video_id"])
 
@@ -234,9 +286,73 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "UPLOAD_SESSION", "UPLOAD_CHUNK", "VIDEO_READ"],
         )
+        self.assertEqual(events[2]["approval_actor_ids"], ["director-actor-0001", "publisher-actor-0001"])
         self.assertNotIn("gateway-access", repr(events))
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
+
+    def test_publish_request_cannot_be_reused_for_a_different_write_flow(self):
+        context = self.publish_context()
+        transport = None
+        gateway = None
+
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+                self.reuse_denials = []
+                self.checked_reuse = False
+
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method))
+                if url.startswith("https://oauth2.googleapis.com/token"):
+                    return 200, b'{"access_token":"gateway-access"}', {}
+                if url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                    if not self.checked_reuse:
+                        self.checked_reuse = True
+                        for operation, target in (
+                            ("UPLOAD_SESSION", "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable"),
+                            ("THUMBNAIL_WRITE", "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=other"),
+                        ):
+                            try:
+                                gateway.request(
+                                    YOUTUBE_INTERFACE_ID, operation, target,
+                                    method="POST", request_id=context["approval_request_id"],
+                                    project_id="RS-TEST-001", source_version="1.0",
+                                    approval_request_id=context["approval_request_id"],
+                                    approval_credentials=context["approval_credentials"],
+                                )
+                            except Exception as exc:
+                                self.reuse_denials.append(str(exc))
+                            else:
+                                raise AssertionError("a different write flow reused the same approval request")
+                    return 200, b"", {
+                        "Location": "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=private-session"
+                    }
+                if url.endswith("/session?upload_id=private-session") and method == "PUT":
+                    return 201, b'{"id":"gateway-video"}', {}
+                raise AssertionError("unexpected provider request: " + method + " " + url)
+
+        transport = MethodTransport()
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),), transport=transport,
+            credential_resolver=lambda provider: {}, audit_sink=lambda event: None,
+            approval_verifier=context["approval_verifier"], enabled=True,
+        )
+        client = YouTubeClient(self.config(), gateway=gateway)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"approved-video-bytes")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                result = client.upload_video(
+                    video.name, title="Approved", description="Test", **context,
+                )
+        self.assertEqual(result["video_id"], "gateway-video")
+        self.assertEqual(len(transport.reuse_denials), 2)
+        self.assertTrue(all(
+            "may only continue its original video upload" in denial
+            for denial in transport.reuse_denials
+        ))
+        self.assertEqual([method for _, method in transport.calls], ["POST", "POST", "PUT"])
 
     def test_verify_video_rejects_different_returned_video_id(self):
         def transport(request, timeout):
@@ -274,10 +390,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 raise AssertionError("unexpected gateway request")
 
         events = []
+        context = self.publish_context()
         transport = MethodTransport()
         gateway = ExternalIntegrationGateway(
             (youtube_provider_binding(),), transport=transport,
-            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
+            credential_resolver=lambda provider: {}, audit_sink=events.append,
+            approval_verifier=context["approval_verifier"], enabled=True,
         )
         client = YouTubeClient(self.config(), gateway=gateway)
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
@@ -285,7 +403,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.set_thumbnail(
-                    "video-123", image.name, **self.publish_context(),
+                    "video-123", image.name, **context,
                 )
 
         self.assertIn("items", result)
@@ -294,6 +412,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "THUMBNAIL_WRITE"],
         )
+        self.assertEqual(events[2]["approval_actor_ids"], ["director-actor-0001", "publisher-actor-0001"])
         self.assertNotIn("thumb-access", repr(events))
         self.assertNotIn("thumbnail-bytes", repr(events))
 
@@ -347,14 +466,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "approval batch"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
     def test_thumbnail_write_requires_full_project_authority(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
-        with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "approval batch"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_final_gate_must_reference_the_approved_final_film(self):
