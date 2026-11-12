@@ -30,7 +30,7 @@ from rhemascript.integrations.credentials import (
 AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 READ_ONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
-CALLBACK_PATH = "/oauth2callback"
+CALLBACK_PATH = "/"
 DEFAULT_CREDENTIAL_PATH = "~/.config/rhemascript/youtube-oauth.json"
 MAX_RESPONSE_BYTES = 64_000
 
@@ -160,7 +160,7 @@ def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tup
     server = _LoopbackHTTPServer(("127.0.0.1", 0), _callback_handler(result, state))
     server.timeout = 1.0
     port = server.server_address[1]
-    redirect_uri = f"http://127.0.0.1:{port}{CALLBACK_PATH}"
+    redirect_uri = f"http://127.0.0.1:{port}"
     authorization_uri = AUTHORIZATION_URL + "?" + urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
