@@ -226,5 +226,14 @@ class EvidenceStoreTests(unittest.TestCase):
         self.assertEqual(restored.get_unit("U1")["title"], "Foundations")
         self.assertTrue(restored.verify_event_chain())
 
+
+    def test_idempotent_replay_rejects_missing_event_reference(self):
+        import sqlite3
+        self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
+        with sqlite3.connect(self.path) as db:
+            db.execute("UPDATE idempotency SET event_sequence=999 WHERE idempotency_key='create-u1'")
+        with self.assertRaisesRegex(StoreError, "event reference is missing"):
+            self.store.create_unit("U1", "Foundations", idempotency_key="create-u1")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
