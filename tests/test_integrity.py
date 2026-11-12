@@ -37,7 +37,7 @@ class IntegrityChainTests(unittest.TestCase):
         project["stages"]["approved_script"]["upstream_refs"]=[]
         result=validate_project_chain(project)
         self.assertFalse(result["valid"])
-        self.assertTrue(any("predecessor dependency: approved_script" in e for e in result["errors"]))
+        self.assertTrue(any("predecessor dependency must match exactly: approved_script" in e for e in result["errors"]))
 
     def test_extra_upstream_dependency_is_rejected(self):
         project = complete_project()
