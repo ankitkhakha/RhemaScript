@@ -23,7 +23,7 @@ The zero-cost official API client is in `rhemascript.integrations.youtube`. See 
 
 The client supports authenticated channel retrieval, resumable video upload, metadata, scheduled publication, custom thumbnails, upload verification and YouTube Analytics queries. It uses Python's standard library and has no added package dependencies. Credentials are injected from local environment variables; no secrets are stored in source control. Publishing operations fail closed without explicit publishing authority and uploaded videos default to private.
 
-**Activation is not yet complete:** the channel owner must configure an existing Google Cloud project, enable the official APIs, complete OAuth consent and provide a refresh token locally. No real channel connection, upload, public release or analytics retrieval has been performed by CI. The client code and mockable tests are not proof of live provider access or production readiness.
+**Activation is not yet complete:** the channel owner must configure an existing Google Cloud project, enable the official APIs, complete OAuth consent and provide a refresh token locally. No real channel connection, upload, public release or analytics retrieval has been performed by CI. The client code and mockable tests are not proof of live provider access or production readiness. Run the offline local preflight before owner-led OAuth setup: `python -m rhemascript.integrations.preflight --audit-log /absolute/path/in-an-existing-private-directory/youtube-audit.jsonl`. It checks local configuration only and makes no network request or file write.
 
 ## Local CI
 
