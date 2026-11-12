@@ -349,7 +349,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "THUMBNAIL_WRITE"],
         )
-        self.assertEqual(events[1]["approval_actor_ids"], ["director-actor-0001", "publisher-actor-0001"])
+        self.assertEqual(events[2]["approval_actor_ids"], ["director-actor-0001", "publisher-actor-0001"])
         self.assertNotIn("thumb-access", repr(events))
         self.assertNotIn("thumbnail-bytes", repr(events))
 
