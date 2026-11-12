@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         selected = set()
         for marker in markers:
             selected.update(range(max(0, marker - 3), min(len(lines), marker + 18)))
-        diagnostic = "\\n".join(lines[i] for i in sorted(selected)) if selected else "\\n".join(lines[-80:])
+        diagnostic = "\n".join(lines[i] for i in sorted(selected)) if selected else "\n".join(lines[-80:])
         print("TEST RUNNER FAILURE (focused test diagnostics):", file=sys.stderr)
         print(diagnostic, file=sys.stderr)
     return 0 if passed else 1
