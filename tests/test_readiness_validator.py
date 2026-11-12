@@ -103,6 +103,14 @@ class ReadinessValidatorTests(unittest.TestCase):
         data["domains"]["engineering"] = []
         self.assertTrue(validate(data))
 
+    def test_unknown_domain_fails_closed(self):
+        data = ready_ledger()
+        data["domains"]["experimental_override"] = {
+            "status": "passed", "competency_score": 4,
+            "evidence": [{"status": "verified", "evidence_ref": "extra", "score": 4}],
+        }
+        self.assertTrue(any("Unknown evidence domains" in x for x in validate(data)))
+
 
     def test_absent_evidence_score_is_not_defaulted_to_three(self):
         data = ready_ledger()
