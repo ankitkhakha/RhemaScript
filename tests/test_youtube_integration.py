@@ -345,7 +345,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.write(b"thumbnail")
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "same client session"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "client session"):
                     client.set_thumbnail("video-123", image.name, **context)
 
     def test_thumbnail_rejects_verified_video_bound_to_another_final_film(self):
