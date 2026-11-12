@@ -46,6 +46,18 @@ def _fingerprint(value: str) -> str:
 def _contains_symlink_component(path: Path) -> bool:
     """Return True if any existing component of an absolute path is a symlink."""
     absolute = Path(os.path.abspath(path))
+    # macOS exposes the system temporary directory through /var, which is a
+    # platform-managed symlink to /private/var. Normalize only that exact
+    # system alias before inspecting the remaining path components; symlinks
+    # inside the caller-controlled path are still rejected.
+    if (os.name == "posix" and os.uname().sysname == "Darwin"
+            and absolute.parts[:2] == ("/", "var")):
+        system_var = Path("/var")
+        try:
+            if system_var.is_symlink() and system_var.resolve() == Path("/private/var"):
+                absolute = Path("/private/var").joinpath(*absolute.parts[2:])
+        except OSError:
+            pass
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
         current = current / part
