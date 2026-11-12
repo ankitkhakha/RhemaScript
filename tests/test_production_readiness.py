@@ -71,7 +71,8 @@ class ExternalGatewayTests(unittest.TestCase):
         gateway=ExternalIntegrationGateway((binding(),),transport=FakeTransport(503),
             audit_sink=lambda e:None,enabled=True)
         with self.assertRaisesRegex(ExternalIntegrationError,"HTTP 503"):
-            gateway.invoke("IF-01",request())
+            gateway.invoke("IF-01",request(),
+                authority={"external_action_authorisation":True})
 
 class AssuranceTests(unittest.TestCase):
     def test_empty_evidence_is_not_ready(self):
