@@ -166,7 +166,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 self.calls.append(url)
                 return 200, b"{}", {}
 
-        for suffix in ("/../videos", "/%2e%2e/videos", "/%2E%2E/videos"):
+        for suffix in ("/../videos", "/%2e%2e/videos", "/%2E%2E/videos", "/%5c..%5cadmin"):
             with self.subTest(suffix=suffix):
                 transport = MethodTransport()
                 binding = ProviderBinding(
