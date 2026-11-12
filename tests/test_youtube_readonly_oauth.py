@@ -137,6 +137,37 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
                 ("desktop-id.apps.googleusercontent.com", "paired-desktop-secret"),
             )
 
+    def test_loads_google_issued_desktop_json_legacy_auth_uri(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "client_secret.json"
+            path.write_text(json.dumps({"installed": {
+                "client_id": "desktop-id.apps.googleusercontent.com",
+                "client_secret": "paired-desktop-secret",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": oauth_readonly.TOKEN_URL,
+            }}), encoding="utf-8")
+            self.assertEqual(
+                oauth_readonly._load_desktop_client_config(path),
+                ("desktop-id.apps.googleusercontent.com", "paired-desktop-secret"),
+            )
+
+    def test_rejects_untrusted_authorization_endpoint_in_desktop_json(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "client_secret.json"
+            path.write_text(json.dumps({"installed": {
+                "client_id": "desktop-id", "client_secret": "secret",
+                "auth_uri": "https://attacker.example/authorize",
+                "token_uri": oauth_readonly.TOKEN_URL,
+            }}), encoding="utf-8")
+            with self.assertRaisesRegex(oauth_readonly.OAuthBootstrapError, "unexpected Google endpoints"):
+                oauth_readonly._load_desktop_client_config(path)
+
     def test_rejects_web_client_json(self):
         import json
         import tempfile
