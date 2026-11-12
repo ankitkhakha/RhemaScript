@@ -1,10 +1,13 @@
 # RhemaScript YouTube — Google Connection Readiness V1
 
+> **Implementation status note — 12 November 2026:** The owner-operated read-only OAuth connection has been completed and the authenticated channel ID matched the owner-supplied expected ID. The consented scope was exactly `https://www.googleapis.com/auth/youtube.readonly`. The credential file and audit log remain local and outside Git. This confirms read-only channel identity only; it does not enable or authorise uploads, thumbnails, analytics, scheduling, publication, or deployment. Re-run the local connection check if the local credential is rotated or the authorised Google account changes.
+
+
 ## Purpose and boundary
 
 This is an owner-operated readiness checklist for connecting RhemaScript to an existing Google Cloud project and the intended YouTube channel. It does not perform OAuth, change Cloud settings, enable APIs, access the channel, grant publishing authority, or make an external request.
 
-The integration is implemented against Google's official YouTube Data API v3 and YouTube Analytics API. A successful local preflight or CI run is not proof that Google has granted access. Live connection remains unverified until the channel owner completes the checks below and explicitly authorises a limited read-only connection test.
+The integration code targets Google's official YouTube Data API v3 and YouTube Analytics API. A successful local preflight or CI run is not proof of Google access. The read-only channel identity check has been completed as recorded above; any broader permission or write operation remains unverified and requires separate owner authorisation.
 
 ## 1. Confirm the existing Google Cloud project
 
@@ -44,7 +47,7 @@ Do not place client secrets, refresh tokens, access tokens, downloaded OAuth cli
 
 ## 4. Requested OAuth scopes
 
-The current client operations are designed around these scopes:
+The broader client feature contract references these scopes, but they are not a blanket request and must not be granted together by default:
 
 | Scope | Intended use |
 |---|---|
@@ -52,7 +55,7 @@ The current client operations are designed around these scopes:
 | \`https://www.googleapis.com/auth/youtube.readonly\` | Read channel/video information |
 | \`https://www.googleapis.com/auth/yt-analytics.readonly\` | Read YouTube Analytics reports |
 
-Request only scopes needed for the features the owner intends to activate. If beginning with a read-only connection check, do not request upload permission merely for that check; use a separate least-privilege authorisation plan. A later upload capability requires the upload scope and the separate RhemaScript publishing authority.
+**Current granted scope:** `youtube.readonly` only. The read-only bootstrap requests exactly that one scope. Upload and Analytics scopes are not granted by the completed connection. Request any additional scope only after a separate owner decision, a documented feature need, and a distinct least-privilege OAuth flow. A later upload capability requires the upload scope and separate RhemaScript publishing authority; analytics requires its own read-only scope and approval.
 
 Google may change scope classification, verification or consent requirements. The owner must review the current Google OAuth documentation and consent screen before granting access.
 
@@ -135,7 +138,7 @@ No stage implicitly authorises the next. A successful read-only connection does 
 
 ## 9. Current implementation status
 
-Implemented in PR #28:
+Implemented in PR #28 and subsequent reviewed changes:
 - Standard-library OAuth refresh and YouTube API client.
 - IF-18 provider binding through the existing external gateway.
 - Fail-closed gateway routing, host/path/method restrictions and request auditing.
@@ -145,15 +148,27 @@ Implemented in PR #28:
 - Mocked tests for channel reads, resumable upload, video verification, thumbnail write, authority checks and audit redaction.
 
 Not yet performed or verified:
-- Google Cloud project selection, API enablement, billing/quota review or consent configuration.
-- OAuth consent or refresh-token acquisition.
-- Live authenticated channel identity check.
+- Independent re-verification of Google Cloud project settings, API enablement, billing/quota review or consent configuration.
+- Upload-scope or Analytics-scope OAuth consent/token acquisition.
 - Live analytics query.
 - Live upload or thumbnail write.
 - Public or scheduled publication.
 - Deployment, merge or production activation.
 
-## 10. Stop conditions
+## 10. Project-bound YouTube write evidence
+
+Scheduled publication timestamps are accepted only in RFC3339 form with an explicit timezone and only when the represented instant is in the future. A scheduled upload must remain private at upload time; the timestamp does not itself authorise release.
+
+A thumbnail write requires a `YOUTUBE_VIDEO_VERIFICATION` artifact in the same validated project Evidence Pack. The artifact must:
+- Have status `VERIFIED` and be bound to the exact project ID and project version.
+- Record the exact `youtube_video_id` being targeted.
+- Reference the approved final-film artifact through `verified_final_film_artifact_id`.
+- State `verification_method: YOUTUBE_API_VIDEO_READ`.
+- Record a successful upload status (`uploaded` or `processed`) and processing status (`succeeded` or `processed`).
+
+The verification artifact is evidence, not authority. In addition, the YouTube client requires a matching successful API read-back held in its current process-local session; a caller-authored `VERIFIED` artifact alone is insufficient. This trust anchor is not persisted across process restarts, so the video must be re-established through the authorised upload-and-read-back workflow before a thumbnail write in a new session. The normal six-gate final-film approval, Human Director acceptance and separate publishing authorisation remain mandatory. A video ID copied from another project or an unverified upload response is not sufficient.
+
+## 11. Stop conditions
 
 Stop and request owner review if:
 - The project, billing state, API quota or consent requirements are unclear.

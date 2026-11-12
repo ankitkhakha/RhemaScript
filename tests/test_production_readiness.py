@@ -41,8 +41,9 @@ class ExternalGatewayTests(unittest.TestCase):
         transport=FakeTransport(); events=[]
         gateway=ExternalIntegrationGateway((binding(),),transport=transport,
             audit_sink=events.append,credential_resolver=lambda p:{"Authorization":"Bearer test-secret"},enabled=True)
-        first=gateway.invoke("IF-01",request())
-        second=gateway.invoke("IF-01",request())
+        authority={"external_action_authorisation":True}
+        first=gateway.invoke("IF-01",request(),authority=authority)
+        second=gateway.invoke("IF-01",request(),authority=authority)
         self.assertEqual(first,second); self.assertEqual(len(transport.calls),1)
         self.assertEqual(first["status"],"PROVIDER_CONFIRMED")
         self.assertEqual([e["phase"] for e in events],["REQUESTED","COMPLETED"])
@@ -71,7 +72,8 @@ class ExternalGatewayTests(unittest.TestCase):
         gateway=ExternalIntegrationGateway((binding(),),transport=FakeTransport(503),
             audit_sink=lambda e:None,enabled=True)
         with self.assertRaisesRegex(ExternalIntegrationError,"HTTP 503"):
-            gateway.invoke("IF-01",request())
+            gateway.invoke("IF-01",request(),
+                authority={"external_action_authorisation":True})
 
 class AssuranceTests(unittest.TestCase):
     def test_empty_evidence_is_not_ready(self):

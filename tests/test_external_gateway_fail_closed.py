@@ -1,4 +1,5 @@
 import unittest
+import threading
 from unittest.mock import patch
 
 from rhemascript.interfaces.external import (
@@ -227,6 +228,106 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertNotIn("secret", repr(events))
         self.assertNotIn("opaque", repr(events))
         self.assertNotIn("video bytes", repr(events))
+
+    def test_generic_post_invocation_requires_external_write_authority(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (self.binding(),), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "external-write authority"):
+            gateway.invoke("IF-01", self.request())
+        self.assertEqual(transport.calls, [])
+
+    def test_generic_post_invocation_requires_explicit_authority_before_transport(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (self.binding(),), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            result = gateway.invoke("IF-01", self.request())
+        self.assertEqual(result["status"], "PROVIDER_CONFIRMED")
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_generic_operation_path_rejects_traversal_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-01", provider_name="provider",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"READ": "../admin"},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+                gateway.invoke("IF-01", self.request())
+        self.assertEqual(transport.calls, [])
+
+    def test_generic_operation_path_rejects_encoded_traversal_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-01", provider_name="provider",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"READ": "youtube/%2e%2e/admin"},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+                gateway.invoke("IF-01", self.request())
+        self.assertEqual(transport.calls, [])
+
+
+    def test_concurrent_duplicate_invocations_share_one_provider_post(self):
+        entered = threading.Event()
+        release = threading.Event()
+        class BlockingTransport:
+            def __init__(self):
+                self.calls = 0
+            def send(self, url, headers, body, timeout):
+                self.calls += 1
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError("test transport timed out")
+                return 200, b'{"ok":true}'
+
+        transport = BlockingTransport()
+        gateway = ExternalIntegrationGateway(
+            (self.binding(),), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        results, errors = [], []
+        def invoke():
+            try:
+                results.append(gateway.invoke(
+                    "IF-01", self.request(),
+                    authority={"external_action_authorisation": True},
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            first = threading.Thread(target=invoke)
+            second = threading.Thread(target=invoke)
+            first.start()
+            self.assertTrue(entered.wait(2))
+            second.start()
+            release.set()
+            first.join(3)
+            second.join(3)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(transport.calls, 1)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0], results[1])
 
 
 if __name__ == "__main__":

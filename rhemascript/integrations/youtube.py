@@ -7,7 +7,7 @@ No external request is made at import time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import json
 import os
+import re
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
@@ -100,6 +101,69 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             f"operation denied by RhemaScript governance: {exc}"
         ) from None
 
+
+def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
+    """Require a strict RFC3339 timestamp with offset and a future instant."""
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
+        value,
+    ):
+        raise YouTubeIntegrationError(
+            "publish_at must be an RFC3339 timestamp with an explicit timezone"
+        )
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
+    except ValueError:
+        raise YouTubeIntegrationError("publish_at is not a valid RFC3339 timestamp") from None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise YouTubeIntegrationError("publish_at must include an explicit timezone")
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("test clock must be timezone-aware")
+    if parsed.astimezone(timezone.utc) <= current.astimezone(timezone.utc):
+        raise YouTubeIntegrationError("publish_at must be a future timestamp")
+    return value
+
+
+def _authorise_project_video(*, evidence_pack: dict[str, Any],
+                             final_film_evidence_ref: str,
+                             video_id: str) -> tuple[str, str, str]:
+    """Resolve a verified YouTube video record bound to this project's final film."""
+    from rhemascript.evidence import validate_evidence_pack, EvidencePackError
+    try:
+        validated = validate_evidence_pack(evidence_pack)
+        films = [
+            item for item in validated.artifacts
+            if item.get("artifact_type") == "EDITED_FILM"
+            and item.get("status") in {"APPROVED", "VERIFIED", "ACCEPTED"}
+            and (item.get("artifact_id") == final_film_evidence_ref
+                 or final_film_evidence_ref in item.get("evidence_refs", []))
+        ]
+        if len(films) != 1:
+            raise EvidencePackError("thumbnail target must resolve to one approved final film")
+        film = films[0]
+        records = [
+            item for item in validated.artifacts
+            if item.get("artifact_type") == "YOUTUBE_VIDEO_VERIFICATION"
+            and item.get("status") == "VERIFIED"
+            and item.get("youtube_video_id") == video_id
+            and item.get("verified_final_film_artifact_id") == film.get("artifact_id")
+            and item.get("verification_method") == "YOUTUBE_API_VIDEO_READ"
+            and item.get("processing_status") in {"succeeded", "processed"}
+            and item.get("upload_status") in {"uploaded", "processed"}
+        ]
+        if len(records) != 1:
+            raise EvidencePackError(
+                "thumbnail video ID must have one VERIFIED YouTube read-back artifact "
+                "bound to this project's approved final film"
+            )
+        return validated.project_id, validated.project_version, film.get("artifact_id")
+    except (EvidencePackError, ValueError, TypeError) as exc:
+        raise YouTubeIntegrationError(
+            f"thumbnail target is not bound to verified project evidence: {exc}"
+        ) from None
+
+
 @dataclass(frozen=True)
 class YouTubeConfig:
     client_id: str
@@ -181,6 +245,8 @@ class YouTubeClient:
         self._gateway_source_version = source_version
         self._gateway_authority: dict[str, bool] = {}
         self._access_token: str | None = None
+        self._last_upload_context: dict[str, str] | None = None
+        self._verified_upload_context: dict[str, str] | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -355,6 +421,24 @@ class YouTubeClient:
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
+        # Resolve the exact final-film association before any provider request.
+        # Do not upload first and discover an invalid Evidence Pack afterwards.
+        from rhemascript.evidence import validate_evidence_pack
+        try:
+            validated_pack = validate_evidence_pack(evidence_pack)
+        except (ValueError, TypeError) as exc:
+            raise YouTubeIntegrationError(f"invalid upload Evidence Pack: {exc}") from None
+        final_films = [
+            item for item in validated_pack.artifacts
+            if item.get("artifact_type") == "EDITED_FILM"
+            and item.get("status") in {"APPROVED", "VERIFIED", "ACCEPTED"}
+            and (item.get("artifact_id") == final_film_evidence_ref
+                 or final_film_evidence_ref in item.get("evidence_refs", []))
+        ]
+        if len(final_films) != 1:
+            raise YouTubeIntegrationError(
+                "upload requires one approved final-film artifact matching the evidence reference"
+            )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
         self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
@@ -367,8 +451,10 @@ class YouTubeClient:
             raise YouTubeIntegrationError("description exceeds the supported limit")
         if privacy_status not in {"private", "unlisted", "public"}:
             raise YouTubeIntegrationError("invalid privacy_status")
-        if publish_at and (privacy_status != "private" or not isinstance(publish_at, str)):
-            raise YouTubeIntegrationError("scheduled publication requires private privacy and an RFC3339 publish_at")
+        if publish_at is not None:
+            if privacy_status != "private":
+                raise YouTubeIntegrationError("scheduled publication requires private privacy")
+            _validate_publish_at(publish_at)
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
         if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
@@ -447,6 +533,12 @@ class YouTubeClient:
             raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
         if not isinstance(video_id, str) or not video_id:
             raise YouTubeIntegrationError("upload response contained an invalid video ID")
+        self._last_upload_context = {
+            "video_id": video_id,
+            "project_id": project_id,
+            "project_version": project_version,
+            "final_film_artifact_id": final_films[0]["artifact_id"],
+        }
         return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
                 "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
                 "upload_completed": True, "verification_required": True}
@@ -462,6 +554,21 @@ class YouTubeClient:
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
+        evidence_project_id, evidence_project_version, evidence_film_artifact_id = _authorise_project_video(
+            evidence_pack=evidence_pack,
+            final_film_evidence_ref=final_film_evidence_ref,
+            video_id=video_id,
+        )
+        verified_context = self._verified_upload_context
+        if (verified_context is None
+                or verified_context.get("video_id") != video_id
+                or verified_context.get("project_id") != evidence_project_id
+                or verified_context.get("project_version") != evidence_project_version
+                or verified_context.get("final_film_artifact_id") != evidence_film_artifact_id):
+            raise YouTubeIntegrationError(
+                "thumbnail write requires a matching successful YouTube read-back "
+                "from this client session; a caller-supplied verification artifact alone is insufficient"
+            )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
         self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
@@ -515,8 +622,27 @@ class YouTubeClient:
             raise YouTubeIntegrationError("YouTube returned an invalid upload status")
         if processing_status is not None and not isinstance(processing_status, str):
             raise YouTubeIntegrationError("YouTube returned an invalid processing status")
-        return {"video_id": video_id, "title": title, "privacy_status": privacy_status,
-                "upload_status": upload_status, "processing_status": processing_status}
+        result = {"video_id": video_id, "title": title, "privacy_status": privacy_status,
+                  "upload_status": upload_status, "processing_status": processing_status}
+        context = self._last_upload_context
+        if (context is not None and context.get("video_id") == video_id
+                and upload_status in {"uploaded", "processed"}
+                and processing_status in {"succeeded", "processed"}):
+            result["verification_evidence"] = {
+                "project_id": context["project_id"],
+                "project_version": context["project_version"],
+                "artifact_type": "YOUTUBE_VIDEO_VERIFICATION",
+                "status": "VERIFIED",
+                "youtube_video_id": video_id,
+                "verified_final_film_artifact_id": context["final_film_artifact_id"],
+                "verification_method": "YOUTUBE_API_VIDEO_READ",
+                "upload_status": upload_status,
+                "processing_status": processing_status,
+            }
+            # Retain a process-local trust anchor from the actual API read-back.
+            # A caller-authored Evidence Pack record alone is not proof.
+            self._verified_upload_context = dict(context)
+        return result
 
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
