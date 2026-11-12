@@ -466,6 +466,23 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "2026-11-12T18:00:00+05:30",
         )
 
+    def test_invalid_final_film_evidence_is_rejected_before_upload_network(self):
+        calls = []
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        context = self.publish_context()
+        context["evidence_pack"]["artifacts"] = [
+            item for item in context["evidence_pack"]["artifacts"]
+            if item["artifact_type"] != "EDITED_FILM"
+        ]
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with self.assertRaisesRegex(YouTubeIntegrationError, "final film"):
+                client.upload_video(
+                    video.name, title="Approved", description="Test", **context,
+                )
+        self.assertEqual(calls, [])
+
     def test_invalid_scheduled_timestamp_is_rejected_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
