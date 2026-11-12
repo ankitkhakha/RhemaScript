@@ -18,7 +18,7 @@ class PrivateCredentialError(RuntimeError):
     """Safe, non-secret-bearing credential storage error."""
 
 
-_KEYS = ("client_id", "client_secret", "refresh_token")
+_KEYS = ("client_id", "refresh_token")
 _MAX_BYTES = 16_384
 
 
@@ -89,26 +89,25 @@ def load_private_credentials(path: str | os.PathLike[str]) -> dict[str, str]:
         data = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         raise PrivateCredentialError("credential file is not valid UTF-8 JSON") from None
-    if not isinstance(data, dict) or set(data) != set(_KEYS):
-        raise PrivateCredentialError("credential file must contain exactly client_id, client_secret and refresh_token")
+    if not isinstance(data, dict) or set(data) not in (set(_KEYS), {"client_id", "client_secret", "refresh_token"}):
+        raise PrivateCredentialError("credential file must contain exactly client_id and refresh_token")
     if any(not isinstance(data[key], str) or not data[key].strip() for key in _KEYS):
         raise PrivateCredentialError("credential file contains an empty or invalid credential field")
     return {key: data[key].strip() for key in _KEYS}
 
 
 def write_private_credentials(path: str | os.PathLike[str], *,
-                              client_id: str, client_secret: str,
-                              refresh_token: str) -> None:
+                              client_id: str, refresh_token: str,
+                              client_secret: str | None = None) -> None:
     """Create a new owner-only credential file; never overwrite an existing path."""
     target = Path(path).expanduser()
     _check_private_parent(target.parent)
     values = {
         "client_id": client_id.strip() if isinstance(client_id, str) else "",
-        "client_secret": client_secret.strip() if isinstance(client_secret, str) else "",
         "refresh_token": refresh_token.strip() if isinstance(refresh_token, str) else "",
     }
     if any(not value for value in values.values()):
-        raise PrivateCredentialError("all three credential values are required")
+        raise PrivateCredentialError("client ID and refresh token are required")
     payload = (json.dumps(values, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -138,11 +137,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         client_id = input("Google OAuth client ID: ").strip()
-        client_secret = getpass.getpass("Google OAuth client secret (input hidden): ")
         refresh_token = getpass.getpass("Google OAuth refresh token (input hidden): ")
         write_private_credentials(
             args.path, client_id=client_id,
-            client_secret=client_secret, refresh_token=refresh_token,
+            refresh_token=refresh_token,
         )
     except (PrivateCredentialError, EOFError, KeyboardInterrupt):
         print("Credential setup stopped; no credential values were displayed.")
