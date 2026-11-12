@@ -44,7 +44,7 @@ Production deployment still requires controlled database placement, backups, acc
 
 `YouTubeClient.upload_video` and `set_thumbnail` require two separate signed credentials: `FINAL_ACCEPTANCE` and `PUBLISH`. Both must bind to the same project, immutable project version and request ID, and must identify distinct authenticated actors.
 
-When IF-18 is configured, `ExternalIntegrationGateway` independently verifies and atomically consumes both credentials before the first provider write. Boolean-only publishing authority and fabricated audit claims are rejected. The request-bound authorization context is reused only across resumable upload chunks, then cleared after the final chunk; thumbnail authorization is cleared after the thumbnail request. Reusing a completed request ID or consumed credential is rejected by durable replay protection.
+When IF-18 is configured, `ExternalIntegrationGateway` independently verifies and atomically consumes both credentials before the first provider write. Boolean-only publishing authority and fabricated audit claims are rejected. The request-bound authorization context is reused only across resumable upload chunks, then cleared after the final chunk; thumbnail authorization is cleared after the thumbnail request. A request that begins with `UPLOAD_SESSION` may continue only with `UPLOAD_CHUNK`; the same approval request cannot start another upload or be repurposed for a thumbnail write. Reusing a completed request ID or consumed credential is rejected by durable replay protection.
 
 For direct synthetic transport tests, the client verifies and consumes the credentials itself. The live provider path still requires an explicitly configured IF-18 gateway.
 
