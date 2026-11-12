@@ -124,6 +124,7 @@ class EvidencePackTests(unittest.TestCase):
             self.assertFalse(result.publishing_performed)
 
     def test_local_source_resolver_rejects_artifact_digest_disagreement(self):
+        import hashlib
         import tempfile
         from pathlib import Path
         from rhemascript.evidence.local_source_resolver import LocalSourceEntry, LocalSourceResolver
