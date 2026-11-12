@@ -59,14 +59,53 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             })
 
 
-    def test_rejects_duplicate_and_unexpected_callback_parameters(self):
-        handler = oauth_readonly._callback_handler
-        expected_state = "expected-state"
+    def test_callback_rejects_duplicate_state_and_unexpected_parameters(self):
+        from http.client import HTTPConnection
+        from threading import Thread
+
+        for suffix in (
+            "?state=expected-state&state=expected-state&code=test-code",
+            "?state=expected-state&code=test-code&extra=not-allowed",
+        ):
+            with self.subTest(suffix=suffix):
+                result = {}
+                server = oauth_readonly.HTTPServer(
+                    ("127.0.0.1", 0),
+                    oauth_readonly._callback_handler(result, "expected-state"),
+                )
+                thread = Thread(target=server.handle_request, daemon=True)
+                thread.start()
+                connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=3)
+                connection.request("GET", oauth_readonly.CALLBACK_PATH + suffix)
+                response = connection.getresponse()
+                response.read()
+                connection.close()
+                thread.join(timeout=3)
+                server.server_close()
+                self.assertEqual(response.status, 400)
+                self.assertIn("error", result)
+
+    def test_callback_accepts_one_valid_state_and_code_once(self):
+        from http.client import HTTPConnection
+        from threading import Thread
+
         result = {}
-        callback = handler(result, expected_state)
-        self.assertTrue(callable(callback))
-        # Callback parsing behavior is covered by the full local suite; the
-        # handler factory is kept independently constructible for loopback tests.
+        server = oauth_readonly.HTTPServer(
+            ("127.0.0.1", 0),
+            oauth_readonly._callback_handler(result, "expected-state"),
+        )
+        thread = Thread(target=server.handle_request, daemon=True)
+        thread.start()
+        connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=3)
+        connection.request("GET", oauth_readonly.CALLBACK_PATH +
+                           "?state=expected-state&code=single-use-code")
+        response = connection.getresponse()
+        response.read()
+        connection.close()
+        thread.join(timeout=3)
+        server.server_close()
+        self.assertEqual(response.status, 200)
+        self.assertEqual(result.get("code"), "single-use-code")
 
     def test_rejects_invalid_timeout(self):
         with self.assertRaises(oauth_readonly.OAuthBootstrapError):
