@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
@@ -495,6 +495,68 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], "POST")
 
+
+    def test_scheduled_publication_rejects_invalid_or_non_future_timestamps(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        invalid_values = (
+            "not-a-timestamp",
+            "2026-12-01T12:00:00",  # timezone is required
+            "2020-01-01T12:00:00Z",  # scheduled time must be in the future
+        )
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for value in invalid_values:
+                with self.subTest(publish_at=value):
+                    with self.assertRaisesRegex(YouTubeIntegrationError, "publish_at"):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            privacy_status="private", publish_at=value, **self.publish_context())
+
+    def test_valid_future_rfc3339_schedule_passes_timestamp_validation(self):
+        def transport(request, timeout):
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            return 400, b"{}", {}
+        client = YouTubeClient(self.config(), transport=transport)
+        scheduled = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat().replace("+00:00", "Z")
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "resumable upload session"):
+                    client.upload_video(video.name, title="Approved", description="Test",
+                        privacy_status="private", publish_at=scheduled, **self.publish_context())
+
+    def test_upload_rejects_invalid_tags_and_category_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            invalid_cases = (
+                {"tags": ["valid", " "]},
+                {"tags": ["x" * 501]},
+                {"category_id": "not-a-category"},
+                {"category_id": True},
+            )
+            for kwargs in invalid_cases:
+                with self.subTest(kwargs=kwargs):
+                    with self.assertRaises(YouTubeIntegrationError):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            **kwargs, **self.publish_context())
+
+    def test_upload_accepts_numeric_category_and_tags_within_limit(self):
+        calls = []
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            # Stop at the first token response; this confirms metadata validation passed.
+            client._token = lambda: "test-token"
+            client._authorized_request = lambda *args, **kwargs: (400, b"{}", {})
+            with self.assertRaisesRegex(YouTubeIntegrationError, "resumable upload session"):
+                with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                    client.upload_video(video.name, title="Approved", description="Test",
+                        tags=["RhemaScript", "Bible"], category_id="22", **self.publish_context())
 
 if __name__ == "__main__":
     unittest.main()
