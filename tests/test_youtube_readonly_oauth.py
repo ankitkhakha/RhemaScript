@@ -39,7 +39,7 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             r"HTTP 400, invalid_client.*no credentials were saved",
         ) as caught:
             oauth_readonly._exchange_code(
-                client_id="client-id", client_secret="client-secret",
+                client_id="client-id",
                 code="one-time-code", redirect_uri="http://127.0.0.1/callback",
                 verifier="pkce-verifier",
             )
@@ -241,7 +241,6 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
         with self.assertRaises(oauth_readonly.OAuthBootstrapError):
             oauth_readonly.run_bootstrap(
                 client_id="desktop-client-id",
-                client_secret="desktop-client-secret",
                 credential_path="/private/youtube-oauth.json",
             )
         write_credentials.assert_not_called()
@@ -261,13 +260,11 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
         }
         oauth_readonly.run_bootstrap(
             client_id="desktop-client-id",
-            client_secret="desktop-client-secret",
             credential_path="/private/youtube-oauth.json",
         )
         write_credentials.assert_called_once_with(
             "/private/youtube-oauth.json",
             client_id="desktop-client-id",
-            client_secret="desktop-client-secret",
             refresh_token="refresh-test",
         )
 
