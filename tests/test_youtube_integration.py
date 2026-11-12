@@ -216,6 +216,9 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 verified = client.verify_video(result["video_id"])
 
         self.assertEqual(result["video_id"], "gateway-video")
+        self.assertTrue(result["upload_completed"])
+        self.assertTrue(result["verification_required"])
+        self.assertNotIn("upload_verified", result)
         self.assertEqual(verified["privacy_status"], "private")
         self.assertEqual([call[1] for call in transport.calls],
                          ["POST", "POST", "PUT", "GET"])
