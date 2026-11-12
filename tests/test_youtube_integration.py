@@ -48,6 +48,59 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(gateway.calls[0][3]["project_id"], "RS-GATEWAY-TEST")
         self.assertEqual(gateway.calls[0][3]["source_version"], "2.0")
 
+    def test_read_only_connection_verifies_expected_channel_through_if18(self):
+        class Gateway:
+            def __init__(self):
+                self.calls = []
+            def request(self, interface_id, operation, url, **kwargs):
+                self.calls.append((interface_id, operation, url, kwargs))
+                if operation == "OAUTH_TOKEN":
+                    return 200, b'{"access_token":"read-only-token"}', {}
+                if operation == "CHANNEL_READ":
+                    self.assert_authorization(kwargs)
+                    self.assertIn("part=snippet", url)
+                    self.assertIn("mine=true", url)
+                    return 200, b'{"items":[{"id":"UC-EXPECTED","snippet":{"title":"RhemaScript"}}]}', {}
+                raise AssertionError("read-only verification attempted an unexpected operation")
+            def assert_authorization(self, kwargs):
+                if kwargs["headers"].get("Authorization") != "Bearer read-only-token":
+                    raise AssertionError("missing OAuth bearer token")
+
+        gateway = Gateway()
+        client = YouTubeClient(self.config(), gateway=gateway)
+        result = client.verify_connection(expected_channel_id="UC-EXPECTED")
+        self.assertEqual(result, {
+            "authenticated": True,
+            "channel_id": "UC-EXPECTED",
+            "channel_title": "RhemaScript",
+            "read_only": True,
+        })
+        self.assertEqual(
+            [call[0:2] for call in gateway.calls],
+            [("IF-18", "OAUTH_TOKEN"), ("IF-18", "CHANNEL_READ")],
+        )
+
+    def test_read_only_connection_rejects_wrong_channel_identity(self):
+        calls = []
+        def transport(request, timeout):
+            calls.append(request.get_method())
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"read-only-token"}', {}
+            return 200, b'{"items":[{"id":"UC-WRONG","snippet":{"title":"Other channel"}}]}', {}
+        client = YouTubeClient(self.config(), transport=transport)
+        with self.assertRaisesRegex(YouTubeIntegrationError, "does not match the expected channel ID"):
+            client.verify_connection(expected_channel_id="UC-EXPECTED")
+        self.assertEqual(calls, ["POST", "GET"])
+
+    def test_read_only_connection_requires_expected_channel_id_before_network(self):
+        calls = []
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        for value in ("", " UC-EXPECTED", None):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "expected_channel_id"):
+                    client.verify_connection(expected_channel_id=value)
+        self.assertEqual(calls, [])
+
     def config(self):
         return YouTubeConfig("client-id", "client-secret", "refresh-token")
 
