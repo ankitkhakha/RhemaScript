@@ -82,15 +82,18 @@ def _parser() -> argparse.ArgumentParser:
     ):
         cmd = sub.add_parser(name, help=help_text)
         cmd.add_argument("--database", required=True)
+        cmd.add_argument("--evidence-root", required=True)
 
     brief = sub.add_parser("brief", help="build a training brief for one eligible unit")
     brief.add_argument("--database", required=True)
     brief.add_argument("--unit-id", required=True)
+    brief.add_argument("--evidence-root", required=True)
 
     search = sub.add_parser("knowledge-search", help="search knowledge items; pending items are excluded by default")
     search.add_argument("--database", required=True)
     search.add_argument("--query", required=True)
     search.add_argument("--include-pending", action="store_true")
+    search.add_argument("--evidence-root", required=True)
 
     for name, help_text in (
         ("record-attempt", "record an evidence-bound RAEI self-assessment"),
@@ -114,8 +117,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         registry = _database(args.database)
+        if not registry.verify_artifacts(args.evidence_root):
+            raise RAEICLIError("registry or retained evidence artefact integrity verification failed")
         if args.command == "verify":
-            valid = registry.verify()
+            valid = registry.verify_artifacts(args.evidence_root)
             print(_json({"integrity": "PASS" if valid else "FAIL"}))
             return 0 if valid else 2
 
