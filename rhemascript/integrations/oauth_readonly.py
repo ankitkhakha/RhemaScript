@@ -151,6 +151,8 @@ def _safe_google_error_detail(description: Any) -> str | None:
         "Missing required parameter: redirect_uri": "missing_redirect_uri",
         "Missing required parameter: client_id": "missing_client_id",
         "Missing required parameter: grant_type": "missing_grant_type",
+        "client_secret is missing.": "missing_client_secret",
+        "Missing required parameter: client_secret": "missing_client_secret",
         "Invalid code verifier.": "invalid_code_verifier",
         "Invalid parameter value for redirect_uri": "invalid_redirect_uri",
         "Invalid redirect URI": "invalid_redirect_uri",
