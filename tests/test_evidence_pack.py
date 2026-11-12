@@ -43,6 +43,50 @@ class EvidencePackTests(unittest.TestCase):
         self.assertFalse(result.generation_action_performed); self.assertFalse(result.external_action_performed); self.assertFalse(result.publishing_performed)
 
 
+
+    def test_legacy_run_is_explicitly_structural_only(self):
+        validated, _ = run_evidence_pack(pack(), actor_role="TEST_HARNESS")
+        self.assertEqual(validated.evidence_integrity_mode, "STRUCTURAL_ONLY")
+        self.assertEqual(validated.byte_verified_artifacts, ())
+
+    def test_strict_run_rejects_verified_status_without_local_file(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(ValueError, "could not be byte-verified"):
+                run_evidence_pack(pack(), actor_role="TEST_HARNESS", evidence_root=root)
+
+    def test_strict_run_binds_verified_artifact_to_actual_bytes(self):
+        import hashlib
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as root:
+            content = b"actual source evidence"
+            (Path(root) / "source.txt").write_bytes(content)
+            p = pack()
+            p["artifacts"][0]["local_path"] = "source.txt"
+            p["artifacts"][0]["sha256"] = hashlib.sha256(content).hexdigest()
+            validated, result = run_evidence_pack(
+                p, actor_role="TEST_HARNESS", evidence_root=root
+            )
+            self.assertEqual(validated.evidence_integrity_mode, "BYTE_VERIFIED")
+            self.assertEqual(len(validated.byte_verified_artifacts), 1)
+            self.assertEqual(validated.byte_verified_artifacts[0].sha256,
+                             hashlib.sha256(content).hexdigest())
+            self.assertFalse(result.generation_action_performed)
+
+    def test_strict_run_rejects_modified_artifact_bytes(self):
+        import hashlib
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as root:
+            content = b"expected source evidence"
+            (Path(root) / "source.txt").write_bytes(b"modified bytes")
+            p = pack()
+            p["artifacts"][0]["local_path"] = "source.txt"
+            p["artifacts"][0]["sha256"] = hashlib.sha256(content).hexdigest()
+            with self.assertRaisesRegex(ValueError, "does not match declared SHA-256"):
+                run_evidence_pack(p, actor_role="TEST_HARNESS", evidence_root=root)
+
     def test_unknown_capability_id_rejected(self):
         p=pack(); p["evidence_records"][0]["capability_id"]="CAP-99"
         with self.assertRaisesRegex(EvidencePackError,"unknown capability"): validate_evidence_pack(p)
