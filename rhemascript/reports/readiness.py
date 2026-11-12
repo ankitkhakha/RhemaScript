@@ -105,6 +105,42 @@ def run_project_assessment(
             if validated.evidence_integrity_mode == "STRUCTURAL_ONLY" else None
         ),
     }
+    verified_by_id = {item.evidence_id: item for item in validated.byte_verified_artifacts}
+    artifact_capabilities: dict[str, list[str]] = {}
+    evidence_traceability = []
+    for evidence_record in validated.evidence_records:
+        capability_id = evidence_record["capability_id"]
+        artifact_ids = list(evidence_record.get("artifact_refs", []))
+        for artifact_id in artifact_ids:
+            artifact_capabilities.setdefault(artifact_id, []).append(capability_id)
+        evidence_traceability.append({
+            "evidence_id": evidence_record["evidence_id"],
+            "capability_id": capability_id,
+            "artifact_refs": artifact_ids,
+            "evidence_refs": list(evidence_record.get("evidence_refs", [])),
+        })
+    report["evidence_traceability"] = {
+        "records": evidence_traceability,
+        "artifacts": [
+            {
+                "artifact_id": artifact["artifact_id"],
+                "capability_ids": sorted(artifact_capabilities.get(artifact["artifact_id"], [])),
+                "integrity_status": (
+                    "BYTE_VERIFIED" if artifact["artifact_id"] in verified_by_id
+                    else "NOT_BYTE_VERIFIED"
+                ),
+                "verified_sha256": (
+                    verified_by_id[artifact["artifact_id"]].sha256
+                    if artifact["artifact_id"] in verified_by_id else None
+                ),
+                "verified_version": (
+                    verified_by_id[artifact["artifact_id"]].version
+                    if artifact["artifact_id"] in verified_by_id else None
+                ),
+            }
+            for artifact in validated.artifacts
+        ],
+    }
     if readiness_registry is not None:
         from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
         if not isinstance(readiness_registry, ReadinessRunRegistry):
