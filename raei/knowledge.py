@@ -105,6 +105,8 @@ def _validate_payload(payload: dict[str, Any], evidence: EvidenceVersion) -> Non
     if payload["source_type"] == "BIBLE":
         language = _required_text(payload, "language")
         translation = _required_text(payload, "translation_version")
+        _required_text(payload, "book")
+        _required_text(payload, "passage")
         direct_quote = payload.get("direct_scripture_quote")
         if not isinstance(direct_quote, bool):
             raise RAEIKnowledgeError("direct_scripture_quote must be explicitly boolean")
@@ -198,7 +200,7 @@ def search_knowledge(
 ) -> list[dict[str, Any]]:
     if not isinstance(query, str) or not query.strip():
         raise RAEIKnowledgeError("search query must be a non-empty string")
-    terms = [term for term in re.findall(r"[a-z0-9]+", query.lower()) if term]
+    terms = [term for term in re.findall(r"[^\\W_]+", query.lower(), flags=re.UNICODE) if term]
     if not terms:
         return []
     matches = []
