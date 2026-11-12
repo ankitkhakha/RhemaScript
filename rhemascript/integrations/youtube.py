@@ -95,7 +95,7 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
         authorise_action("PUBLISH", {
             "publishing_authorisation": publishing_authorisation
         })
-        return validated.project_id, validated.project_version, film.get("artifact_id")
+        return validated.project_id, validated.project_version
     except (EvidencePackError, AuthorityError, GateError, ValueError, TypeError) as exc:
         raise YouTubeIntegrationError(
             f"operation denied by RhemaScript governance: {exc}"
@@ -157,7 +157,7 @@ def _authorise_project_video(*, evidence_pack: dict[str, Any],
                 "thumbnail video ID must have one VERIFIED YouTube read-back artifact "
                 "bound to this project's approved final film"
             )
-        return validated.project_id, validated.project_version
+        return validated.project_id, validated.project_version, film.get("artifact_id")
     except (EvidencePackError, ValueError, TypeError) as exc:
         raise YouTubeIntegrationError(
             f"thumbnail target is not bound to verified project evidence: {exc}"
