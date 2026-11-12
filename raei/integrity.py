@@ -18,14 +18,20 @@ GATE_STAGE = {
     "final_film": "edited_film",
 }
 
+
 class IntegrityError(ValueError):
     pass
 
+
+def _nonempty_text(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
 def validate_project_chain(project):
-    """Return a deterministic findings report; never performs generation or publishing."""
+    """Return deterministic findings; never performs generation or publishing."""
     errors = []
-    if not isinstance(project, dict) or not project.get("project_id"):
-        raise IntegrityError("project_id is required")
+    if not isinstance(project, dict) or not _nonempty_text(project.get("project_id")):
+        raise IntegrityError("project_id must be a non-empty string")
     stages = project.get("stages")
     approvals = project.get("approvals")
     if not isinstance(stages, dict) or not isinstance(approvals, dict):
@@ -36,9 +42,9 @@ def validate_project_chain(project):
         if not isinstance(record, dict):
             errors.append("missing stage: " + stage)
             continue
-        if not isinstance(record.get("artifact_ref"), str) or not record.get("artifact_ref").strip():
+        if not _nonempty_text(record.get("artifact_ref")):
             errors.append("missing artifact reference: " + stage)
-        if not record.get("source_ref"):
+        if not _nonempty_text(record.get("source_ref")):
             errors.append("missing source reference: " + stage)
         if record.get("status") != "present":
             errors.append("stage is not evidenced as present: " + stage)
@@ -46,21 +52,21 @@ def validate_project_chain(project):
         if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
             errors.append("invalid positive revision number: " + stage)
 
-    # Each downstream artefact must explicitly identify the immediately preceding
-    # approved-chain artefact it was derived from.
     for index, stage in enumerate(STAGES[1:], start=1):
         record = stages.get(stage)
         previous = stages.get(STAGES[index - 1])
         if not isinstance(record, dict) or not isinstance(previous, dict):
             continue
         upstream = record.get("upstream_refs")
-        if not isinstance(upstream, list) or previous.get("artifact_ref") not in upstream:
+        previous_ref = previous.get("artifact_ref")
+        if (not isinstance(upstream, list) or not _nonempty_text(previous_ref)
+                or previous_ref not in upstream):
             errors.append("missing immediate predecessor dependency: " + stage)
 
-    # A repeated artifact reference across stages makes provenance ambiguous.
     artifact_refs = [
         stages[stage].get("artifact_ref") for stage in STAGES
-        if isinstance(stages.get(stage), dict) and stages[stage].get("artifact_ref")
+        if isinstance(stages.get(stage), dict)
+        and _nonempty_text(stages[stage].get("artifact_ref"))
     ]
     if len(artifact_refs) != len(set(artifact_refs)):
         errors.append("duplicate artifact reference across source-to-final stages")
@@ -72,11 +78,12 @@ def validate_project_chain(project):
             continue
         if record.get("status") != "approved":
             errors.append("approval not granted: " + gate)
-        if not record.get("approval_ref"):
+        if not _nonempty_text(record.get("approval_ref")):
             errors.append("missing approval evidence: " + gate)
         linked_stage = GATE_STAGE[gate]
-        stage_record = stages.get(linked_stage, {})
-        if record.get("artifact_ref") != stage_record.get("artifact_ref"):
+        stage_record = stages.get(linked_stage)
+        current_ref = stage_record.get("artifact_ref") if isinstance(stage_record, dict) else None
+        if not _nonempty_text(current_ref) or record.get("artifact_ref") != current_ref:
             errors.append("approval does not reference current stage artefact: " + gate)
 
     history = project.get("revision_history", [])
@@ -105,7 +112,8 @@ def validate_project_chain(project):
                 if event.get("previous_artifact_ref") != previous_ref:
                     errors.append("broken previous-artifact link in revision history: " + stage)
                     break
-                if not event.get("artifact_ref") or not event.get("source_ref") or not event.get("change_reason"):
+                if not all(_nonempty_text(event.get(field))
+                           for field in ("artifact_ref", "source_ref", "change_reason")):
                     errors.append("incomplete revision history event: " + stage)
                     break
                 previous_ref = event["artifact_ref"]
@@ -120,11 +128,22 @@ def validate_project_chain(project):
     if not isinstance(generation, dict):
         errors.append("missing generation authorization record")
     else:
-        if generation.get("performed") is True and generation.get("authorized") is not True:
+        authorized = generation.get("authorized")
+        performed = generation.get("performed")
+        if not isinstance(authorized, bool):
+            errors.append("generation authorized flag must be boolean")
+        if not isinstance(performed, bool):
+            errors.append("generation performed flag must be boolean")
+        if performed is True and authorized is not True:
             errors.append("critical: generation performed without authorization")
-        if generation.get("authorized") is True and not generation.get("authorization_ref"):
+        if authorized is True and not _nonempty_text(generation.get("authorization_ref")):
             errors.append("generation authorization lacks evidence reference")
-        if generation.get("performed") is True and generation.get("asset_ref") != stages.get("asset", {}).get("artifact_ref"):
+        asset_record = stages.get("asset")
+        asset_ref = asset_record.get("artifact_ref") if isinstance(asset_record, dict) else None
+        if performed is True and (
+            not _nonempty_text(generation.get("asset_ref"))
+            or generation.get("asset_ref") != asset_ref
+        ):
             errors.append("generation output does not match the recorded asset")
 
     if project.get("published") is True:
@@ -132,9 +151,9 @@ def validate_project_chain(project):
 
     return {
         "project_id": project["project_id"],
-        "stage_count": sum(1 for s in STAGES if isinstance(stages.get(s), dict)),
+        "stage_count": sum(1 for stage in STAGES if isinstance(stages.get(stage), dict)),
         "required_stage_count": len(STAGES),
-        "approval_count": sum(1 for g in GATES if isinstance(approvals.get(g), dict)),
+        "approval_count": sum(1 for gate in GATES if isinstance(approvals.get(gate), dict)),
         "required_approval_count": len(GATES),
         "valid": not errors,
         "errors": errors,
