@@ -29,11 +29,14 @@ def _check_private_parent(parent: Path) -> None:
             "use an operating-system credential manager and the documented environment variables"
         )
     try:
+        parent_info = parent.lstat()
         info = parent.stat()
     except OSError:
         raise PrivateCredentialError("credential parent directory must already exist") from None
-    if not stat.S_ISDIR(info.st_mode):
-        raise PrivateCredentialError("credential parent path is not a directory")
+    if stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise PrivateCredentialError("credential parent must be a real directory, not a symlink")
+    if info.st_uid != os.getuid():
+        raise PrivateCredentialError("credential parent directory must be owned by the current user")
     if stat.S_IMODE(info.st_mode) & 0o077:
         raise PrivateCredentialError(
             "credential parent directory permissions must be owner-only (0700 or stricter)"
@@ -55,6 +58,8 @@ def load_private_credentials(path: str | os.PathLike[str]) -> dict[str, str]:
         raise PrivateCredentialError("credential file is missing or inaccessible") from None
     if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
         raise PrivateCredentialError("credential path must be a regular non-symlink file")
+    if info.st_uid != os.getuid():
+        raise PrivateCredentialError("credential file must be owned by the current user")
     if stat.S_IMODE(info.st_mode) & 0o077:
         raise PrivateCredentialError("credential file permissions must be owner-only (0600 or stricter)")
     if info.st_size > _MAX_BYTES:
@@ -64,8 +69,13 @@ def load_private_credentials(path: str | os.PathLike[str]) -> dict[str, str]:
         fd = os.open(target, flags)
         try:
             opened = os.fstat(fd)
-            if not stat.S_ISREG(opened.st_mode) or opened.st_ino != info.st_ino:
-                raise PrivateCredentialError("credential file changed during validation")
+            if (not stat.S_ISREG(opened.st_mode)
+                    or opened.st_ino != info.st_ino
+                    or opened.st_dev != info.st_dev
+                    or opened.st_uid != os.getuid()
+                    or stat.S_IMODE(opened.st_mode) & 0o077
+                    or opened.st_size > _MAX_BYTES):
+                raise PrivateCredentialError("credential file changed or became unsafe during validation")
             raw = os.read(fd, _MAX_BYTES + 1)
         finally:
             os.close(fd)
