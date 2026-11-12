@@ -39,7 +39,7 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             r"HTTP 400, invalid_client.*no credentials were saved",
         ) as caught:
             oauth_readonly._exchange_code(
-                client_id="client-id",
+                client_id="client-id", client_secret="test-client-secret",
                 code="one-time-code", redirect_uri="http://127.0.0.1/callback",
                 verifier="pkce-verifier",
             )
@@ -88,6 +88,37 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
                 code="one-time-code", redirect_uri="http://127.0.0.1",
                 verifier="pkce-verifier",
             )
+
+    @patch("rhemascript.integrations.oauth_readonly.build_opener")
+    def test_token_exchange_sends_client_secret_only_in_post_body(self, build_opener):
+        from io import BytesIO
+        from unittest.mock import MagicMock
+        from urllib.parse import parse_qs
+
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = (
+            b'{"scope":"' + oauth_readonly.READ_ONLY_SCOPE.encode("ascii")
+            + b'","access_token":"access-test","refresh_token":"refresh-test",'
+            b'"token_type":"Bearer"}'
+        )
+        response.__enter__.return_value = response
+        build_opener.return_value.open.return_value = response
+
+        oauth_readonly._exchange_code(
+            client_id="desktop-client-id",
+            client_secret="test-client-secret",
+            code="one-time-code",
+            redirect_uri="http://127.0.0.1:12345",
+            verifier="pkce-verifier",
+        )
+
+        request = build_opener.return_value.open.call_args.args[0]
+        form = parse_qs(request.data.decode("ascii"))
+        self.assertEqual(form["client_secret"], ["test-client-secret"])
+        self.assertNotIn("test-client-secret", request.full_url)
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.get_header("Content-type"), "application/x-www-form-urlencoded")
 
     def test_pkce_pair_uses_s256(self):
         verifier, challenge = oauth_readonly._create_pkce_pair()
@@ -284,7 +315,7 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
         }
         with self.assertRaises(oauth_readonly.OAuthBootstrapError):
             oauth_readonly.run_bootstrap(
-                client_id="desktop-client-id",
+                client_id="desktop-client-id", client_secret="test-client-secret",
                 credential_path="/private/youtube-oauth.json",
             )
         write_credentials.assert_not_called()
@@ -303,7 +334,7 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             "token_type": "Bearer",
         }
         oauth_readonly.run_bootstrap(
-            client_id="desktop-client-id",
+            client_id="desktop-client-id", client_secret="test-client-secret",
             credential_path="/private/youtube-oauth.json",
         )
         write_credentials.assert_called_once_with(
