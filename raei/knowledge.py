@@ -19,7 +19,7 @@ _ID = re.compile(r"^[A-Z0-9][A-Z0-9._:-]{2,127}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 SOURCE_TYPES = {"BIBLE", "OFFICIAL_DOC", "INTERNAL_SPEC", "CODE", "SECONDARY", "LESSON_FROM_FAILURE"}
 AUTHORITY_LEVELS = {"SCRIPTURE", "OFFICIAL_PRIMARY", "INTERNAL_APPROVED", "SECONDARY", "UNVERIFIED"}
-SOURCE_AUTHORITY = {"BIBLE": "SCRIPTURE", "OFFICIAL_DOC": "OFFICIAL_PRIMARY", "INTERNAL_SPEC": "INTERNAL_APPROVED", "CODE": "UNVERIFIED", "SECONDARY": "SECONDARY", "LESSON_FROM_FAILURE": "UNVERIFIED"}
+SOURCE_AUTHORITY = {"BIBLE": "SCRIPTURE", "OFFICIAL_DOC": "OFFICIAL_PRIMARY", "INTERNAL_SPEC": "UNVERIFIED", "CODE": "UNVERIFIED", "SECONDARY": "SECONDARY", "LESSON_FROM_FAILURE": "UNVERIFIED"}
 
 
 class RAEIKnowledgeError(ValueError):
@@ -203,7 +203,7 @@ def search_knowledge(
 ) -> list[dict[str, Any]]:
     if not isinstance(query, str) or not query.strip():
         raise RAEIKnowledgeError("search query must be a non-empty string")
-    terms = [term for term in re.findall(r"[^\\W_]+", query.lower(), flags=re.UNICODE) if term]
+    terms = [term for term in re.findall(r"[^\W_]+", query.lower(), flags=re.UNICODE) if term]
     if not terms:
         return []
     matches = []
