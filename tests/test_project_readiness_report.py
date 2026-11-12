@@ -125,6 +125,10 @@ class ReadinessReportTests(unittest.TestCase):
             self.assertEqual(report["evidence_integrity"]["source_resolution_receipts"][0]["catalog_revision"],
                              "catalog-v7")
             trace = report["evidence_traceability"]["artifacts"][0]["local_source_resolution"]
+            self.assertEqual(report["evidence_traceability"]["records"][0]["evidence_refs"][0]["resolution_status"],
+                             "CONTENT_VERIFIED")
+            self.assertEqual(report["evidence_traceability"]["artifacts"][0]["declared_evidence_refs"][0]["resolution_status"],
+                             "CONTENT_VERIFIED")
             self.assertEqual(trace["version"], "source-v7")
             self.assertEqual(trace["sha256"], digest)
             saved = registry.get(result.run_id)
