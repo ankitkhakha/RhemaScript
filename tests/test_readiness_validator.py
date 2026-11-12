@@ -1,5 +1,6 @@
 import unittest
-from raei.execution.validate_ledger import _verified_evidence as _verified_evidence_for_test\nfrom raei.execution.validate_ledger import (
+from raei.execution.validate_ledger import _verified_evidence as _verified_evidence_for_test
+from raei.execution.validate_ledger import (
     BIBLE_BOOKS, ETHICS_CASES, RHEMA_IDS, ENGINEERING_CAPSTONES, validate, report
 )
 
