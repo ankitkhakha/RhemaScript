@@ -35,6 +35,14 @@ class InterfaceRuntimeTests(unittest.TestCase):
         with self.assertRaises(InterfaceError): InterfaceGateway().invoke("IF-01",self.request("EXTERNAL_WRITE"))
     def test_idempotent_repeat_returns_same_response(self):
         g=InterfaceGateway(); self.assertEqual(g.invoke("IF-01",self.request()),g.invoke("IF-01",self.request()))
+    def test_raei_read_operation_is_acknowledged_not_dispatched_by_generic_gateway(self):
+        response = InterfaceGateway().invoke(
+            "IF-01",
+            self.request("READ_LEARNING_UNIT"),
+        )
+        self.assertEqual(response.status, "ACCEPTED_FOR_LOCAL_PROCESSING")
+        self.assertNotEqual(response.status, "COMPLETED_READ_ONLY")
+
     def test_unknown_interface_rejected(self):
         with self.assertRaises(InterfaceError): InterfaceGateway().invoke("IF-99",self.request())
 
