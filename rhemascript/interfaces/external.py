@@ -293,6 +293,9 @@ class ExternalIntegrationGateway:
                  "host": parsed.hostname, "request_fingerprint": fingerprint,
                  "request_bytes": len(body or b""), "phase": "REQUESTED"}
         self.audit_sink(dict(event))
+        write_attempted = method.upper() not in {"GET", "HEAD", "OPTIONS"}
+        transport_started = False
+        response_received = False
         try:
             secret_headers = self.credential_resolver(binding.provider_name)
             if not isinstance(secret_headers, dict) or any(
@@ -306,18 +309,49 @@ class ExternalIntegrationGateway:
             sender = getattr(self.transport, "send_request", None)
             if sender is None:
                 raise ExternalIntegrationError("transport does not support method-aware requests")
+            transport_started = True
             status, raw, response_headers = sender(
                 url, method.upper(), request_headers, body, binding.timeout_seconds
             )
+            response_received = True
             if not isinstance(status, int) or not isinstance(raw, bytes) or not isinstance(response_headers, dict):
                 raise ExternalIntegrationError("provider transport returned an invalid response contract")
             if len(raw) > max_response_bytes:
                 raise ExternalIntegrationError("provider response exceeds size limit")
             event.update({"phase": "COMPLETED", "http_status": status,
                           "response_bytes": len(raw)})
-            self.audit_sink(dict(event))
+            try:
+                self.audit_sink(dict(event))
+            except Exception:
+                if write_attempted:
+                    event["phase"] = "INDETERMINATE"
+                    event["error_type"] = "CompletionAuditFailure"
+                    try:
+                        self.audit_sink(dict(event))
+                    except Exception:
+                        pass
+                    raise ExternalIntegrationError(
+                        "provider write outcome is indeterminate: response received but completion audit failed; do not retry automatically"
+                    ) from None
+                raise
             return status, raw, response_headers
         except Exception as exc:
+            if event.get("phase") == "INDETERMINATE":
+                if isinstance(exc, ExternalIntegrationError):
+                    raise
+                raise ExternalIntegrationError(
+                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled"
+                ) from None
+            if write_attempted and transport_started and (not response_received or
+                    isinstance(exc, ExternalIntegrationError) and "completion audit failed" in str(exc)):
+                event.update({"phase": "INDETERMINATE", "error_type": type(exc).__name__})
+                try:
+                    self.audit_sink(dict(event))
+                except Exception:
+                    pass
+                raise ExternalIntegrationError(
+                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled"
+                ) from None
             event.update({"phase": "FAILED", "error_type": type(exc).__name__})
             self.audit_sink(dict(event))
             if isinstance(exc, ExternalIntegrationError):
