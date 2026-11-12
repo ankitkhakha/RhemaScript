@@ -204,6 +204,22 @@ class ApprovalVerifierTests(unittest.TestCase):
             )
         self.assertEqual(self.used, set())
 
+    def test_batch_requires_distinct_actors_by_default(self):
+        final = self.credential(
+            approval_id="approval-final-same-actor", nonce="nonce-final-same-actor",
+            action="FINAL_ACCEPTANCE", actor_id="same-director",
+        )
+        publish = self.credential(
+            approval_id="approval-publish-same-actor", nonce="nonce-publish-same-actor",
+            action="PUBLISH", actor_id="same-director",
+        )
+        with self.assertRaisesRegex(ApprovalError, "distinct authenticated actors"):
+            self.verifier.verify_many_and_consume(
+                (final, publish),
+                (self.expectations("FINAL_ACCEPTANCE"), self.expectations("PUBLISH")),
+            )
+        self.assertEqual(self.used, set())
+
     def test_batch_rejects_duplicate_ids_or_nonces(self):
         token = self.credential()
         with self.assertRaisesRegex(ApprovalError, "duplicate IDs or nonces"):
