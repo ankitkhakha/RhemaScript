@@ -5,13 +5,12 @@ reserved until an authenticated human-approval credential is integrated.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 from typing import Any
 
 from rhemascript.evidence.artifact_verification import (
-    EvidenceIntegrityError,
     EvidenceVersion,
     bind_assessment,
     is_verified_evidence_version,
@@ -40,6 +39,44 @@ def canonical_assessment_bytes(payload: dict[str, Any]) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise RAEITrainingError("assessment artifact must contain canonical JSON values") from exc
+
+
+def build_self_assessment_payload(
+    unit_id: str,
+    attempt_id: str,
+    evidence_id: str,
+    evidence_version: str,
+    criterion_scores: dict[str, int],
+    *,
+    critical_failures: list[str] | None = None,
+    assessor_note: str = "",
+    created_at_utc: str | None = None,
+) -> dict[str, Any]:
+    """Build the canonical artifact body for a RAEI self-assessment attempt."""
+    unit = _units_by_id().get(unit_id)
+    if unit is None:
+        raise RAEITrainingError(f"unknown curriculum unit: {unit_id}")
+    if not all(isinstance(value, str) and value.strip()
+               for value in (attempt_id, evidence_id, evidence_version)):
+        raise RAEITrainingError("attempt_id, evidence_id and evidence_version must be non-empty strings")
+    timestamp = created_at_utc or datetime.now(timezone.utc).isoformat()
+    if not isinstance(timestamp, str):
+        raise RAEITrainingError("created_at_utc must be a string")
+    return {
+        "schema": SCHEMA,
+        "curriculum_version": CURRICULUM_VERSION,
+        "attempt_id": attempt_id,
+        "unit_id": unit_id,
+        "learner_id": "RAEI",
+        "assessor_id": "RAEI",
+        "assessor_role": "RAEI_SELF",
+        "evidence_id": evidence_id,
+        "evidence_version": evidence_version,
+        "criterion_scores": dict(criterion_scores) if isinstance(criterion_scores, dict) else criterion_scores,
+        "critical_failures": list(critical_failures or []),
+        "assessor_note": assessor_note,
+        "created_at_utc": timestamp,
+    }
 
 
 def _units_by_id() -> dict[str, dict]:
@@ -142,6 +179,8 @@ def record_attempt(
         raise RAEITrainingError("assessment artifact does not identify the verified evidence version")
     if artifact_payload["learner_id"] != "RAEI" or artifact_payload["assessor_id"] != "RAEI" or artifact_payload["assessor_role"] != "RAEI_SELF":
         raise RAEITrainingError("this registry accepts RAEI self-assessments only; human review requires authenticated approval")
+    if not isinstance(artifact_payload["created_at_utc"], str):
+        raise RAEITrainingError("created_at_utc must be an ISO-8601 timestamp")
     try:
         created = datetime.fromisoformat(artifact_payload["created_at_utc"].replace("Z", "+00:00"))
     except (TypeError, ValueError) as exc:
