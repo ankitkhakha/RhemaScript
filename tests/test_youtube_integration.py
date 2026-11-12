@@ -409,6 +409,24 @@ class YouTubeIntegrationTests(unittest.TestCase):
             client.upload_video("/definitely/not/a/real/video.mp4", title="Approved",
                 description="Test", **self.publish_context())
 
+    def test_unauthorized_write_is_not_replayed_after_token_refresh(self):
+        calls = []
+        def transport(request, timeout):
+            calls.append((request.get_method(), request.full_url))
+            return 401, b'{"error":"unauthorized"}', {}
+
+        client = YouTubeClient(self.config(), transport=transport)
+        status, raw, _ = client._authorized_request(
+            "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+            method="POST",
+            body=b'{"snippet":{"title":"test"}}',
+            headers={"Authorization": "Bearer expired-token"},
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(raw, b'{"error":"unauthorized"}')
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "POST")
+
 
 if __name__ == "__main__":
     unittest.main()
