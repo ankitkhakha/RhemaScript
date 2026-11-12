@@ -192,6 +192,71 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(response_headers["Range"], "bytes=0-127")
         self.assertEqual(transport.calls[0][1], "PUT")
 
+    def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
+        class AmbiguousTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                raise TimeoutError("connection lost after request may have reached provider")
+
+        events = []
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_SESSION": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=AmbiguousTransport(),
+            audit_sink=events.append, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
+                gateway.request(
+                    "IF-18", "UPLOAD_SESSION",
+                    "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                    method="POST", body=b"metadata", request_id="write-1",
+                    project_id="RS-1", source_version="1.0",
+                    authority={"publishing_authorisation": True},
+                )
+        self.assertIn("INDETERMINATE", [event["phase"] for event in events])
+        self.assertNotIn("FAILED", [event["phase"] for event in events])
+
+    def test_write_completion_audit_failure_is_indeterminate(self):
+        class SuccessTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                return 200, b'{"session":"created"}', {"Location": "https://www.googleapis.com/session/opaque"}
+
+        events = []
+        def audit(event):
+            events.append(dict(event))
+            if event["phase"] == "COMPLETED":
+                raise OSError("audit storage unavailable")
+
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_SESSION": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=SuccessTransport(), audit_sink=audit, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
+                gateway.request(
+                    "IF-18", "UPLOAD_SESSION",
+                    "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                    method="POST", body=b"metadata", request_id="write-2",
+                    project_id="RS-1", source_version="1.0",
+                    authority={"publishing_authorisation": True},
+                )
+        self.assertIn("INDETERMINATE", [event["phase"] for event in events])
+
     def test_method_aware_request_audits_and_preserves_response_headers(self):
         class MethodTransport:
             def __init__(self):
