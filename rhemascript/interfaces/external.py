@@ -336,6 +336,12 @@ class ExternalIntegrationGateway:
                 raise
             return status, raw, response_headers
         except Exception as exc:
+            if event.get("phase") == "INDETERMINATE":
+                if isinstance(exc, ExternalIntegrationError):
+                    raise
+                raise ExternalIntegrationError(
+                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled"
+                ) from None
             if write_attempted and transport_started and (not response_received or
                     isinstance(exc, ExternalIntegrationError) and "completion audit failed" in str(exc)):
                 event.update({"phase": "INDETERMINATE", "error_type": type(exc).__name__})
