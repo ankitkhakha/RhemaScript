@@ -7,12 +7,14 @@ batch, or persist none of them.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 import json
 import re
+import threading
+import weakref
 from typing import Callable, Mapping, Sequence
 
 
@@ -28,6 +30,10 @@ _FIELDS = {
 _SCHEMA = "RhemaScript.ApprovalCredential.v1"
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _SIGNATURE_HEX = re.compile(r"^[0-9a-f]{128}$")
+_VERIFIED_APPROVAL_TOKEN = object()
+_VERIFIED_APPROVAL_LOCK = threading.Lock()
+_VERIFIED_APPROVALS: weakref.WeakValueDictionary[int, "VerifiedApproval"] = weakref.WeakValueDictionary()
+
 
 
 @dataclass(frozen=True)
@@ -43,6 +49,16 @@ class VerifiedApproval:
     expires_at: datetime
     nonce: str
     key_id: str
+    _verification_token: object | None = field(default=None, repr=False, compare=False)
+
+
+def is_verified_approval(value: object) -> bool:
+    """Accept only the exact in-process object produced by ApprovalVerifier."""
+    return (
+        isinstance(value, VerifiedApproval)
+        and value._verification_token is _VERIFIED_APPROVAL_TOKEN
+        and _VERIFIED_APPROVALS.get(id(value)) is value
+    )
 
 
 class ApprovalVerifier:
@@ -58,7 +74,7 @@ class ApprovalVerifier:
         max_lifetime: timedelta = timedelta(minutes=10),
         clock_skew: timedelta = timedelta(seconds=30),
     ) -> None:
-        if not isinstance(issuer, str) or not issuer.strip():
+        if not isinstance(issuer, str) or not _ID.fullmatch(issuer):
             raise ValueError("trusted issuer is required")
         if not verification_keys:
             raise ValueError("at least one verification key is required")
@@ -68,9 +84,11 @@ class ApprovalVerifier:
             raise ValueError("Ed25519 verification keys require non-empty IDs and exactly 32 public-key bytes")
         if not callable(consume_many_once):
             raise ValueError("an atomic consume_many_once callback is required")
-        if max_lifetime <= timedelta(0) or max_lifetime > timedelta(hours=1):
+        if (not isinstance(max_lifetime, timedelta)
+                or max_lifetime <= timedelta(0) or max_lifetime > timedelta(hours=1)):
             raise ValueError("max_lifetime must be positive and no greater than one hour")
-        if clock_skew < timedelta(0) or clock_skew > timedelta(minutes=2):
+        if (not isinstance(clock_skew, timedelta)
+                or clock_skew < timedelta(0) or clock_skew > timedelta(minutes=2)):
             raise ValueError("clock_skew must be between zero and two minutes")
         self.issuer = issuer
         self._keys = dict(verification_keys)
@@ -133,13 +151,13 @@ class ApprovalVerifier:
             Ed25519PublicKey.from_public_bytes(public_key).verify(
                 bytes.fromhex(signature), self._canonical(token)
             )
-        except (InvalidSignature, ValueError):
+        except (InvalidSignature, ValueError, TypeError):
             raise ApprovalError("approval signature is invalid") from None
 
         issued_at = self._timestamp(token["issued_at"], "issued_at")
         expires_at = self._timestamp(token["expires_at"], "expires_at")
         now = self._clock()
-        if not isinstance(now, datetime) or now.tzinfo is None:
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
             raise ApprovalError("verifier clock must return a timezone-aware datetime")
         now = now.astimezone(timezone.utc)
         if issued_at > now + self._clock_skew:
@@ -156,7 +174,10 @@ class ApprovalVerifier:
             project_id=token["project_id"], project_version=token["project_version"],
             request_id=token["request_id"], issued_at=issued_at,
             expires_at=expires_at, nonce=token["nonce"], key_id=token["key_id"],
+            _verification_token=_VERIFIED_APPROVAL_TOKEN,
         )
+        with _VERIFIED_APPROVAL_LOCK:
+            _VERIFIED_APPROVALS[id(verified)] = verified
         return verified
 
     def verify_and_consume(
@@ -180,7 +201,7 @@ class ApprovalVerifier:
         credentials: Sequence[object],
         expectations: Sequence[Mapping[str, str]],
         *,
-        require_distinct_actors: bool = False,
+        require_distinct_actors: bool = True,
     ) -> tuple[VerifiedApproval, ...]:
         """Verify every credential, then atomically consume all or none.
 
