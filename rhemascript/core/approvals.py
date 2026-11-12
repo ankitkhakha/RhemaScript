@@ -1,8 +1,9 @@
 """Verification-only, request-bound approval credentials.
 
-The issuer and its signing keys live outside RhemaScript. This module never
-creates approvals. The consume_once callback must atomically reject revoked
-or previously consumed approval IDs/nonces and persist first use.
+The issuer and signing keys live outside RhemaScript. This module never
+creates approvals. The consume_many_once callback must atomically reject
+revoked or previously consumed IDs/nonces and persist every approval in a
+batch, or persist none of them.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import hashlib
 import hmac
 import json
 import re
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 
 class ApprovalError(PermissionError):
@@ -45,14 +46,14 @@ class VerifiedApproval:
 
 
 class ApprovalVerifier:
-    """Verify externally signed, narrowly scoped approvals; never mint tokens."""
+    """Verify externally signed approvals and consume all required records atomically."""
 
     def __init__(
         self,
         *,
         issuer: str,
         verification_keys: Mapping[str, bytes],
-        consume_once: Callable[[str, str, datetime], bool],
+        consume_many_once: Callable[[tuple[tuple[str, str, datetime], ...]], bool],
         clock: Callable[[], datetime] | None = None,
         max_lifetime: timedelta = timedelta(minutes=10),
         clock_skew: timedelta = timedelta(seconds=30),
@@ -65,15 +66,15 @@ class ApprovalVerifier:
                or not isinstance(v, bytes) or len(v) < 32
                for k, v in verification_keys.items()):
             raise ValueError("verification keys require non-empty IDs and at least 32 secret bytes")
-        if not callable(consume_once):
-            raise ValueError("an atomic consume_once callback is required")
+        if not callable(consume_many_once):
+            raise ValueError("an atomic consume_many_once callback is required")
         if max_lifetime <= timedelta(0) or max_lifetime > timedelta(hours=1):
             raise ValueError("max_lifetime must be positive and no greater than one hour")
         if clock_skew < timedelta(0) or clock_skew > timedelta(minutes=2):
             raise ValueError("clock_skew must be between zero and two minutes")
         self.issuer = issuer
         self._keys = dict(verification_keys)
-        self._consume_once = consume_once
+        self._consume_many_once = consume_many_once
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_lifetime = max_lifetime
         self._clock_skew = clock_skew
@@ -98,7 +99,7 @@ class ApprovalVerifier:
             raise ApprovalError(f"approval {field} must include a timezone")
         return parsed.astimezone(timezone.utc)
 
-    def verify_and_consume(
+    def _verify_one(
         self,
         credential: object,
         *,
@@ -106,7 +107,7 @@ class ApprovalVerifier:
         project_id: str,
         project_version: str,
         request_id: str,
-    ) -> VerifiedApproval:
+    ) -> tuple[VerifiedApproval, tuple[str, str, datetime]]:
         if not isinstance(credential, dict) or set(credential) != _FIELDS:
             raise ApprovalError("approval credential has an invalid shape")
         token = dict(credential)
@@ -145,16 +146,64 @@ class ApprovalVerifier:
             raise ApprovalError("approval lifetime exceeds policy")
         if issued_at < now - self._max_lifetime - self._clock_skew:
             raise ApprovalError("approval is too old")
-        try:
-            consumed = self._consume_once(token["approval_id"], token["nonce"], expires_at)
-        except Exception:
-            raise ApprovalError("approval state could not be verified") from None
-        if consumed is not True:
-            raise ApprovalError("approval is revoked or has already been consumed")
-        return VerifiedApproval(
+        verified = VerifiedApproval(
             approval_id=token["approval_id"], issuer=token["issuer"],
             actor_id=token["actor_id"], action=token["action"],
             project_id=token["project_id"], project_version=token["project_version"],
             request_id=token["request_id"], issued_at=issued_at,
             expires_at=expires_at, nonce=token["nonce"], key_id=token["key_id"],
         )
+        return verified, (verified.approval_id, verified.nonce, verified.expires_at)
+
+    def verify_and_consume(
+        self,
+        credential: object,
+        *,
+        action: str,
+        project_id: str,
+        project_version: str,
+        request_id: str,
+    ) -> VerifiedApproval:
+        """Verify and atomically consume one credential."""
+        return self.verify_many_and_consume(
+            (credential,),
+            ({"action": action, "project_id": project_id,
+              "project_version": project_version, "request_id": request_id},),
+        )[0]
+
+    def verify_many_and_consume(
+        self,
+        credentials: Sequence[object],
+        expectations: Sequence[Mapping[str, str]],
+    ) -> tuple[VerifiedApproval, ...]:
+        """Verify every credential, then atomically consume all or none.
+
+        Expectations are ordered and each contains action, project_id,
+        project_version, and request_id. This supports separately signed
+        FINAL_ACCEPTANCE and PUBLISH approvals for the same exact request.
+        """
+        if (not isinstance(credentials, (tuple, list)) or not credentials
+                or not isinstance(expectations, (tuple, list))
+                or len(credentials) != len(expectations)):
+            raise ApprovalError("approval batch is empty or has mismatched expectations")
+        verified = []
+        consumption = []
+        for credential, expected in zip(credentials, expectations):
+            if not isinstance(expected, Mapping) or set(expected) != {
+                "action", "project_id", "project_version", "request_id"
+            }:
+                raise ApprovalError("approval expectation has an invalid shape")
+            result, entry = self._verify_one(credential, **dict(expected))
+            verified.append(result)
+            consumption.append(entry)
+        approval_ids = [item.approval_id for item in verified]
+        nonces = [item.nonce for item in verified]
+        if len(set(approval_ids)) != len(approval_ids) or len(set(nonces)) != len(nonces):
+            raise ApprovalError("approval batch contains duplicate IDs or nonces")
+        try:
+            consumed = self._consume_many_once(tuple(consumption))
+        except Exception:
+            raise ApprovalError("approval batch state could not be verified") from None
+        if consumed is not True:
+            raise ApprovalError("approval batch is revoked, replayed, or could not be consumed atomically")
+        return tuple(verified)
