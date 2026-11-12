@@ -136,6 +136,8 @@ class ExternalIntegrationGateway:
                 or any(ord(char) < 32 for char in path)):
             raise ExternalIntegrationError("operation path is not a safe relative provider path")
 
+        if self.audit_sink is None:
+            raise ExternalIntegrationError("auditable integration requires an audit sink")
         # This legacy entry point always transmits POST. Require write
         # authority before cache access as well as before provider transport.
         try:
@@ -153,8 +155,6 @@ class ExternalIntegrationGateway:
             raise ExternalIntegrationError("operation mapping changed provider host")
         canonical = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         key = sha256((interface_id + ":" + canonical).encode()).hexdigest()
-        if self.audit_sink is None:
-            raise ExternalIntegrationError("auditable integration requires an audit sink")
         # Claim the key before transport. Duplicates wait for this request's
         # terminal result instead of racing into a second provider POST.
         with self._lock:
