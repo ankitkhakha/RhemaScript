@@ -105,6 +105,18 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
         self.assertFalse(self.registry.verify_checkpoint(checkpoint, b"short"))
 
+    def test_list_all_returns_all_records_in_insertion_order(self):
+        self.registry.record("RUN-1", self.report, self.evidence)
+        self.registry.record("RUN-2", {"overall_status": "SECOND"}, ())
+        records = self.registry.list_all()
+        self.assertEqual([item["run_id"] for item in records], ["RUN-1", "RUN-2"])
+
+    def test_rejects_non_finite_values_and_non_string_object_keys(self):
+        with self.assertRaises(ValueError):
+            self.registry.record("RUN-NAN", {"score": float("nan")}, ())
+        with self.assertRaises(TypeError):
+            self.registry.record("RUN-KEY", {1: "invalid"}, ())
+
     def test_checkpoint_rejects_short_key(self):
         with self.assertRaises(ValueError):
             self.registry.checkpoint(b"short")
