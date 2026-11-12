@@ -195,7 +195,7 @@ class ApprovalVerifierTests(unittest.TestCase):
         )
         publish = self.credential(
             approval_id="approval-publish-0001", nonce="nonce-publish-0001",
-            action="PUBLISH",
+            action="PUBLISH", actor_id="publisher-0001",
         )
         with self.assertRaisesRegex(ApprovalError, "batch is revoked"):
             self.verifier.verify_many_and_consume(
