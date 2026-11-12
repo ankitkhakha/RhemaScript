@@ -263,6 +263,24 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("thumb-access", repr(events))
         self.assertNotIn("thumbnail-bytes", repr(events))
 
+    def test_thumbnail_rejects_oversized_file_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile(suffix=".png") as image:
+            image.write(b"x" * (2 * 1024 * 1024 + 1))
+            image.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "no larger than 2 MB"):
+                    client.set_thumbnail("video-123", image.name, **self.publish_context())
+
+    def test_thumbnail_rejects_unknown_extension_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile(suffix=".gif") as image:
+            image.write(b"image")
+            image.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "PNG or JPEG"):
+                    client.set_thumbnail("video-123", image.name, **self.publish_context())
+
     def test_request_rejects_non_google_hosts_before_transport(self):
         calls = []
         client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
