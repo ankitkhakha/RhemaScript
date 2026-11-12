@@ -18,8 +18,8 @@ class ValidationReportWriterTests(unittest.TestCase):
 
     def test_creates_owner_only_report(self):
         report = self.root / "report.json"
-        write_report(report, '{"overall_status":"PASS"}\\n')
-        self.assertEqual(report.read_text(), '{"overall_status":"PASS"}\\n')
+        write_report(report, '{"overall_status":"PASS"}\n')
+        self.assertEqual(report.read_text(), '{"overall_status":"PASS"}\n')
         self.assertEqual(stat.S_IMODE(report.stat().st_mode), 0o600)
         self.assertEqual(report.stat().st_uid, os.getuid())
 
@@ -29,12 +29,12 @@ class ValidationReportWriterTests(unittest.TestCase):
         link = self.root / "report.json"
         link.symlink_to(target)
         with self.assertRaises(OSError):
-            write_report(link, '{"overall_status":"PASS"}\\n')
+            write_report(link, '{"overall_status":"PASS"}\n')
         self.assertEqual(target.read_text(), "do not change")
 
     def test_refuses_missing_parent(self):
         with self.assertRaises(OSError):
-            write_report(self.root / "missing" / "report.json", "{}\\n")
+            write_report(self.root / "missing" / "report.json", "{}\n")
 
 
 if __name__ == "__main__":
