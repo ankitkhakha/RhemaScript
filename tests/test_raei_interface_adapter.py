@@ -90,6 +90,25 @@ class RAEIReadOnlyAdapterTests(unittest.TestCase):
         with self.assertRaises(RAEIAdapterError):
             self.adapter.validate_project_snapshot({"project_id": "incomplete"})
 
+    def test_service_dispatcher_exposes_only_named_read_operations(self):
+        self.store.create_unit("UNIT-DISPATCH", "Dispatcher read")
+        result = self.adapter.invoke("READ_LEARNING_UNIT", {"unit_id": "UNIT-DISPATCH"})
+        self.assertEqual(result["status"], "COMPLETED_READ_ONLY")
+        self.assertFalse(result["write_performed"])
+        self.assertEqual(result["result"]["unit"]["unit_id"], "UNIT-DISPATCH")
+
+    def test_service_dispatcher_rejects_write_and_unknown_operations(self):
+        for operation in ("RECORD_LEARNING_ASSESSMENT", "PUBLISH", "GENERATE", "UNKNOWN"):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(RAEIAdapterError, "not registered"):
+                    self.adapter.invoke(operation, {})
+
+    def test_service_dispatcher_rejects_extra_payload_fields(self):
+        with self.assertRaisesRegex(RAEIAdapterError, "only unit_id"):
+            self.adapter.invoke("READ_LEARNING_UNIT", {
+                "unit_id": "UNIT-1", "authorize_write": True,
+            })
+
     def test_adapter_requires_explicit_evidence_store(self):
         with self.assertRaises(RAEIAdapterError):
             RAEIReadOnlyAdapter(None)
