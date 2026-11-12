@@ -45,6 +45,46 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             )
         self.assertNotIn("DO_NOT_EXPOSE_SECRET", str(caught.exception))
 
+    def test_google_error_descriptions_are_mapped_to_fixed_safe_categories(self):
+        self.assertEqual(
+            oauth_readonly._safe_google_error_detail(
+                "Missing required parameter: code_verifier"
+            ),
+            "missing_code_verifier",
+        )
+        self.assertEqual(
+            oauth_readonly._safe_google_error_detail("Invalid code verifier."),
+            "invalid_code_verifier",
+        )
+        self.assertIsNone(
+            oauth_readonly._safe_google_error_detail("DO_NOT_EXPOSE_SECRET")
+        )
+
+    @patch("rhemascript.integrations.oauth_readonly.build_opener")
+    def test_token_exchange_includes_only_allowlisted_error_detail(self, build_opener):
+        from urllib.error import HTTPError
+        from io import BytesIO
+
+        build_opener.return_value.open.side_effect = HTTPError(
+            oauth_readonly.TOKEN_URL,
+            400,
+            "Bad Request",
+            {},
+            BytesIO(
+                b'{"error":"invalid_request",'
+                b'"error_description":"Missing required parameter: code_verifier"}'
+            ),
+        )
+        with self.assertRaisesRegex(
+            oauth_readonly.OAuthBootstrapError,
+            r"HTTP 400, invalid_request:missing_code_verifier",
+        ):
+            oauth_readonly._exchange_code(
+                client_id="client-id",
+                code="one-time-code", redirect_uri="http://127.0.0.1",
+                verifier="pkce-verifier",
+            )
+
     def test_pkce_pair_uses_s256(self):
         verifier, challenge = oauth_readonly._create_pkce_pair()
         import base64
