@@ -116,6 +116,11 @@ Automated CI has passed for the IF-18 gateway routing and fail-closed tests, the
 `JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable external requests. No OAuth consent, channel connection, live upload, thumbnail change, analytics query, public release, merge, or deployment has been performed. A passing CI run validates mocked contracts only; it does not validate account permissions, quota, billing status, or real Google responses.
 
 
+
+### Authority trust boundary — production blocker
+
+The current `human_director_acceptance` and `publishing_authorisation` inputs are in-process boolean assertions. The Evidence Pack and six-gate checks validate project evidence and approval state, but these booleans are not themselves cryptographic proof of who supplied the approval, and the generic gateway's authority dictionary is caller-supplied. This is acceptable only as a trusted local prototype boundary; it is not an authenticated operator identity or approval service. Do not expose the provider gateway as a remote service or accept authority dictionaries from untrusted callers. Before any production or multi-user deployment, replace boolean-only authority with authenticated, actor-attributed, project/version-scoped approval records, including request binding, expiry and revocation, and derive gateway authority from a verified approval source rather than caller input. This is a readiness blocker, not permission to enable publishing.
+
 ### Local audit sink
 
 The included `JsonlAuditSink` is exported from `rhemascript.integrations`. Example:
