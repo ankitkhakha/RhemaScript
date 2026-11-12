@@ -173,6 +173,16 @@ class YouTubeIntegrationTests(unittest.TestCase):
         })
         return context
 
+    def mark_client_as_read_back_verified(self, client, video_id="video-123"):
+        # Test fixture for the private process-local trust anchor established
+        # only by verify_video() after a successful API read-back.
+        client._verified_upload_context = {
+            "video_id": video_id,
+            "project_id": "RS-TEST-001",
+            "project_version": "1.0",
+            "final_film_artifact_id": "ART-8",
+        }
+
     def test_config_rejects_upload_chunk_larger_than_32_mib(self):
         with self.assertRaisesRegex(YouTubeIntegrationError, "between 256 KiB and 32 MiB"):
             YouTubeConfig("client", "secret", "refresh", chunk_size=33 * 1024 * 1024).validate()
@@ -300,6 +310,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
         )
         client = YouTubeClient(self.config(), gateway=gateway)
+        self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"thumbnail-bytes")
             image.flush()
@@ -327,6 +338,16 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 with self.assertRaisesRegex(YouTubeIntegrationError, "VERIFIED YouTube read-back artifact"):
                     client.set_thumbnail("video-123", image.name, **context)
 
+    def test_thumbnail_rejects_caller_fabricated_verification_artifact_without_live_readback(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        context = self.add_verified_video_evidence(self.publish_context())
+        with tempfile.NamedTemporaryFile(suffix=".png") as image:
+            image.write(b"thumbnail")
+            image.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "same client session"):
+                    client.set_thumbnail("video-123", image.name, **context)
+
     def test_thumbnail_rejects_verified_video_bound_to_another_final_film(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.add_verified_video_evidence(self.publish_context())
@@ -340,6 +361,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
     def test_thumbnail_rejects_oversized_file_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"x" * (2 * 1024 * 1024 + 1))
             image.flush()
