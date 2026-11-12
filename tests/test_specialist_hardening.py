@@ -70,6 +70,35 @@ class SpecialistEvidenceHardeningTests(unittest.TestCase):
         with self.assertRaisesRegex(SpecialistInputError, "duration_seconds"):
             assess_specialist("CAP-08", self._cap08_evidence(shot_duration=math.inf))
 
+
+    def test_cap08_rejects_non_finite_narration_timing(self):
+        evidence = self._cap08_evidence()
+        evidence["approved_narration_segments"][0]["start_seconds"] = math.nan
+        with self.assertRaisesRegex(SpecialistInputError, "approved_narration_segments"):
+            assess_specialist("CAP-08", evidence)
+
+    def test_cap08_flags_non_finite_caption_timing(self):
+        evidence = self._cap08_evidence()
+        evidence["audio_caption_plan"]["caption_segments"][0]["start_seconds"] = math.nan
+        result = assess_specialist("CAP-08", evidence)
+        self.assertEqual(result["caption_timing_mismatches"], ["NARR-01"])
+        self.assertEqual(result["feasibility"], "GAPS_FOUND")
+
+    def test_cap08_malformed_generation_units_do_not_crash_during_sum(self):
+        evidence = self._cap08_evidence(budget=10, shot_duration=10)
+        shot = evidence["shot_plan"][0]
+        shot.update({
+            "generation_required": True,
+            "asset_reviewed": True,
+            "new_generation_justification": "Synthetic regression fixture",
+            "selected_operation": "SYNTHETIC_TEST",
+            "selected_model": "SYNTHETIC_MODEL",
+            "generation_unit_durations": ["not-a-number"],
+        })
+        result = assess_specialist("CAP-08", evidence)
+        self.assertIn("GENERATION_UNIT_DURATION_UNSUPPORTED", result["shot_findings"][0]["flags"])
+        self.assertNotIn("GENERATION_UNITS_DO_NOT_MATCH_SHOT_DURATION", result["shot_findings"][0]["flags"])
+
     def test_cap03_malformed_script_element_fails_with_domain_error(self):
         with self.assertRaisesRegex(SpecialistInputError, "script_elements"):
             assess_specialist("CAP-03", {
