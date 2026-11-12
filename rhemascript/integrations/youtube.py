@@ -489,15 +489,33 @@ class YouTubeClient:
         return json.loads(raw)
 
     def verify_video(self, video_id: str) -> dict[str, Any]:
+        """Read back one exact video ID and return only validated status fields."""
+        if not isinstance(video_id, str) or not video_id.strip() or video_id != video_id.strip():
+            raise YouTubeIntegrationError("video_id must be a non-empty exact ID")
         data = self._api("videos", params={"part": "snippet,status,processingDetails", "id": video_id})
         items = data.get("items", [])
-        if len(items) != 1:
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
             raise YouTubeIntegrationError("video ID was not found during verification")
         item = items[0]
-        return {"video_id": item.get("id"), "title": item.get("snippet", {}).get("title"),
-                "privacy_status": item.get("status", {}).get("privacyStatus"),
-                "upload_status": item.get("status", {}).get("uploadStatus"),
-                "processing_status": item.get("processingDetails", {}).get("processingStatus")}
+        if item.get("id") != video_id:
+            raise YouTubeIntegrationError("YouTube returned a different video ID during verification")
+        snippet = item.get("snippet")
+        status = item.get("status")
+        processing = item.get("processingDetails")
+        if not isinstance(snippet, dict) or not isinstance(status, dict) or not isinstance(processing, dict):
+            raise YouTubeIntegrationError("YouTube returned incomplete video verification details")
+        title = snippet.get("title")
+        privacy_status = status.get("privacyStatus")
+        upload_status = status.get("uploadStatus")
+        processing_status = processing.get("processingStatus")
+        if not isinstance(title, str) or not isinstance(privacy_status, str):
+            raise YouTubeIntegrationError("YouTube returned invalid video metadata during verification")
+        if upload_status is not None and not isinstance(upload_status, str):
+            raise YouTubeIntegrationError("YouTube returned an invalid upload status")
+        if processing_status is not None and not isinstance(processing_status, str):
+            raise YouTubeIntegrationError("YouTube returned an invalid processing status")
+        return {"video_id": video_id, "title": title, "privacy_status": privacy_status,
+                "upload_status": upload_status, "processing_status": processing_status}
 
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
