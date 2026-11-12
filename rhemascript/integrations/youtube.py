@@ -521,8 +521,18 @@ class YouTubeClient:
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
                   dimensions: str = "day", filters: str | None = None) -> dict[str, Any]:
+        if not isinstance(start_date, date) or isinstance(start_date, datetime):
+            raise YouTubeIntegrationError("start_date must be a date, not a datetime")
+        if not isinstance(end_date, date) or isinstance(end_date, datetime):
+            raise YouTubeIntegrationError("end_date must be a date, not a datetime")
         if end_date < start_date:
             raise YouTubeIntegrationError("end_date cannot precede start_date")
+        if not isinstance(metrics, str) or not metrics.strip() or len(metrics) > 500:
+            raise YouTubeIntegrationError("metrics must be a non-empty string of at most 500 characters")
+        if not isinstance(dimensions, str) or not dimensions.strip() or len(dimensions) > 200:
+            raise YouTubeIntegrationError("dimensions must be a non-empty string of at most 200 characters")
+        if filters is not None and (not isinstance(filters, str) or len(filters) > 500):
+            raise YouTubeIntegrationError("filters must be a string of at most 500 characters")
         params: dict[str, Any] = {
             "ids": "channel==MINE", "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(), "metrics": metrics, "dimensions": dimensions,
