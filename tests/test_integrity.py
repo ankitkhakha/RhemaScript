@@ -53,6 +53,20 @@ class IntegrityChainTests(unittest.TestCase):
         project["approvals"]["biblical_accuracy"]["status"]="pending"
         self.assertFalse(validate_project_chain(project)["valid"])
 
+    def test_unknown_stage_and_gate_are_rejected(self):
+        project = complete_project()
+        project["stages"]["unreviewed_extra_stage"] = {
+            "status": "present", "artifact_ref": "extra-v1",
+            "source_ref": "source:extra", "revision": 1,
+        }
+        project["approvals"]["emergency_override"] = {
+            "status": "approved", "approval_ref": "approval:override",
+            "artifact_ref": "extra-v1",
+        }
+        errors = validate_project_chain(project)["errors"]
+        self.assertTrue(any("unknown source-to-final stage" in e for e in errors))
+        self.assertTrue(any("unknown approval gate" in e for e in errors))
+
     def test_gate_must_reference_current_stage_artifact(self):
         project=complete_project()
         project["approvals"]["final_film"]["artifact_ref"]="old-edit"
