@@ -371,8 +371,13 @@ class YouTubeClient:
             raise YouTubeIntegrationError("scheduled publication requires private privacy and an RFC3339 publish_at")
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
-        if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
-            raise YouTubeIntegrationError("tags must be a list of strings")
+        if tags is not None:
+            if not isinstance(tags, list) or any(not isinstance(x, str) or not x.strip() for x in tags):
+                raise YouTubeIntegrationError("tags must be a list of non-empty strings")
+            if sum(len(tag) for tag in tags) > 500:
+                raise YouTubeIntegrationError("combined tag length exceeds 500 characters")
+        if not isinstance(category_id, (str, int)) or isinstance(category_id, bool) or not str(category_id).isdigit():
+            raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
         metadata: dict[str, Any] = {
             "snippet": {"title": title.strip(), "description": description,
