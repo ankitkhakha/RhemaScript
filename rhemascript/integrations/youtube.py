@@ -7,7 +7,7 @@ No external request is made at import time.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,6 +15,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import json
 import os
+import re
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
@@ -36,6 +37,20 @@ REQUIRED_SCOPES = (
 
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
+
+def _validate_publish_at(value: Any) -> None:
+    """Require a future RFC3339 timestamp with an explicit UTC offset."""
+    pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})"
+    if not isinstance(value, str) or not re.fullmatch(pattern, value):
+        raise YouTubeIntegrationError("publish_at must be a future RFC3339 timestamp with an explicit timezone")
+    try:
+        scheduled = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        raise YouTubeIntegrationError("publish_at must be a valid future RFC3339 timestamp") from None
+    if scheduled.tzinfo is None or scheduled.utcoffset() is None:
+        raise YouTubeIntegrationError("publish_at must include an explicit timezone")
+    if scheduled <= datetime.now(timezone.utc):
+        raise YouTubeIntegrationError("publish_at must be in the future")
 
 
 class _NoRedirect(HTTPRedirectHandler):
@@ -367,12 +382,19 @@ class YouTubeClient:
             raise YouTubeIntegrationError("description exceeds the supported limit")
         if privacy_status not in {"private", "unlisted", "public"}:
             raise YouTubeIntegrationError("invalid privacy_status")
-        if publish_at and (privacy_status != "private" or not isinstance(publish_at, str)):
-            raise YouTubeIntegrationError("scheduled publication requires private privacy and an RFC3339 publish_at")
+        if publish_at is not None:
+            if privacy_status != "private":
+                raise YouTubeIntegrationError("scheduled publication requires private privacy")
+            _validate_publish_at(publish_at)
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
-        if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
-            raise YouTubeIntegrationError("tags must be a list of strings")
+        if tags is not None:
+            if not isinstance(tags, list) or any(not isinstance(x, str) or not x.strip() for x in tags):
+                raise YouTubeIntegrationError("tags must be a list of non-empty strings")
+            if sum(len(tag) for tag in tags) > 500:
+                raise YouTubeIntegrationError("combined tag length exceeds 500 characters")
+        if not isinstance(category_id, (str, int)) or isinstance(category_id, bool) or not str(category_id).isdigit():
+            raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
         metadata: dict[str, Any] = {
             "snippet": {"title": title.strip(), "description": description,
@@ -521,8 +543,18 @@ class YouTubeClient:
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
                   dimensions: str = "day", filters: str | None = None) -> dict[str, Any]:
+        if not isinstance(start_date, date) or isinstance(start_date, datetime):
+            raise YouTubeIntegrationError("start_date must be a date, not a datetime")
+        if not isinstance(end_date, date) or isinstance(end_date, datetime):
+            raise YouTubeIntegrationError("end_date must be a date, not a datetime")
         if end_date < start_date:
             raise YouTubeIntegrationError("end_date cannot precede start_date")
+        if not isinstance(metrics, str) or not metrics.strip() or len(metrics) > 500:
+            raise YouTubeIntegrationError("metrics must be a non-empty string of at most 500 characters")
+        if not isinstance(dimensions, str) or not dimensions.strip() or len(dimensions) > 200:
+            raise YouTubeIntegrationError("dimensions must be a non-empty string of at most 200 characters")
+        if filters is not None and (not isinstance(filters, str) or len(filters) > 500):
+            raise YouTubeIntegrationError("filters must be a string of at most 500 characters")
         params: dict[str, Any] = {
             "ids": "channel==MINE", "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(), "metrics": metrics, "dimensions": dimensions,
