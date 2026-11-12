@@ -228,6 +228,61 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertNotIn("opaque", repr(events))
         self.assertNotIn("video bytes", repr(events))
 
+    def test_generic_post_invocation_requires_external_write_authority(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (self.binding(),), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "external-write authority"):
+            gateway.invoke("IF-01", self.request())
+        self.assertEqual(transport.calls, [])
+
+    def test_generic_post_invocation_requires_explicit_authority_before_transport(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (self.binding(),), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            result = gateway.invoke("IF-01", self.request())
+        self.assertEqual(result["status"], "PROVIDER_CONFIRMED")
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_generic_operation_path_rejects_traversal_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-01", provider_name="provider",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"READ": "../admin"},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+                gateway.invoke("IF-01", self.request())
+        self.assertEqual(transport.calls, [])
+
+    def test_generic_operation_path_rejects_encoded_traversal_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-01", provider_name="provider",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"READ": "youtube/%2e%2e/admin"},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport,
+            audit_sink=lambda event: None, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+                gateway.invoke("IF-01", self.request())
+        self.assertEqual(transport.calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()
