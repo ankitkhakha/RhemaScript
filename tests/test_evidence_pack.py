@@ -107,6 +107,7 @@ class EvidencePackTests(unittest.TestCase):
                     reference=reference, source_id="SRC-1", relative_path="source.txt",
                     version="1", expected_sha256=hashlib.sha256(content).hexdigest(),
                     media_type="text/plain", catalog_revision="catalog-v1",
+                    project_id=PROJECT["project_id"], project_version=PROJECT["version"],
                 )
             })
             validated, result = run_evidence_pack(
@@ -139,6 +140,7 @@ class EvidencePackTests(unittest.TestCase):
                     reference=reference, source_id="SRC-1", relative_path="source.txt",
                     version="1", expected_sha256=hashlib.sha256(content).hexdigest(),
                     media_type="text/plain", catalog_revision="catalog-v1",
+                    project_id=PROJECT["project_id"], project_version=PROJECT["version"],
                 )
             })
             with self.assertRaisesRegex(EvidencePackError, "SHA-256 does not match"):
