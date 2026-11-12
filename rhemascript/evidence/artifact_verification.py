@@ -13,6 +13,7 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 from typing import Any
+import weakref
 
 
 class EvidenceIntegrityError(ValueError):
@@ -21,6 +22,23 @@ class EvidenceIntegrityError(ValueError):
 
 _VERIFIED_EVIDENCE_TOKEN = object()
 _VERIFIED_BINDING_TOKEN = object()
+_VERIFIED_EVIDENCE_INSTANCES: dict[int, weakref.ReferenceType] = {}
+_VERIFIED_BINDING_INSTANCES: dict[int, weakref.ReferenceType] = {}
+
+
+def _register_instance(value: object, registry: dict[int, weakref.ReferenceType]) -> None:
+    identity = id(value)
+
+    def discard(reference: weakref.ReferenceType) -> None:
+        if registry.get(identity) is reference:
+            registry.pop(identity, None)
+
+    registry[identity] = weakref.ref(value, discard)
+
+
+def _is_registered_instance(value: object, registry: dict[int, weakref.ReferenceType]) -> bool:
+    reference = registry.get(id(value))
+    return reference is not None and reference() is value
 
 
 def _canonical(value: Any) -> bytes:
@@ -72,7 +90,8 @@ def verify_artifact(root: str | os.PathLike[str], relative_path: str, *,
     # Descriptor-relative traversal closes the lstat/open race on parent components.
     # On platforms without these primitives, fail closed instead of reverting to
     # path-based checks that can be raced by replacing a directory with a symlink.
-    if os.open not in getattr(os, "supports_dir_fd", set()) or not hasattr(os, "O_DIRECTORY"):
+    if (os.open not in getattr(os, "supports_dir_fd", set())
+            or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")):
         raise EvidenceIntegrityError("safe descriptor-relative verification is unavailable on this platform")
 
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
@@ -118,17 +137,20 @@ def verify_artifact(root: str | os.PathLike[str], relative_path: str, *,
         for descriptor in reversed(opened_directories):
             os.close(descriptor)
 
-    return EvidenceVersion(
+    result = EvidenceVersion(
         evidence_id, rel.as_posix(), version, digest.hexdigest(), size,
         _VERIFIED_EVIDENCE_TOKEN,
     )
+    _register_instance(result, _VERIFIED_EVIDENCE_INSTANCES)
+    return result
 
 
 def bind_assessment(assessment_id: str, evidence: EvidenceVersion, score: int) -> AssessmentBinding:
     if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
         raise EvidenceIntegrityError("score must be an integer from 0 through 4")
     if (not isinstance(evidence, EvidenceVersion)
-            or evidence._verification_token is not _VERIFIED_EVIDENCE_TOKEN):
+            or evidence._verification_token is not _VERIFIED_EVIDENCE_TOKEN
+            or not _is_registered_instance(evidence, _VERIFIED_EVIDENCE_INSTANCES)):
         raise EvidenceIntegrityError("assessment requires evidence returned by verify_artifact")
     if (not isinstance(evidence.sha256, str)
             or len(evidence.sha256) != 64
@@ -136,10 +158,12 @@ def bind_assessment(assessment_id: str, evidence: EvidenceVersion, score: int) -
         raise EvidenceIntegrityError("verified evidence has an invalid SHA-256 digest")
     if not isinstance(assessment_id, str) or not assessment_id.strip():
         raise EvidenceIntegrityError("assessment_id must be non-empty")
-    return AssessmentBinding(
+    result = AssessmentBinding(
         assessment_id, evidence.evidence_id, evidence.version, evidence.sha256, score,
         _VERIFIED_BINDING_TOKEN,
     )
+    _register_instance(result, _VERIFIED_BINDING_INSTANCES)
+    return result
 
 
 def is_verified_assessment_binding(binding: AssessmentBinding) -> bool:
@@ -147,6 +171,7 @@ def is_verified_assessment_binding(binding: AssessmentBinding) -> bool:
     return (
         isinstance(binding, AssessmentBinding)
         and binding._verification_token is _VERIFIED_BINDING_TOKEN
+        and _is_registered_instance(binding, _VERIFIED_BINDING_INSTANCES)
         and isinstance(binding.assessment_id, str) and bool(binding.assessment_id.strip())
         and isinstance(binding.evidence_id, str) and bool(binding.evidence_id.strip())
         and isinstance(binding.evidence_version, str) and bool(binding.evidence_version.strip())
@@ -164,6 +189,7 @@ def verify_assessment_binding(binding: AssessmentBinding, current: EvidenceVersi
         is_verified_assessment_binding(binding)
         and isinstance(current, EvidenceVersion)
         and current._verification_token is _VERIFIED_EVIDENCE_TOKEN
+        and _is_registered_instance(current, _VERIFIED_EVIDENCE_INSTANCES)
         and binding.evidence_id == current.evidence_id
         and binding.evidence_version == current.version
         and hmac.compare_digest(binding.evidence_sha256, current.sha256)
