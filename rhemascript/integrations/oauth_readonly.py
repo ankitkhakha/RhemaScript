@@ -48,6 +48,10 @@ def _load_desktop_client_config(path: str | Path) -> tuple[str, str]:
     """Load a matching Google Desktop OAuth client pair from local JSON."""
     target = Path(path).expanduser()
     try:
+        resolved = target.resolve(strict=True)
+        repository_root = Path(__file__).resolve().parents[2]
+        if resolved == repository_root or repository_root in resolved.parents:
+            raise OAuthBootstrapError("OAuth client config must be kept outside the RhemaScript repository")
         info = target.lstat()
         if target.is_symlink() or not target.is_file() or info.st_size > 16_384:
             raise OAuthBootstrapError("OAuth client config must be a regular, non-symlink file under 16 KB")
