@@ -83,6 +83,7 @@ def run_project_assessment(
     run_id: str | None = None,
     orchestrator: Any = None,
     evidence_root: str | None = None,
+    local_source_resolver: Any = None,
     readiness_registry: Any = None,
 ) -> tuple[Any, OrchestrationResult, dict[str, Any]]:
     """Validate a project pack, assess it, and return its read-only readiness report."""
@@ -95,6 +96,7 @@ def run_project_assessment(
         run_id=run_id,
         orchestrator=orchestrator,
         evidence_root=evidence_root,
+        local_source_resolver=local_source_resolver,
     )
     report = build_readiness_report(result)
     report["evidence_integrity"] = {
@@ -104,6 +106,22 @@ def run_project_assessment(
             "Artifact status labels were not checked against local file bytes."
             if validated.evidence_integrity_mode == "STRUCTURAL_ONLY" else None
         ),
+        "source_resolution_receipts": [
+            {
+                "reference": receipt.original_reference,
+                "source_id": receipt.source_id,
+                "version": receipt.version,
+                "sha256": receipt.sha256,
+                "catalog_revision": receipt.catalog_revision,
+                "catalog_fingerprint": receipt.catalog_fingerprint,
+                "project_id": receipt.project_id,
+                "project_version": receipt.project_version,
+                "outcome": receipt.outcome,
+                "source_authentication": receipt.source_authentication,
+                "claim_relevance": receipt.claim_relevance,
+            }
+            for receipt in validated.source_resolution_receipts
+        ],
     }
     verified_by_id = {item.evidence_id: item for item in validated.byte_verified_artifacts}
     artifact_capabilities: dict[str, list[str]] = {}
@@ -150,6 +168,19 @@ def run_project_assessment(
                     }
                     for reference in artifact.get("evidence_refs", [])
                 ],
+                "local_source_resolution": next((
+                    {
+                        "reference": receipt.original_reference,
+                        "source_id": receipt.source_id,
+                        "version": receipt.version,
+                        "sha256": receipt.sha256,
+                        "catalog_revision": receipt.catalog_revision,
+                        "catalog_fingerprint": receipt.catalog_fingerprint,
+                        "status": receipt.outcome,
+                    }
+                    for receipt in validated.source_resolution_receipts
+                    if receipt.source_id == artifact["artifact_id"]
+                ), None),
             }
             for artifact in validated.artifacts
         ],
@@ -160,7 +191,10 @@ def run_project_assessment(
             raise TypeError("readiness_registry must be a ReadinessRunRegistry")
         if validated.evidence_integrity_mode != "BYTE_VERIFIED":
             raise ValueError("durable readiness registration requires byte-verified evidence_root")
-        readiness_registry.record(result.run_id, report, validated.byte_verified_artifacts)
+        readiness_registry.record(
+            result.run_id, report, validated.byte_verified_artifacts,
+            validated.source_resolution_receipts,
+        )
         report["durable_assessment"] = {
             "registered": True,
             "registry_type": "LOCAL_SQLITE",
