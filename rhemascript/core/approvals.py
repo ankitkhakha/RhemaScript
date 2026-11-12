@@ -53,7 +53,7 @@ class ApprovalVerifier:
         *,
         issuer: str,
         verification_keys: Mapping[str, bytes],
-        consume_many_once: Callable[[tuple[tuple[str, str, datetime], ...]], bool],
+        consume_many_once: Callable[[tuple[VerifiedApproval, ...]], bool],
         clock: Callable[[], datetime] | None = None,
         max_lifetime: timedelta = timedelta(minutes=10),
         clock_skew: timedelta = timedelta(seconds=30),
@@ -107,7 +107,7 @@ class ApprovalVerifier:
         project_id: str,
         project_version: str,
         request_id: str,
-    ) -> tuple[VerifiedApproval, tuple[str, str, datetime]]:
+    ) -> VerifiedApproval:
         if not isinstance(credential, dict) or set(credential) != _FIELDS:
             raise ApprovalError("approval credential has an invalid shape")
         token = dict(credential)
@@ -157,7 +157,7 @@ class ApprovalVerifier:
             request_id=token["request_id"], issued_at=issued_at,
             expires_at=expires_at, nonce=token["nonce"], key_id=token["key_id"],
         )
-        return verified, (verified.approval_id, verified.nonce, verified.expires_at)
+        return verified
 
     def verify_and_consume(
         self,
@@ -191,21 +191,19 @@ class ApprovalVerifier:
                 or len(credentials) != len(expectations)):
             raise ApprovalError("approval batch is empty or has mismatched expectations")
         verified = []
-        consumption = []
         for credential, expected in zip(credentials, expectations):
             if not isinstance(expected, Mapping) or set(expected) != {
                 "action", "project_id", "project_version", "request_id"
             }:
                 raise ApprovalError("approval expectation has an invalid shape")
-            result, entry = self._verify_one(credential, **dict(expected))
+            result = self._verify_one(credential, **dict(expected))
             verified.append(result)
-            consumption.append(entry)
         approval_ids = [item.approval_id for item in verified]
         nonces = [item.nonce for item in verified]
         if len(set(approval_ids)) != len(approval_ids) or len(set(nonces)) != len(nonces):
             raise ApprovalError("approval batch contains duplicate IDs or nonces")
         try:
-            consumed = self._consume_many_once(tuple(consumption))
+            consumed = self._consume_many_once(tuple(verified))
         except Exception:
             raise ApprovalError("approval batch state could not be verified") from None
         if consumed is not True:
