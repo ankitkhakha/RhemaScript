@@ -43,6 +43,21 @@ def _fingerprint(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
 
 
+def _contains_symlink_component(path: Path) -> bool:
+    """Return True if any existing component of an absolute path is a symlink."""
+    absolute = Path(os.path.abspath(path))
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current = current / part
+        try:
+            if stat.S_ISLNK(current.lstat().st_mode):
+                return True
+        except FileNotFoundError:
+            # The caller validates existence of the final parent separately.
+            continue
+    return False
+
+
 def _identity_audit(sink, *, expected_channel_id: str,
                     actual_channel_id: str | None, matched: bool,
                     error_type: str | None = None) -> None:
@@ -83,11 +98,14 @@ def run_connection_check(credential_file: str | Path,
     if os.name != "posix":
         raise YouTubeIntegrationError("read-only credential and audit files require POSIX permissions")
     try:
-        parent_lstat = audit_parent.lstat()
+        if _contains_symlink_component(audit_parent):
+            raise YouTubeIntegrationError("audit path must not contain symbolic links")
         parent_info = audit_parent.stat()
+    except YouTubeIntegrationError:
+        raise
     except OSError:
         raise YouTubeIntegrationError("audit parent directory is missing or inaccessible") from None
-    if (stat.S_ISLNK(parent_lstat.st_mode) or not stat.S_ISDIR(parent_info.st_mode)
+    if (not stat.S_ISDIR(parent_info.st_mode)
             or parent_info.st_uid != os.getuid()
             or stat.S_IMODE(parent_info.st_mode) & 0o077):
         raise YouTubeIntegrationError("audit parent directory must be owner-controlled with 0700 permissions")
