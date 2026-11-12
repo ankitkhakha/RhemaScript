@@ -319,8 +319,19 @@ class SQLiteApprovalConsumptionStore:
     def backup_to(self, destination: str | os.PathLike[str]) -> Path:
         """Create an owner-only SQLite backup in an already-private directory."""
         target = Path(destination).expanduser()
-        parent_info = target.parent.lstat()
-        parent_stat = target.parent.stat()
+        try:
+            absolute = target.absolute()
+            current = Path(absolute.anchor)
+            for component in absolute.parts[1:-1]:
+                current = current / component
+                if stat.S_ISLNK(current.lstat().st_mode):
+                    raise ApprovalStoreError("backup path must not contain symlinked directories")
+            parent_info = target.parent.lstat()
+            parent_stat = target.parent.stat()
+        except ApprovalStoreError:
+            raise
+        except OSError:
+            raise ApprovalStoreError("backup parent directory must already exist") from None
         if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_stat.st_mode)
                 or parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) & 0o077):
             raise ApprovalStoreError("backup parent directory must be owner-owned and private")
