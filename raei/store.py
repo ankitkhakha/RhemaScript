@@ -278,6 +278,8 @@ class EvidenceStore:
         destination_path = Path(destination)
         if destination_path.resolve() == Path(self.path).resolve():
             raise StoreError("backup destination must differ from the live database")
+        if destination_path.exists():
+            raise StoreError("backup destination already exists; refusing to overwrite")
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         source = self._connect()
         target = sqlite3.connect(str(destination_path), timeout=10)
@@ -292,7 +294,7 @@ class EvidenceStore:
         """Validate the source DB before copying or initializing a restore target."""
         if not path.is_file():
             raise StoreError("backup file does not exist")
-        uri = f"file:{path.resolve().as_posix()}?mode=ro"
+        uri = path.resolve().as_uri() + "?mode=ro"
         try:
             source = sqlite3.connect(uri, uri=True, timeout=10)
             source.row_factory = sqlite3.Row
@@ -300,6 +302,9 @@ class EvidenceStore:
                 integrity = source.execute("PRAGMA integrity_check").fetchone()
                 if integrity is None or integrity[0] != "ok":
                     raise StoreError("backup failed SQLite integrity check")
+                foreign_key_errors = source.execute("PRAGMA foreign_key_check").fetchall()
+                if foreign_key_errors:
+                    raise StoreError("backup contains foreign-key violations")
                 tables = {
                     row[0] for row in source.execute(
                         "SELECT name FROM sqlite_master WHERE type='table'"
