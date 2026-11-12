@@ -105,7 +105,7 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
 def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
     """Require a strict RFC3339 timestamp with offset and a future instant."""
     if not isinstance(value, str) or not re.fullmatch(
-        r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})",
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})",
         value,
     ):
         raise YouTubeIntegrationError(
