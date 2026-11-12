@@ -74,7 +74,7 @@ For a scheduled public release, YouTube requires the upload to be private and a 
 
 ## Remaining external activation and assurance
 
-A real channel connection and upload cannot be verified until the owner configures OAuth and explicitly authorises a test upload. API access, OAuth consent, channel permissions, quota and account-specific restrictions must be confirmed in the user's existing Google project. No live upload, thumbnail change, public release, or analytics access has been performed by this code change.
+The owner-operated read-only OAuth connection has since been completed, and the authenticated channel ID matched the owner-supplied expected ID using exactly `youtube.readonly`. This verifies channel identity only. Upload-scope and Analytics-scope consent, live upload, thumbnail write, public/scheduled release and Analytics access remain unperformed. API write permissions, quota and account-specific restrictions still require separate owner-led checks.
 
 The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. Before production use, add a local encrypted secret store if the deployment environment provides one; this implementation intentionally reads secrets from environment variables only.
 
