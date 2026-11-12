@@ -17,7 +17,7 @@ class StoreError(ValueError):
 
 
 def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 def _hash(value: Any) -> str:
@@ -128,7 +128,14 @@ class EvidenceStore:
 
     def create_unit(self, unit_id: str, title: str, prerequisites: list[str] | None = None,
                     idempotency_key: str | None = None) -> dict[str, Any]:
-        prerequisites = prerequisites or []
+        if prerequisites is None:
+            prerequisites = []
+        if not isinstance(prerequisites, list):
+            raise StoreError("prerequisites must be a list")
+        if any(not isinstance(item, str) or not item.strip() for item in prerequisites):
+            raise StoreError("each prerequisite must be a non-empty string")
+        if len(prerequisites) != len(set(prerequisites)):
+            raise StoreError("prerequisites must be a unique list")
         request = {"action": "create_unit", "unit_id": unit_id, "title": title,
                    "prerequisites": prerequisites}
         with self._connect() as db:
@@ -141,8 +148,6 @@ class EvidenceStore:
                 raise StoreError("unit_id is required")
             if not isinstance(title, str) or not title.strip():
                 raise StoreError("title is required")
-            if not isinstance(prerequisites, list) or len(prerequisites) != len(set(prerequisites)):
-                raise StoreError("prerequisites must be a unique list")
             if unit_id in prerequisites:
                 raise StoreError("unit cannot depend on itself")
             for prerequisite in prerequisites:
