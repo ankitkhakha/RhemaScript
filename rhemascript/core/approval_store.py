@@ -157,7 +157,8 @@ class SQLiteApprovalConsumptionStore:
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
-            for approval_id, nonce, _ in normalized:
+            for entry in normalized:
+                approval_id, nonce = entry[0], entry[1]
                 row = db.execute(
                     "SELECT 1 FROM revoked_approvals WHERE approval_id=? OR nonce=?",
                     (approval_id, nonce),
