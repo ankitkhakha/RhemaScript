@@ -100,6 +100,8 @@ class ReadinessReportTests(unittest.TestCase):
         trace = report["evidence_traceability"]
         self.assertEqual(trace["records"][0]["capability_id"], "CAP-01")
         self.assertEqual(trace["records"][0]["artifact_refs"], ["SOURCE-1"])
+        self.assertEqual(trace["records"][0]["evidence_refs"][0]["resolution_status"],
+                         "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER")
         self.assertEqual(trace["artifacts"][0]["capability_ids"], ["CAP-01"])
         self.assertEqual(trace["artifacts"][0]["integrity_status"], "NOT_BYTE_VERIFIED")
         self.assertFalse(report["generation_preconditions_met"])
