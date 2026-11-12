@@ -41,7 +41,7 @@ class RAEICLITests(unittest.TestCase):
         self.assertIn("already exists", errors)
 
     def test_status_requires_existing_database(self):
-        code, _, errors = self.run_cli("status", "--database", str(self.database))
+        code, _, errors = self.run_cli("status", "--database", str(self.database), "--evidence-root", str(self.private))
         self.assertEqual(code, 2)
         self.assertIn("does not exist", errors)
 
@@ -50,7 +50,7 @@ class RAEICLITests(unittest.TestCase):
         code, output, errors = self.run_cli("status", "--database", str(self.database))
         self.assertEqual(code, 0, errors)
         self.assertEqual(json.loads(output)["recorded_units"], 0)
-        code, output, errors = self.run_cli("next", "--database", str(self.database))
+        code, output, errors = self.run_cli("next", "--database", str(self.database), "--evidence-root", str(self.private))
         self.assertEqual(code, 0, errors)
         self.assertIsNotNone(json.loads(output))
 
@@ -58,9 +58,15 @@ class RAEICLITests(unittest.TestCase):
         self.run_cli("init", "--database", str(self.database))
         link = self.private / "link.sqlite3"
         link.symlink_to(self.database)
-        code, _, errors = self.run_cli("status", "--database", str(link))
+        code, _, errors = self.run_cli("status", "--database", str(link), "--evidence-root", str(self.private))
         self.assertEqual(code, 2)
         self.assertIn("symlink", errors)
+
+    def test_verify_detects_missing_artifact_root(self):
+        self.run_cli("init", "--database", str(self.database))
+        code, _, errors = self.run_cli("verify", "--database", str(self.database), "--evidence-root", str(self.private / "missing"))
+        self.assertEqual(code, 2)
+        self.assertIn("evidence artefact integrity", errors)
 
     def test_private_parent_is_required(self):
         public = self.root / "public"
