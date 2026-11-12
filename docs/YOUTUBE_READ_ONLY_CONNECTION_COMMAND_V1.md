@@ -1,6 +1,6 @@
 # Read-only YouTube connection command V1.0
 
-**Status:** Merged into `main` in commit `2e5940618a18278899a69ed9ca7a548f35d33645`. Post-merge GitHub Actions synthetic CI passed in run [43146990690](https://github.com/ankitkhakha/RhemaScript/actions/runs/43146990690) on 2026-11-12. No live owner OAuth or channel connection has been performed.
+**Implementation status:** The read-only connection command is merged into `main` in commit `2e5940618a18278899a69ed9ca7a548f35d33645`; its post-merge synthetic CI passed in run [43146990690](https://github.com/ankitkhakha/RhemaScript/actions/runs/43146990690). **Owner verification update (2026-11-12):** OAuth authorization and live IF-18 channel identity verification have since succeeded locally using the candidate bootstrap in draft PR #40. The expected channel matched. The current grant is `youtube.readonly` only. PR #40 remains unmerged, and no upload, thumbnail write, analytics query or publication was performed.
 
 ## Purpose
 
@@ -43,7 +43,7 @@ A mismatch or failed check is recorded as FAILED and the command exits non-zero.
 - The connection command's gateway is explicitly enabled only for this read-only operation. The owner has separately approved enabling publishing capability in RhemaScript; this read-only command does not exercise or confer project-level publishing authority. Each project remains subject to its Evidence Pack, six approved gates, final-film evidence, human director acceptance, and explicit project-level publishing authorization.
 - No upload, metadata mutation, thumbnail change, scheduling, or publication is enabled or authorized by a successful connection check.
 - No credential values are to be pasted into ChatGPT, issue comments, source files, CI logs, or audit records.
-- This command is a connection diagnostic, not deployment, OAuth consent setup, or a live test until the owner runs it locally.
+- This command is a connection diagnostic, not deployment or publishing authorization. The owner has already completed the live read-only identity check locally; retain this procedure for repeat verification when needed. The OAuth bootstrap used for the successful owner run is proposed separately in draft PR #40 and is not yet merged.
 
 ## Repeatable validation harness
 
