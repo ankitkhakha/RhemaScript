@@ -260,7 +260,7 @@ def _cap08(e):
         if not isinstance(segment,dict) or not segment.get("segment_id") or not isinstance(segment.get("text"),str):
             raise SpecialistInputError(f"approved_narration_segments[{i}] requires segment_id and text")
         start=segment.get("start_seconds"); end=segment.get("end_seconds")
-        if any(isinstance(x,bool) or not isinstance(x,(int,float)) for x in (start,end)) or start<0 or end<=start:
+        if any(isinstance(x,bool) or not isinstance(x,(int,float)) or not math.isfinite(x) for x in (start,end)) or start<0 or end<=start:
             raise SpecialistInputError(f"approved_narration_segments[{i}] has invalid timing")
         narration_by_id[segment["segment_id"]]=segment
     durations=[]; shot_findings=[]; required_assets=set()
