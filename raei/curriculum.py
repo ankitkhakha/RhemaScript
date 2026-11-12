@@ -136,9 +136,15 @@ def build_registry() -> list[dict]:
     by_domain: dict[str, list[dict]] = {}
     for item in units:
         by_domain.setdefault(item["domain"], []).append(item)
-    for domain_units in by_domain.values():
+    previous_domain_final = None
+    for domain, domain_units in by_domain.items():
         for index, item in enumerate(domain_units):
-            item["prerequisites"] = [domain_units[index - 1]["id"]] if index else []
+            if index:
+                item["prerequisites"] = [domain_units[index - 1]["id"]]
+            elif previous_domain_final:
+                item["prerequisites"] = [previous_domain_final]
+        if domain != "integrated":
+            previous_domain_final = domain_units[-1]["id"]
     units[-1]["prerequisites"] = [
         domain_units[-1]["id"] for domain, domain_units in by_domain.items() if domain != "integrated"
     ]
