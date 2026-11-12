@@ -2,7 +2,7 @@ name: RhemaScript CI
 
 on:
   push:
-    branches: ["main", "ci/**"]
+    branches: ["main", "ci/**", "feat/**"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
