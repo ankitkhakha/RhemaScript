@@ -179,6 +179,8 @@ class ApprovalVerifier:
         self,
         credentials: Sequence[object],
         expectations: Sequence[Mapping[str, str]],
+        *,
+        require_distinct_actors: bool = False,
     ) -> tuple[VerifiedApproval, ...]:
         """Verify every credential, then atomically consume all or none.
 
@@ -202,6 +204,8 @@ class ApprovalVerifier:
         nonces = [item.nonce for item in verified]
         if len(set(approval_ids)) != len(approval_ids) or len(set(nonces)) != len(nonces):
             raise ApprovalError("approval batch contains duplicate IDs or nonces")
+        if require_distinct_actors and len({item.actor_id for item in verified}) != len(verified):
+            raise ApprovalError("approval batch requires distinct authenticated actors")
         try:
             consumed = self._consume_many_once(tuple(verified))
         except Exception:
