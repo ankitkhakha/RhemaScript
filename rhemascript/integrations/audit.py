@@ -63,7 +63,7 @@ class JsonlAuditSink:
             if key in _SAFE_INTEGER_FIELDS and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
                 raise AuditSinkError("audit event numeric field is invalid")
         try:
-            record = (json.dumps(event, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
+            record = (json.dumps(record_data, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
         except (TypeError, ValueError):
             raise AuditSinkError("audit event is not serializable") from None
 
