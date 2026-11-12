@@ -111,5 +111,36 @@ class LearningWorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.data["units"]["U1"]["corrections"]),1)
         validate(self.data)
 
+    def test_lesson_rejects_malformed_collection_types(self):
+        invalid_lessons = [
+            ("objectives", "not-a-list"),
+            ("source_refs", [""]),
+            ("rubric", ["not-a-dict"]),
+        ]
+        for field, value in invalid_lessons:
+            args = {
+                "objectives": ["Explain concept"],
+                "source_refs": ["source:1"],
+                "practice_prompt": "Build an example",
+                "rubric": {"accuracy": "Correctness"},
+            }
+            args[field] = value
+            with self.subTest(field=field), self.assertRaises(LedgerError):
+                create_lesson(self.data, "U1", **args)
+
+    def test_practice_rejects_unhashable_status(self):
+        self.lesson()
+        with self.assertRaises(LedgerError):
+            record_practice(self.data, "U1", "artifact", "method", "result", [])
+
+    def test_assessment_rejects_non_string_reference_and_note(self):
+        self.lesson()
+        record_practice(self.data, "U1", "artifact", "method", "result")
+        scores = {"correctness": 3, "reasoning": 3}
+        with self.assertRaises(LedgerError):
+            record_rubric_assessment(self.data, "U1", scores, 123, "verified")
+        with self.assertRaises(LedgerError):
+            record_rubric_assessment(self.data, "U1", scores, "artifact", "verified", [])
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
