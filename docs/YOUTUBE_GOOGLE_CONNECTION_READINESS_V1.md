@@ -4,7 +4,7 @@
 
 This is an owner-operated readiness checklist for connecting RhemaScript to an existing Google Cloud project and the intended YouTube channel. It does not perform OAuth, change Cloud settings, enable APIs, access the channel, grant publishing authority, or make an external request.
 
-The integration is implemented against Google's official YouTube Data API v3 and YouTube Analytics API. A successful local preflight or CI run is not proof that Google has granted access. Live connection remains unverified until the channel owner completes the checks below and explicitly authorises a limited read-only connection test.
+The integration is implemented against Google's official YouTube Data API v3 and YouTube Analytics API. A successful local preflight or CI run is not proof that Google has granted access. **Current status (2026-11-12):** the owner has completed OAuth and a live read-only IF-18 channel identity check; the intended channel matched. The granted scope is `youtube.readonly` only. PR #40 contains the isolated OAuth bootstrap but remains open/draft and is not merged into `main`. The setup and staged-activation instructions below remain the baseline for future operators; the completed read-only steps do not need to be repeated. Upload, thumbnail, analytics and publishing checks remain outstanding and require their own permissions and approvals.
 
 ## 1. Confirm the existing Google Cloud project
 
