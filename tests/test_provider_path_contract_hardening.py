@@ -17,12 +17,12 @@ class MethodTransport:
 
 
 class ProviderPathContractHardeningTests(unittest.TestCase):
-    def binding(self, *, hosts=("www.googleapis.com",), path_prefix="/youtube/v3/channels"):
+    def binding(self, *, allowed_hosts=("www.googleapis.com",), hosts=("www.googleapis.com",), path_prefix="/youtube/v3/channels"):
         return ProviderBinding(
             interface_id="IF-18",
             provider_name="youtube",
             endpoint="https://www.googleapis.com",
-            allowed_hosts=("www.googleapis.com",),
+            allowed_hosts=allowed_hosts,
             operations={"CHANNEL_READ": {
                 "method": "GET",
                 "hosts": hosts,
@@ -73,7 +73,7 @@ class ProviderPathContractHardeningTests(unittest.TestCase):
 
     def test_method_contract_rejects_backslash_in_host_allowlist(self):
         with self.assertRaisesRegex(ExternalIntegrationError, "host allowlist is invalid"):
-            self.binding(hosts=("www.googleapis.com\\\\",)).validate()
+            self.binding(allowed_hosts=("www.googleapis.com\\\\",)).validate()
 
     def test_method_contract_rejects_invalid_method(self):
         binding = self.binding()
