@@ -19,7 +19,7 @@ See [Creative Filmmaking Intelligence V1.0](docs/CREATIVE_FILMMAKING_INTELLIGENC
 
 ## YouTube integration
 
-The zero-cost official API client is in `rhemascript.integrations.youtube`. See [YouTube Integration — Zero Cost V1.0](docs/YOUTUBE_INTEGRATION_ZERO_COST_V1.md).
+The zero-cost official API client is in `rhemascript.integrations.youtube`. See [YouTube Integration — Zero Cost V1.0](docs/YOUTUBE_INTEGRATION_ZERO_COST_V1.md) and the [Google Connection Readiness Checklist V1](docs/YOUTUBE_GOOGLE_CONNECTION_READINESS_V1.md) for owner-led Cloud/OAuth setup, least-privilege scopes, local secret handling and staged activation.
 
 The client supports authenticated channel retrieval, resumable video upload, metadata, scheduled publication, custom thumbnails, upload verification and YouTube Analytics queries. It uses Python's standard library and has no added package dependencies. Credentials are injected from local environment variables; no secrets are stored in source control. Publishing operations fail closed without explicit publishing authority and uploaded videos default to private.
 
