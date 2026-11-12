@@ -58,8 +58,8 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     return 200, b'{"access_token":"read-only-token"}', {}
                 if operation == "CHANNEL_READ":
                     self.assert_authorization(kwargs)
-                    self.assertIn("part=snippet", url)
-                    self.assertIn("mine=true", url)
+                    if "part=snippet" not in url or "mine=true" not in url:
+                        raise AssertionError("channel identity request must use the read-only snippet query")
                     return 200, b'{"items":[{"id":"UC-EXPECTED","snippet":{"title":"RhemaScript"}}]}', {}
                 raise AssertionError("read-only verification attempted an unexpected operation")
             def assert_authorization(self, kwargs):
