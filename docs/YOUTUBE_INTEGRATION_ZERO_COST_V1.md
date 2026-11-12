@@ -19,10 +19,11 @@ YouTube API quota is not a per-call monetary fee, but it is limited and subject 
 1. Use an existing Google Cloud project (do not create a paid resource).
 2. Enable YouTube Data API v3 and YouTube Analytics API.
 3. Configure an OAuth consent screen and an OAuth client for a local installed application.
-4. Obtain offline OAuth consent for the RhemaScript YouTube channel with these scopes:
-   - `https://www.googleapis.com/auth/youtube.upload`
-   - `https://www.googleapis.com/auth/youtube.readonly`
-   - `https://www.googleapis.com/auth/yt-analytics.readonly`
+4. Obtain offline OAuth consent only for the feature being activated:
+   - Read-only channel identity check: `https://www.googleapis.com/auth/youtube.readonly` only. The verifier checks Google's returned token scope and rejects missing or broader grants.
+   - Video upload, only after separate production approval: `https://www.googleapis.com/auth/youtube.upload`, with read-only scope only where required for verification.
+   - Analytics, only when separately enabled: `https://www.googleapis.com/auth/yt-analytics.readonly`.
+   Do not reuse a broader publishing or analytics refresh token for the read-only identity check.
 5. Supply the OAuth client ID, client secret and refresh token as local environment variables. Never commit them to Git.
 
 Environment variables:
