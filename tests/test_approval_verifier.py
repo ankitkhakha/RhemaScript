@@ -1,6 +1,6 @@
-import hashlib
-import hmac
 import json
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -10,7 +10,8 @@ from rhemascript.core.approvals import ApprovalError, ApprovalVerifier
 class ApprovalVerifierTests(unittest.TestCase):
     def setUp(self):
         self.now = datetime(2026, 11, 12, 8, 0, tzinfo=timezone.utc)
-        self.key = b"test-only-signing-key-material-32-bytes-minimum"
+        self.private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        self.key = self.private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         self.used = set()
         self.revoked = set()
         self.consume_calls = []
@@ -50,12 +51,10 @@ class ApprovalVerifierTests(unittest.TestCase):
             "key_id": "key-2026-01",
         }
         payload.update(overrides)
-        payload["signature"] = hmac.new(
-            self.key,
+        payload["signature"] = self.private_key.sign(
             json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                       ensure_ascii=False, allow_nan=False).encode(),
-            hashlib.sha256,
-        ).hexdigest()
+                       ensure_ascii=False, allow_nan=False).encode()
+        ).hex()
         return payload
 
     def verify(self, credential):
@@ -144,7 +143,7 @@ class ApprovalVerifierTests(unittest.TestCase):
             )
 
     def test_rejects_weak_verification_keys(self):
-        with self.assertRaisesRegex(ValueError, "32 secret bytes"):
+        with self.assertRaisesRegex(ValueError, "32 public-key bytes"):
             ApprovalVerifier(
                 issuer="trusted-issuer", verification_keys={"key": b"weak"},
                 consume_many_once=lambda *_: True,
