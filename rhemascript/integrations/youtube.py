@@ -111,13 +111,14 @@ class YouTubeConfig:
     @classmethod
     def from_environment(cls) -> "YouTubeConfig":
         names = ("RHEMASCRIPT_YOUTUBE_CLIENT_ID",
+                 "RHEMASCRIPT_YOUTUBE_CLIENT_SECRET",
                  "RHEMASCRIPT_YOUTUBE_REFRESH_TOKEN")
         values = [os.environ.get(name, "").strip() for name in names]
         if not all(values):
             raise YouTubeIntegrationError(
-                "YouTube credentials are not configured; set the client ID and refresh token environment variables"
+                "YouTube credentials are not configured; set the three RHEMASCRIPT_YOUTUBE_* environment variables"
             )
-        return cls(values[0], "", values[1])
+        return cls(*values)
 
     @classmethod
     def from_private_file(cls, path: str | os.PathLike[str]) -> "YouTubeConfig":
@@ -130,11 +131,11 @@ class YouTubeConfig:
         except PrivateCredentialError as exc:
             raise YouTubeIntegrationError(str(exc)) from None
         return cls(
-            values["client_id"], "", values["refresh_token"]
+            values["client_id"], values["client_secret"], values["refresh_token"]
         )
 
     def validate(self) -> None:
-        if not all((self.client_id, self.refresh_token)):
+        if not all((self.client_id, self.client_secret, self.refresh_token)):
             raise YouTubeIntegrationError("OAuth configuration is incomplete")
         if not 1 <= self.timeout_seconds <= 120:
             raise YouTubeIntegrationError("timeout_seconds must be between 1 and 120")
@@ -237,6 +238,7 @@ class YouTubeClient:
             return self._access_token
         payload = urlencode({
             "client_id": self.config.client_id,
+            "client_secret": self.config.client_secret,
             "refresh_token": self.config.refresh_token,
             "grant_type": "refresh_token",
         }).encode()
