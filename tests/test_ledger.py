@@ -75,5 +75,29 @@ class LedgerTests(unittest.TestCase):
         with self.assertRaises(LedgerError):
             add_unit(self.data, "A", "Bad", ["A"])
 
+    def test_malformed_ledger_root_fails_with_ledger_error(self):
+        with self.assertRaises(LedgerError):
+            validate([])
+
+    def test_malformed_event_fails_with_ledger_error(self):
+        self.data["events"].append(None)
+        with self.assertRaises(LedgerError):
+            validate(self.data)
+
+    def test_non_string_or_duplicate_prerequisites_are_rejected(self):
+        for prerequisites in (["A", 7], ["A", "A"], {}):
+            with self.subTest(prerequisites=prerequisites), self.assertRaises(LedgerError):
+                add_unit(self.data, "B", "Next", prerequisites)
+
+    def test_non_string_verified_evidence_is_rejected(self):
+        add_unit(self.data, "A", "Foundations", [])
+        with self.assertRaises(LedgerError):
+            record_assessment(self.data, "A", 4, 123, "verified")
+
+    def test_unhashable_evidence_status_is_rejected(self):
+        add_unit(self.data, "A", "Foundations", [])
+        with self.assertRaises(LedgerError):
+            record_assessment(self.data, "A", 4, "ref", [])
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
