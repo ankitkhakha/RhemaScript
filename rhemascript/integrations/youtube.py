@@ -259,12 +259,13 @@ class YouTubeClient:
     def _authorized_request(self, url: str, *, method: str = "GET",
                             body: bytes | None = None,
                             headers: dict[str, str] | None = None):
-        """Retry once after an expired/revoked access token; never retry writes otherwise."""
+        """Retry a 401 once only for reads; never replay a write automatically."""
         request_headers = dict(headers or {})
         status, raw, response_headers = self._request(
             url, method=method, body=body, headers=request_headers
         )
-        if status != 401 or "Authorization" not in request_headers:
+        if (status != 401 or "Authorization" not in request_headers
+                or method.upper() != "GET"):
             return status, raw, response_headers
         self._access_token = None
         request_headers["Authorization"] = f"Bearer {self._token()}"
