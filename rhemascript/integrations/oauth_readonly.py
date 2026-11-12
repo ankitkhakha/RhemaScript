@@ -122,9 +122,12 @@ def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tup
     verifier, challenge = _create_pkce_pair()
     state = secrets.token_urlsafe(32)
     result: dict[str, str] = {}
-    server = HTTPServer(("127.0.0.1", 0), _callback_handler(result, state))
+    class _LoopbackHTTPServer(HTTPServer):
+        request_queue_size = 1
+
+    server = _LoopbackHTTPServer(("127.0.0.1", 0), _callback_handler(result, state))
     server.timeout = 1.0
-    host, port = server.server_address
+    port = server.server_address[1]
     redirect_uri = f"http://127.0.0.1:{port}{CALLBACK_PATH}"
     authorization_uri = AUTHORIZATION_URL + "?" + urlencode({
         "client_id": client_id,
@@ -158,11 +161,28 @@ def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tup
 def _callback_handler(result: dict[str, str], expected_state: str):
     class CallbackHandler(BaseHTTPRequestHandler):
         def do_GET(self):
+            # Reject oversized or non-GET-style callback requests before parsing.
+            if len(self.path) > 8192 or self.headers.get("Transfer-Encoding"):
+                result["error"] = "invalid_request"
+                self._reply(400, "Authorization response rejected. You may close this tab.")
+                return
+            if result:
+                self._reply(409, "This authorization callback has already been handled.")
+                return
             parsed = urlparse(self.path)
-            if parsed.path != CALLBACK_PATH:
+            if parsed.path != CALLBACK_PATH or parsed.fragment:
                 self.send_error(404)
                 return
-            query = parse_qs(parsed.query, keep_blank_values=True)
+            try:
+                query = parse_qs(parsed.query, keep_blank_values=True, max_num_fields=8)
+            except ValueError:
+                result["error"] = "invalid_query"
+                self._reply(400, "Authorization response rejected. You may close this tab.")
+                return
+            if set(query) - {"state", "code", "error", "error_description", "error_uri"}:
+                result["error"] = "unexpected_parameters"
+                self._reply(400, "Authorization response rejected. You may close this tab.")
+                return
             states = query.get("state", [])
             if len(states) != 1 or not hmac.compare_digest(states[0], expected_state):
                 result["error"] = "state_mismatch"
@@ -173,8 +193,13 @@ def _callback_handler(result: dict[str, str], expected_state: str):
                 result["error"] = "authorization_denied"
                 self._reply(400, "Authorization was not completed. You may close this tab.")
                 return
+            if query.get("error_description") or query.get("error_uri"):
+                # Never expose provider-supplied error details in the local callback page.
+                result["error"] = "authorization_error_details"
+                self._reply(400, "Authorization was not completed. You may close this tab.")
+                return
             codes = query.get("code", [])
-            if len(codes) != 1 or not codes[0]:
+            if len(codes) != 1 or not codes[0] or len(codes[0]) > 4096:
                 result["error"] = "missing_code"
                 self._reply(400, "Authorization response was incomplete. You may close this tab.")
                 return
