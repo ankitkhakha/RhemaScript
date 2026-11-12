@@ -151,3 +151,24 @@ A successful preflight is only a local configuration check. It cannot verify Goo
 ## Google connection readiness checklist
 
 Before owner-led Cloud and OAuth setup, follow [Google Connection Readiness V1](YOUTUBE_GOOGLE_CONNECTION_READINESS_V1.md). It covers the existing-project boundary, required APIs, OAuth consent/client setup, least-privilege scopes, local refresh-token handling, audit destination checks, staged read-only validation and separate publishing approval. The checklist is operational guidance only; it does not perform OAuth or verify the live Google project.
+
+## CAP-15 Analytics evidence hand-off
+
+The optional `build_cap15_performance_evidence` adapter converts a retained YouTube Analytics report into CAP-15 observations. It requires the caller to provide the exact video ID, matching `video==VIDEO_ID` filter, RhemaScript production version, and retained evidence reference. It validates column definitions, row widths, and finite non-negative metric values. It does not retrieve reports, infer a production-version mapping, establish causality, or change CAP-15 scoring.
+
+Example:
+
+```python
+from rhemascript.integrations import build_cap15_performance_evidence
+
+# report is the response from client.analytics(..., filters=f"video=={video_id}")
+evidence = build_cap15_performance_evidence(
+    report,
+    video_id=video_id,
+    video_filter=f"video=={video_id}",
+    production_version="APPROVED-PRODUCTION-VERSION",
+    evidence_reference="OWNER-RETAINED-REPORT-REFERENCE",
+)
+```
+
+Pass this evidence to the existing CAP-15 specialist for descriptive, version-linked review. Preserve the raw report and the query parameters at the supplied evidence reference. Do not interpret correlation as causation.
