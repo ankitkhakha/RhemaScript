@@ -60,18 +60,18 @@ The local CLI uses one owner-only SQLite registry and a configured evidence dire
 
 ```bash
 python -m raei init --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
-python -m raei status --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
-python -m raei next --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
-python -m raei brief --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --unit-id CS-FOUND
-python -m raei verify --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3"
+python -m raei status --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence"
+python -m raei next --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence"
+python -m raei brief --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --unit-id CS-FOUND --evidence-root "$HOME/.local/share/rhemascript/raei/evidence"
+python -m raei verify --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence"
 ```
 
 For knowledge intake or a self-assessment, first place the canonical JSON artifact inside the configured evidence root. The CLI verifies the exact file bytes before it records the item:
 
 ```bash
 python -m raei record-knowledge --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence" --artifact-path knowledge-item.json
-python -m raei knowledge-search --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --query "python packaging"
+python -m raei knowledge-search --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence" --query "python packaging"
 python -m raei record-attempt --database "$HOME/.local/share/rhemascript/raei/learning.sqlite3" --evidence-root "$HOME/.local/share/rhemascript/raei/evidence" --artifact-path assessment.json
 ```
 
-The database parent must already exist, be owner-controlled and private (POSIX mode 0700 or stricter); the database is created owner-only (0600). The CLI refuses symlinked paths and does not create a missing registry during read operations. Pending knowledge is excluded from default search. RAEI self-assessments can earn only PROVISIONAL_PASS or NEEDS_REMEDIATION; they cannot create independent-review or production-approval status.
+The database parent must already exist, be owner-controlled and private (POSIX mode 0700 or stricter); the database is created owner-only (0600). The CLI refuses symlinked paths and does not create a missing registry during read operations. Every read operation also re-hashes all retained evidence files against their recorded SHA-256 and size; missing or altered evidence blocks the read. Pending knowledge is excluded from default search. RAEI self-assessments can earn only PROVISIONAL_PASS or NEEDS_REMEDIATION; they cannot create independent-review or production-approval status.
