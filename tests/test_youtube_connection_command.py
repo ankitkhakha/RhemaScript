@@ -107,7 +107,7 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
         link = self.root / "audit-link"
         link.symlink_to(real_dir, target_is_directory=True)
         transport = self.FakeTransport("UC_expected_channel")
-        with self.assertRaisesRegex(YouTubeIntegrationError, "owner-controlled"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "symbolic links"):
             run_connection_check(
                 self.credentials, "UC_expected_channel",
                 link / "audit.jsonl", transport=transport
