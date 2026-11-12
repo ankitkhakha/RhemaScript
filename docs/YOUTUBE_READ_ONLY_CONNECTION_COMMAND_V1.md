@@ -43,7 +43,7 @@ A mismatch or failed check is recorded as FAILED and the command exits non-zero.
 - The connection command's gateway is explicitly enabled only for this read-only operation. The owner has separately approved enabling publishing capability in RhemaScript; this read-only command does not exercise or confer project-level publishing authority. Each project remains subject to its Evidence Pack, six approved gates, final-film evidence, human director acceptance, and explicit project-level publishing authorization.
 - No upload, metadata mutation, thumbnail change, scheduling, or publication is enabled or authorized by a successful connection check.
 - No credential values are to be pasted into ChatGPT, issue comments, source files, CI logs, or audit records.
-- This command is a connection diagnostic, not deployment, OAuth consent setup, or a live test until the owner runs it locally.
+- This command is a connection diagnostic, not deployment or OAuth consent setup. The owner-operated read-only connection and expected channel-ID match have been completed; re-run the command locally after credential rotation or a change to the authorised Google account.
 
 ## Repeatable validation harness
 
