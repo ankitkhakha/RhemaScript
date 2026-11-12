@@ -95,7 +95,7 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
         authorise_action("PUBLISH", {
             "publishing_authorisation": publishing_authorisation
         })
-        return validated.project_id, validated.project_version
+        return validated.project_id, validated.project_version, film.get("artifact_id")
     except (EvidencePackError, AuthorityError, GateError, ValueError, TypeError) as exc:
         raise YouTubeIntegrationError(
             f"operation denied by RhemaScript governance: {exc}"
@@ -127,7 +127,7 @@ def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
 
 def _authorise_project_video(*, evidence_pack: dict[str, Any],
                              final_film_evidence_ref: str,
-                             video_id: str) -> tuple[str, str]:
+                             video_id: str) -> tuple[str, str, str]:
     """Resolve a verified YouTube video record bound to this project's final film."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
     try:
@@ -546,7 +546,7 @@ class YouTubeClient:
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
-        evidence_project_id, evidence_project_version = _authorise_project_video(
+        evidence_project_id, evidence_project_version, evidence_film_artifact_id = _authorise_project_video(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
             video_id=video_id,
@@ -555,7 +555,8 @@ class YouTubeClient:
         if (verified_context is None
                 or verified_context.get("video_id") != video_id
                 or verified_context.get("project_id") != evidence_project_id
-                or verified_context.get("project_version") != evidence_project_version):
+                or verified_context.get("project_version") != evidence_project_version
+                or verified_context.get("final_film_artifact_id") != evidence_film_artifact_id):
             raise YouTubeIntegrationError(
                 "thumbnail write requires a matching successful YouTube read-back "
                 "from this client session; a caller-supplied verification artifact alone is insufficient"
