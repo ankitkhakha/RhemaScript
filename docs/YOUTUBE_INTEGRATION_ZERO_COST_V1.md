@@ -137,7 +137,7 @@ python -m rhemascript.integrations.preflight --audit-log "/absolute/path/in-an-e
 \`\`\`
 
 The preflight:
-- Checks only whether all three OAuth environment variables are present; it never prints their values.
+- Checks the configured local credential source (protected credential file or environment variables) without printing credential values.
 - Checks that the audit parent directory already exists and, on POSIX, is not group/world writable.
 - If the audit file already exists, checks that it is a regular file and, on POSIX, has owner-only permissions.
 - Rejects a symlink audit destination.
