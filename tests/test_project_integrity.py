@@ -93,6 +93,36 @@ class ProjectIntegrityTests(unittest.TestCase):
     def test_malformed_input_fails_closed(self):
         self.assertTrue(validate_project(None))
 
+    def test_unknown_chain_stage_is_rejected(self):
+        record = ready_project()
+        record["source_to_final_chain"].append(
+            {"stage": "bonus_stage", "status": "present", "evidence_ref": "evidence/bonus"}
+        )
+        self.assertTrue(any("unknown chain stage: bonus_stage" in e
+                            for e in validate_project(record)))
+
+    def test_whitespace_chain_identifier_is_rejected(self):
+        record = ready_project()
+        record["source_to_final_chain"][0]["stage"] = " biblical_source "
+        errors = validate_project(record)
+        self.assertTrue(any("valid stage identifier" in e for e in errors))
+        self.assertTrue(any("missing chain stage: biblical_source" in e for e in errors))
+
+    def test_unknown_approval_gate_is_rejected(self):
+        record = ready_project()
+        record["approval_gates"].append(
+            {"gate": "emergency_override", "decision": "approved",
+             "approval_evidence_ref": "approval/override", "approver": "synthetic-fixture"}
+        )
+        self.assertTrue(any("unknown approval gate: emergency_override" in e
+                            for e in validate_project(record)))
+
+    def test_non_string_authority_value_is_rejected(self):
+        record = ready_project()
+        record["authorities"]["merge_authorisation"] = True
+        self.assertTrue(any("merge_authorisation must be explicitly" in e
+                            for e in validate_project(record)))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
