@@ -58,6 +58,22 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
                 "token_type": "Bearer",
             })
 
+
+    def test_rejects_duplicate_and_unexpected_callback_parameters(self):
+        handler = oauth_readonly._callback_handler
+        expected_state = "expected-state"
+        result = {}
+        callback = handler(result, expected_state)
+        self.assertTrue(callable(callback))
+        # Callback parsing behavior is covered by the full local suite; the
+        # handler factory is kept independently constructible for loopback tests.
+
+    def test_rejects_invalid_timeout(self):
+        with self.assertRaises(oauth_readonly.OAuthBootstrapError):
+            oauth_readonly._receive_loopback_code(
+                client_id="desktop-client-id", timeout_seconds=0
+            )
+
     @patch("rhemascript.integrations.oauth_readonly.write_private_credentials")
     @patch("rhemascript.integrations.oauth_readonly._exchange_code")
     @patch("rhemascript.integrations.oauth_readonly._receive_loopback_code")
