@@ -86,6 +86,7 @@ class ReadinessReportTests(unittest.TestCase):
                     "status": "VERIFIED",
                     "local_source_reference": reference,
                     "sha256": digest,
+                    "evidence_refs": [reference],
                 }],
                 "evidence_records": [{
                     "evidence_id": "CAP01-SOURCE-EVIDENCE",
