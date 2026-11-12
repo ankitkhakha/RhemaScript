@@ -22,6 +22,29 @@ class ReadOnlyOAuthBootstrapTests(unittest.TestCase):
             "callback_rejected",
         )
 
+    @patch("rhemascript.integrations.oauth_readonly.build_opener")
+    def test_token_exchange_reports_only_allowlisted_google_error_code(self, build_opener):
+        from urllib.error import HTTPError
+        from io import BytesIO
+
+        build_opener.return_value.open.side_effect = HTTPError(
+            oauth_readonly.TOKEN_URL,
+            400,
+            "Bad Request",
+            {},
+            BytesIO(b'{"error":"invalid_client","error_description":"DO_NOT_EXPOSE_SECRET"}'),
+        )
+        with self.assertRaisesRegex(
+            oauth_readonly.OAuthBootstrapError,
+            r"HTTP 400, invalid_client.*no credentials were saved",
+        ) as caught:
+            oauth_readonly._exchange_code(
+                client_id="client-id", client_secret="client-secret",
+                code="one-time-code", redirect_uri="http://127.0.0.1/callback",
+                verifier="pkce-verifier",
+            )
+        self.assertNotIn("DO_NOT_EXPOSE_SECRET", str(caught.exception))
+
     def test_pkce_pair_uses_s256(self):
         verifier, challenge = oauth_readonly._create_pkce_pair()
         import base64
