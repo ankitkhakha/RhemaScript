@@ -162,9 +162,13 @@ def compare_project_records(before, after):
         prior_approval = prior_approvals.get(gate)
         approval_is_fresh = (
             isinstance(approval, dict)
-            and isinstance(prior_approval, dict)
-            and approval != prior_approval
-            and approval.get("approval_ref") != prior_approval.get("approval_ref")
+            and (
+                prior_approval is None
+                or (
+                    isinstance(prior_approval, dict)
+                    and approval.get("approval_ref") != prior_approval.get("approval_ref")
+                )
+            )
         )
         if (
             not isinstance(approval, dict)
