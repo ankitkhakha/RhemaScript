@@ -29,6 +29,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
             records = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual([record["phase"] for record in records],
                              ["REQUESTED", "COMPLETED"])
+            self.assertTrue(all(record["timestamp_utc"] for record in records))
             self.assertEqual(records[1]["http_status"], 200)
             if os.name == "posix":
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
