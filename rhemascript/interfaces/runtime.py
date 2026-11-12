@@ -29,7 +29,7 @@ class InterfaceGateway:
         self.adapters = {iid: self._handle for iid in INTERFACES}
         # Process-local replay cache only. This is not durable/cross-process
         # idempotency and must not be represented as such in readiness claims.
-        self._seen: dict[str, InterfaceResponse] = {}
+        self._seen: dict[tuple[str, str], InterfaceResponse] = {}
 
     def invoke(
         self,
@@ -63,8 +63,10 @@ class InterfaceGateway:
         # surrounding whitespace cannot bypass the existing authority guard.
         operation = request["operation"].strip().upper()
         if operation in DANGEROUS_OPERATIONS:
+            if authority is not None and not isinstance(authority, dict):
+                raise InterfaceError("authority must be an object")
             try:
-                authorise_action(operation, authority or {})
+                authorise_action(operation, authority if authority is not None else {})
             except AuthorityError as exc:
                 raise InterfaceError(str(exc)) from exc
 
@@ -74,10 +76,14 @@ class InterfaceGateway:
             request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
             allow_nan=False,
         ))
-        if key in self._seen:
-            return self._copy_response(self._seen[key])
+        # Interface identity is part of the replay namespace: an identical
+        # envelope sent to another adapter must never replay the first adapter's
+        # response.
+        cache_key = (interface_id, key)
+        if cache_key in self._seen:
+            return self._copy_response(self._seen[cache_key])
         result = self._handle(interface_id, snapshot, key)
-        self._seen[key] = self._copy_response(result)
+        self._seen[cache_key] = self._copy_response(result)
         return self._copy_response(result)
 
     @staticmethod
