@@ -1,0 +1,257 @@
+"""Least-privilege Google OAuth bootstrap for YouTube channel read verification.
+
+Uses the installed-app loopback flow with PKCE. Requests exactly
+youtube.readonly, requires Google's returned scope set to match exactly, and
+writes the refresh token only to the existing owner-only credential store.
+No publishing, analytics, or channel mutation is performed.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import getpass
+import hashlib
+import hmac
+import json
+import secrets
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+import webbrowser
+
+from rhemascript.integrations.credentials import (
+    PrivateCredentialError,
+    write_private_credentials,
+)
+
+AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+READ_ONLY_SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+CALLBACK_PATH = "/oauth2callback"
+DEFAULT_CREDENTIAL_PATH = "~/.config/rhemascript/youtube-oauth.json"
+MAX_RESPONSE_BYTES = 64_000
+
+
+class OAuthBootstrapError(RuntimeError):
+    """Sanitised OAuth bootstrap failure; never includes credential values."""
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _create_pkce_pair() -> tuple[str, str]:
+    verifier = _b64url(secrets.token_bytes(32))
+    challenge = _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
+    return verifier, challenge
+
+
+def _validate_token_response(payload: Any) -> tuple[str, str]:
+    """Return access/refresh tokens only for an exact read-only scope grant."""
+    if not isinstance(payload, dict):
+        raise OAuthBootstrapError("Google returned an invalid OAuth token response")
+    granted = payload.get("scope")
+    if not isinstance(granted, str):
+        raise OAuthBootstrapError("Google did not return a verifiable granted-scope list")
+    scopes = granted.split()
+    if len(scopes) != 1 or scopes[0] != READ_ONLY_SCOPE:
+        raise OAuthBootstrapError("Google granted scopes outside the exact YouTube read-only request")
+    access_token = payload.get("access_token")
+    refresh_token = payload.get("refresh_token")
+    token_type = payload.get("token_type")
+    if not isinstance(access_token, str) or not access_token:
+        raise OAuthBootstrapError("Google did not return a valid access token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise OAuthBootstrapError(
+            "Google did not return a refresh token; no credential file was written"
+        )
+    if not isinstance(token_type, str) or token_type.lower() != "bearer":
+        raise OAuthBootstrapError("Google returned an unsupported token type")
+    return access_token, refresh_token
+
+
+def _exchange_code(*, client_id: str, client_secret: str, code: str,
+                   redirect_uri: str, verifier: str, timeout: float = 30.0) -> dict[str, Any]:
+    body = urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "code_verifier": verifier,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }).encode("ascii")
+    request = Request(
+        TOKEN_URL,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded",
+                 "Accept": "application/json"},
+        method="POST",
+    )
+    opener = build_opener(_NoRedirect())
+    try:
+        with opener.open(request, timeout=timeout) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                raise OAuthBootstrapError("Google OAuth response exceeded the safety limit")
+            if response.status != 200:
+                raise OAuthBootstrapError("Google OAuth token exchange was rejected")
+    except HTTPError:
+        raise OAuthBootstrapError("Google OAuth token exchange was rejected") from None
+    except (URLError, TimeoutError, OSError):
+        raise OAuthBootstrapError("Google OAuth token exchange could not reach Google") from None
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise OAuthBootstrapError("Google returned an invalid OAuth token response") from None
+    if not isinstance(payload, dict):
+        raise OAuthBootstrapError("Google returned an invalid OAuth token response")
+    return payload
+
+
+def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tuple[str, str, str]:
+    """Run a one-shot 127.0.0.1 callback and return code, verifier, redirect URI."""
+    verifier, challenge = _create_pkce_pair()
+    state = secrets.token_urlsafe(32)
+    result: dict[str, str] = {}
+    server = HTTPServer(("127.0.0.1", 0), _callback_handler(result, state))
+    server.timeout = 1.0
+    host, port = server.server_address
+    redirect_uri = f"http://127.0.0.1:{port}{CALLBACK_PATH}"
+    authorization_uri = AUTHORIZATION_URL + "?" + urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": READ_ONLY_SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "false",
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    })
+    print("Opening Google authorization in your browser.")
+    print("If it does not open, copy this URL into your browser:")
+    print(authorization_uri)
+    webbrowser.open(authorization_uri)
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while not result and time.monotonic() < deadline:
+            server.handle_request()
+    finally:
+        server.server_close()
+    if "error" in result:
+        raise OAuthBootstrapError("Google authorization was denied or cancelled")
+    if "code" not in result:
+        raise OAuthBootstrapError("Timed out waiting for the local Google OAuth callback")
+    return result["code"], verifier, redirect_uri
+
+
+def _callback_handler(result: dict[str, str], expected_state: str):
+    class CallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path != CALLBACK_PATH:
+                self.send_error(404)
+                return
+            query = parse_qs(parsed.query, keep_blank_values=True)
+            states = query.get("state", [])
+            if len(states) != 1 or not hmac.compare_digest(states[0], expected_state):
+                result["error"] = "state_mismatch"
+                self._reply(400, "Authorization response rejected. You may close this tab.")
+                return
+            errors = query.get("error", [])
+            if errors:
+                result["error"] = "authorization_denied"
+                self._reply(400, "Authorization was not completed. You may close this tab.")
+                return
+            codes = query.get("code", [])
+            if len(codes) != 1 or not codes[0]:
+                result["error"] = "missing_code"
+                self._reply(400, "Authorization response was incomplete. You may close this tab.")
+                return
+            result["code"] = codes[0]
+            self._reply(200, "RhemaScript read-only authorization received. You may close this tab.")
+
+        def _reply(self, status: int, message: str):
+            body = ("<!doctype html><html><head><meta charset='utf-8'>"
+                    "<title>RhemaScript OAuth</title></head><body><p>" +
+                    message + "</p></body></html>").encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            return
+
+    return CallbackHandler
+
+
+def run_bootstrap(*, client_id: str, client_secret: str,
+                  credential_path: str | Path = DEFAULT_CREDENTIAL_PATH,
+                  timeout_seconds: int = 300) -> None:
+    if not client_id.strip() or not client_secret.strip():
+        raise OAuthBootstrapError("OAuth desktop client ID and secret are required")
+    code, verifier, redirect_uri = _receive_loopback_code(
+        client_id=client_id.strip(), timeout_seconds=timeout_seconds
+    )
+    payload = _exchange_code(
+        client_id=client_id.strip(), client_secret=client_secret,
+        code=code, redirect_uri=redirect_uri, verifier=verifier,
+    )
+    _access_token, refresh_token = _validate_token_response(payload)
+    try:
+        write_private_credentials(
+            credential_path,
+            client_id=client_id.strip(),
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+        )
+    except PrivateCredentialError as exc:
+        raise OAuthBootstrapError(str(exc)) from None
+    print("Read-only OAuth credentials saved in the owner-only local credential file.")
+    print("Granted scope: YouTube read-only only.")
+    print("No upload, analytics, publishing, or channel-write permission was requested.")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Authorize RhemaScript for YouTube channel reads only"
+    )
+    parser.add_argument("--client-id", help="Desktop OAuth client ID")
+    parser.add_argument("--credential-path", default=DEFAULT_CREDENTIAL_PATH,
+                        help="new private credential file path (must not already exist)")
+    parser.add_argument("--timeout", type=int, default=300,
+                        help="seconds to wait for the browser callback (default: 300)")
+    args = parser.parse_args(argv)
+    try:
+        client_id = (args.client_id or input("Google Desktop OAuth client ID: ")).strip()
+        client_secret = getpass.getpass("Google Desktop OAuth client secret (hidden): ")
+        run_bootstrap(
+            client_id=client_id,
+            client_secret=client_secret,
+            credential_path=args.credential_path,
+            timeout_seconds=args.timeout,
+        )
+    except (OAuthBootstrapError, PrivateCredentialError, EOFError, KeyboardInterrupt) as exc:
+        print("OAuth bootstrap stopped safely; no credential values were displayed.")
+        if isinstance(exc, OAuthBootstrapError):
+            print(f"Reason: {exc}")
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
