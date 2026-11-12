@@ -340,7 +340,7 @@ class ExternalIntegrationGateway:
         if not all(isinstance(x, str) and x.strip() for x in (operation, request_id, project_id, source_version)):
             raise ExternalIntegrationError("request identity fields must be non-empty strings")
         spec = binding.operations.get(operation.upper())
-        if not isinstance(spec, dict):
+        if not isinstance(spec, Mapping):
             raise ExternalIntegrationError("operation has no method-aware provider contract")
         expected_method = spec.get("method")
         hosts = spec.get("hosts")
