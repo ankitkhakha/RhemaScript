@@ -65,9 +65,9 @@ def validate_project_chain(project):
             continue
         upstream = record.get("upstream_refs")
         previous_ref = previous.get("artifact_ref")
-        if (not isinstance(upstream, list) or not _nonempty_text(previous_ref)
-                or previous_ref not in upstream):
-            errors.append("missing immediate predecessor dependency: " + stage)
+        expected_upstream = [previous_ref] if _nonempty_text(previous_ref) else None
+        if not isinstance(upstream, list) or expected_upstream is None or upstream != expected_upstream:
+            errors.append("immediate predecessor dependency must match exactly: " + stage)
 
     artifact_refs = [
         stages[stage].get("artifact_ref") for stage in STAGES
