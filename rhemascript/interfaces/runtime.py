@@ -1,5 +1,6 @@
 """18 registered runtime interface adapters. No external network calls or writes occur."""
 from dataclasses import dataclass
+import json
 from typing import Any
 
 from rhemascript.registry.system_registry import INTERFACES
@@ -67,11 +68,27 @@ class InterfaceGateway:
             except AuthorityError as exc:
                 raise InterfaceError(str(exc)) from exc
 
+        # Snapshot validated JSON input so later caller mutation cannot alter a
+        # cached response or change what the gateway accepted.
+        snapshot = json.loads(json.dumps(
+            request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False,
+        ))
         if key in self._seen:
-            return self._seen[key]
-        result = self._handle(interface_id, request, key)
-        self._seen[key] = result
-        return result
+            return self._copy_response(self._seen[key])
+        result = self._handle(interface_id, snapshot, key)
+        self._seen[key] = self._copy_response(result)
+        return self._copy_response(result)
+
+    @staticmethod
+    def _copy_response(response: InterfaceResponse) -> InterfaceResponse:
+        return InterfaceResponse(
+            response.interface_id,
+            response.status,
+            response.request_id,
+            json.loads(json.dumps(response.payload, sort_keys=True, ensure_ascii=False)),
+            response.idempotency_key,
+        )
 
     @staticmethod
     def _handle(interface_id, request, key):
