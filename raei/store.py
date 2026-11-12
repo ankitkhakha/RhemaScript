@@ -17,7 +17,11 @@ class StoreError(ValueError):
 
 
 def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+    try:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False,
+                          separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise StoreError(f"value is not canonical JSON data: {exc}") from exc
 
 
 def _hash(value: Any) -> str:
@@ -26,6 +30,11 @@ def _hash(value: Any) -> str:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _required_text(value: Any, field: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise StoreError(f"{field} must be a non-empty string")
 
 
 class EvidenceStore:
@@ -104,8 +113,7 @@ class EvidenceStore:
                            request: dict[str, Any]) -> dict[str, Any] | None:
         if key is None:
             return None
-        if not isinstance(key, str) or not key.strip():
-            raise StoreError("idempotency key must be a non-empty string")
+        _required_text(key, "idempotency_key")
         row = db.execute(
             "SELECT request_hash,response_json FROM idempotency WHERE idempotency_key=?",
             (key,),
@@ -114,7 +122,13 @@ class EvidenceStore:
             return None
         if row["request_hash"] != _hash(request):
             raise StoreError("idempotency key was already used for a different request")
-        return json.loads(row["response_json"])
+        try:
+            response = json.loads(row["response_json"])
+        except json.JSONDecodeError as exc:
+            raise StoreError("stored idempotency response is invalid JSON") from exc
+        if not isinstance(response, dict):
+            raise StoreError("stored idempotency response must be an object")
+        return response
 
     def _save_idempotency(self, db: sqlite3.Connection, key: str | None,
                           request: dict[str, Any], response: dict[str, Any],
@@ -128,14 +142,20 @@ class EvidenceStore:
 
     def create_unit(self, unit_id: str, title: str, prerequisites: list[str] | None = None,
                     idempotency_key: str | None = None) -> dict[str, Any]:
+        _required_text(unit_id, "unit_id")
+        _required_text(title, "title")
         if prerequisites is None:
             prerequisites = []
         if not isinstance(prerequisites, list):
             raise StoreError("prerequisites must be a list")
-        if any(not isinstance(item, str) or not item.strip() for item in prerequisites):
-            raise StoreError("each prerequisite must be a non-empty string")
+        for item in prerequisites:
+            _required_text(item, "each prerequisite")
         if len(prerequisites) != len(set(prerequisites)):
             raise StoreError("prerequisites must be a unique list")
+        if unit_id in prerequisites:
+            raise StoreError("unit cannot depend on itself")
+        if idempotency_key is not None:
+            _required_text(idempotency_key, "idempotency_key")
         request = {"action": "create_unit", "unit_id": unit_id, "title": title,
                    "prerequisites": prerequisites}
         with self._connect() as db:
@@ -144,12 +164,6 @@ class EvidenceStore:
             if replay is not None:
                 db.rollback()
                 return replay
-            if not isinstance(unit_id, str) or not unit_id.strip():
-                raise StoreError("unit_id is required")
-            if not isinstance(title, str) or not title.strip():
-                raise StoreError("title is required")
-            if unit_id in prerequisites:
-                raise StoreError("unit cannot depend on itself")
             for prerequisite in prerequisites:
                 row = db.execute("SELECT status FROM units WHERE unit_id=?", (prerequisite,)).fetchone()
                 if row is None:
@@ -171,6 +185,22 @@ class EvidenceStore:
 
     def assess(self, unit_id: str, score: int, evidence_ref: str, evidence_status: str,
                expected_version: int, idempotency_key: str | None = None) -> dict[str, Any]:
+        _required_text(unit_id, "unit_id")
+        if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
+            raise StoreError("score must be an integer from 0 to 4")
+        if not isinstance(evidence_status, str) or evidence_status not in {
+            "verified", "reported_unverified", "planned"
+        }:
+            raise StoreError("invalid evidence status")
+        if evidence_status == "verified":
+            _required_text(evidence_ref, "verified evidence_ref")
+        elif evidence_ref is not None and not isinstance(evidence_ref, str):
+            raise StoreError("evidence_ref must be a string or null")
+        if (not isinstance(expected_version, int) or isinstance(expected_version, bool)
+                or expected_version < 1):
+            raise StoreError("expected_version must be a positive integer")
+        if idempotency_key is not None:
+            _required_text(idempotency_key, "idempotency_key")
         request = {"action": "assess", "unit_id": unit_id, "score": score,
                    "evidence_ref": evidence_ref, "evidence_status": evidence_status,
                    "expected_version": expected_version}
@@ -187,12 +217,6 @@ class EvidenceStore:
                 raise StoreError("passed units are immutable; create a versioned unit for reassessment")
             if row["version"] != expected_version:
                 raise StoreError(f"stale version: expected {expected_version}, current {row['version']}")
-            if not isinstance(score, int) or isinstance(score, bool) or not 0 <= score <= 4:
-                raise StoreError("score must be an integer from 0 to 4")
-            if evidence_status not in {"verified", "reported_unverified", "planned"}:
-                raise StoreError("invalid evidence status")
-            if evidence_status == "verified" and (not isinstance(evidence_ref, str) or not evidence_ref.strip()):
-                raise StoreError("verified evidence requires a non-empty reference")
             incomplete = db.execute(
                 """SELECT p.prerequisite_id FROM prerequisites p JOIN units u
                    ON u.unit_id=p.prerequisite_id
@@ -220,6 +244,7 @@ class EvidenceStore:
             return response
 
     def get_unit(self, unit_id: str) -> dict[str, Any]:
+        _required_text(unit_id, "unit_id")
         with self._connect() as db:
             row = db.execute("SELECT * FROM units WHERE unit_id=?", (unit_id,)).fetchone()
             if row is None:
@@ -236,11 +261,14 @@ class EvidenceStore:
             rows = db.execute("SELECT * FROM events ORDER BY sequence").fetchall()
         previous = "GENESIS"
         for row in rows:
-            payload = json.loads(row["payload"])
-            body = {"timestamp": row["timestamp"], "action": row["action"],
-                    "unit_id": row["unit_id"], "payload": payload,
-                    "previous_hash": previous}
-            if row["previous_hash"] != previous or row["event_hash"] != _hash(body):
+            try:
+                payload = json.loads(row["payload"])
+                body = {"timestamp": row["timestamp"], "action": row["action"],
+                        "unit_id": row["unit_id"], "payload": payload,
+                        "previous_hash": previous}
+                if row["previous_hash"] != previous or row["event_hash"] != _hash(body):
+                    return False
+            except (json.JSONDecodeError, StoreError, TypeError, ValueError):
                 return False
             previous = row["event_hash"]
         return True
