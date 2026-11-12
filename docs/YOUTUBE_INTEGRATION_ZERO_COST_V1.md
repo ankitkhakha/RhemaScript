@@ -100,3 +100,22 @@ audit_sink = JsonlAuditSink("/absolute/path/in-an-existing-private-directory/you
 ```
 
 The sink does not create parent directories. Keep the log on a local filesystem with appropriate access controls; do not put it in a shared repository, public web root, or CI artifact. Each record is synchronously flushed and fsynced. The event schema excludes request bodies, headers, OAuth values, query values, resumable session URLs and media bytes.
+
+
+### Offline local activation preflight
+
+Before any OAuth or API call, run this read-only preflight on the machine that will execute RhemaScript:
+
+\`\`\`bash
+python -m rhemascript.integrations.preflight --audit-log "/absolute/path/in-an-existing-private-directory/youtube-audit.jsonl"
+\`\`\`
+
+The preflight:
+- Checks only whether all three OAuth environment variables are present; it never prints their values.
+- Checks that the audit parent directory already exists and, on POSIX, is not group/world writable.
+- If the audit file already exists, checks that it is a regular file and, on POSIX, has owner-only permissions.
+- Rejects a symlink audit destination.
+- Does not create or modify the audit file, request OAuth, contact Google, enable the gateway, or grant publishing authority.
+
+A successful preflight is only a local configuration check. It cannot verify Google Cloud API enablement, project billing/quota, OAuth consent, refresh-token validity, channel identity or upload permissions. Those require separate owner-led checks. Do not paste credential values or refresh tokens into terminal transcripts, issue comments, CI, or chat. Configure secrets only in the local execution environment using an appropriately protected mechanism.
+
