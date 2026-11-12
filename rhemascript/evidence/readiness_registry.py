@@ -5,7 +5,7 @@ retained independently from this database and the key kept secret.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import fields, is_dataclass
 import hashlib
 import hmac
 import json
@@ -45,7 +45,11 @@ class ReadinessRunRegistry:
     @staticmethod
     def _normalise(value: Any) -> Any:
         if is_dataclass(value):
-            return asdict(value)
+            # Internal verification tokens are process-local capabilities, not persisted data.
+            return {
+                item.name: ReadinessRunRegistry._normalise(getattr(value, item.name))
+                for item in fields(value) if not item.name.startswith("_")
+            }
         if isinstance(value, dict):
             return {str(k): ReadinessRunRegistry._normalise(v) for k, v in value.items()}
         if isinstance(value, (list, tuple)):
