@@ -157,6 +157,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "publishing_authorisation": authorised,
         }
 
+    def test_config_rejects_upload_chunk_larger_than_32_mib(self):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "between 256 KiB and 32 MiB"):
+            YouTubeConfig("client", "secret", "refresh", chunk_size=33 * 1024 * 1024)
+
+    def test_config_rejects_non_aligned_upload_chunk(self):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "between 256 KiB and 32 MiB"):
+            YouTubeConfig("client", "secret", "refresh", chunk_size=256 * 1024 + 1)
+
     def test_missing_credentials_fail_closed(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(YouTubeIntegrationError):
