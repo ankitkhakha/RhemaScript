@@ -98,6 +98,17 @@ def run_project_assessment(
         evidence_root=evidence_root,
         local_source_resolver=local_source_resolver,
     )
+    if validated.source_resolution_receipts:
+        from rhemascript.evidence.local_source_resolver import LocalSourceResolver
+        if not isinstance(local_source_resolver, LocalSourceResolver):
+            raise ValueError("source resolution receipts require their originating resolver for freshness verification")
+        for receipt in validated.source_resolution_receipts:
+            if not local_source_resolver.verify_receipt(
+                receipt, project_id=validated.project_id,
+                project_version=validated.project_version,
+            ):
+                raise ValueError("local source receipt became stale before readiness assessment was recorded")
+
     report = build_readiness_report(result)
     report["evidence_integrity"] = {
         "mode": validated.evidence_integrity_mode,
@@ -136,10 +147,23 @@ def run_project_assessment(
             "capability_id": capability_id,
             "artifact_refs": artifact_ids,
             "evidence_refs": [
-                {
-                    "reference": reference,
-                    "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
-                }
+                (
+                    {
+                        "reference": reference,
+                        "resolution_status": "CONTENT_VERIFIED",
+                        "source_id": receipt.source_id,
+                        "version": receipt.version,
+                        "sha256": receipt.sha256,
+                        "catalog_revision": receipt.catalog_revision,
+                        "catalog_fingerprint": receipt.catalog_fingerprint,
+                    }
+                    if (receipt := next((item for item in validated.source_resolution_receipts
+                                         if item.original_reference == reference), None)) is not None
+                    else {
+                        "reference": reference,
+                        "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
+                    }
+                )
                 for reference in evidence_record.get("evidence_refs", [])
             ],
         })
@@ -162,10 +186,23 @@ def run_project_assessment(
                     if artifact["artifact_id"] in verified_by_id else None
                 ),
                 "declared_evidence_refs": [
-                    {
-                        "reference": reference,
-                        "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
-                    }
+                    (
+                        {
+                            "reference": reference,
+                            "resolution_status": "CONTENT_VERIFIED",
+                            "source_id": receipt.source_id,
+                            "version": receipt.version,
+                            "sha256": receipt.sha256,
+                            "catalog_revision": receipt.catalog_revision,
+                            "catalog_fingerprint": receipt.catalog_fingerprint,
+                        }
+                        if (receipt := next((item for item in validated.source_resolution_receipts
+                                             if item.original_reference == reference), None)) is not None
+                        else {
+                            "reference": reference,
+                            "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
+                        }
+                    )
                     for reference in artifact.get("evidence_refs", [])
                 ],
                 "local_source_resolution": next((
