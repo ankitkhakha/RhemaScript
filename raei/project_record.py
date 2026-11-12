@@ -146,15 +146,26 @@ def compare_project_records(before, after):
     approvals_after = after.get("approvals", {})
     if not isinstance(approvals_after, dict):
         raise IntegrityError("approval collection must be an object")
-    invalidated = [
-        gate for gate in GATES
-        if gate in affected_gates
-        and (
-            not isinstance(approvals_after.get(gate), dict)
-            or approvals_after[gate].get("status") != "approved"
-            or not approvals_after[gate].get("approval_ref")
+    invalidated = []
+    for gate in GATES:
+        if gate not in affected_gates:
+            continue
+        approval = approvals_after.get(gate)
+        linked_stage = GATE_STAGE[gate]
+        stage_record = after_stages.get(linked_stage)
+        current_artifact_ref = (
+            stage_record.get("artifact_ref") if isinstance(stage_record, dict) else None
         )
-    ]
+        if (
+            not isinstance(approval, dict)
+            or approval.get("status") != "approved"
+            or not isinstance(approval.get("approval_ref"), str)
+            or not approval["approval_ref"].strip()
+            or not isinstance(current_artifact_ref, str)
+            or not current_artifact_ref.strip()
+            or approval.get("artifact_ref") != current_artifact_ref
+        ):
+            invalidated.append(gate)
     return {
         "project_id": before["project_id"],
         "changed_stages": changes,
