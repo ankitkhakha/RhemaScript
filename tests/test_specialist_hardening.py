@@ -67,9 +67,10 @@ class SpecialistEvidenceHardeningTests(unittest.TestCase):
             assess_specialist("CAP-08", self._cap08_evidence(budget=math.nan))
 
     def test_cap08_rejects_non_finite_shot_duration(self):
+        evidence = self._cap08_evidence(shot_duration=120)
+        evidence["shot_plan"][0]["duration_seconds"] = math.inf
         with self.assertRaisesRegex(SpecialistInputError, "duration_seconds"):
-            assess_specialist("CAP-08", self._cap08_evidence(shot_duration=math.inf))
-
+            assess_specialist("CAP-08", evidence)
 
     def test_cap08_rejects_non_finite_narration_timing(self):
         evidence = self._cap08_evidence()
