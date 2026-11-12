@@ -342,7 +342,13 @@ class ExternalIntegrationGateway:
                 "approval_actor_ids": list(audit_context["approval_actor_ids"]),
                 "approval_issuer": audit_context["approval_issuer"],
             })
-        self.audit_sink(dict(event))
+        try:
+            self.audit_sink(dict(event))
+        except Exception:
+            if authority_operation == "PUBLISH":
+                with self._approval_lock:
+                    self._authorized_publish_requests.pop(request_id, None)
+            raise ExternalIntegrationError("provider audit sink failed") from None
         try:
             secret_headers = self.credential_resolver(binding.provider_name)
             if not isinstance(secret_headers, dict) or any(
