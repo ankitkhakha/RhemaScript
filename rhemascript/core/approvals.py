@@ -54,11 +54,10 @@ class VerifiedApproval:
 
 def is_verified_approval(value: object) -> bool:
     """Accept only the exact in-process object produced by ApprovalVerifier."""
-    return (
-        isinstance(value, VerifiedApproval)
-        and value._verification_token is _VERIFIED_APPROVAL_TOKEN
-        and _VERIFIED_APPROVALS.get(id(value)) is value
-    )
+    if not isinstance(value, VerifiedApproval) or value._verification_token is not _VERIFIED_APPROVAL_TOKEN:
+        return False
+    with _VERIFIED_APPROVAL_LOCK:
+        return _VERIFIED_APPROVALS.get(id(value)) is value
 
 
 class ApprovalVerifier:
@@ -78,7 +77,7 @@ class ApprovalVerifier:
             raise ValueError("trusted issuer is required")
         if not verification_keys:
             raise ValueError("at least one verification key is required")
-        if any(not isinstance(k, str) or not k.strip()
+        if any(not isinstance(k, str) or not _ID.fullmatch(k)
                or not isinstance(v, bytes) or len(v) != 32
                for k, v in verification_keys.items()):
             raise ValueError("Ed25519 verification keys require non-empty IDs and exactly 32 public-key bytes")
@@ -126,7 +125,7 @@ class ApprovalVerifier:
         project_version: str,
         request_id: str,
     ) -> VerifiedApproval:
-        if not isinstance(credential, dict) or set(credential) != _FIELDS:
+        if type(credential) is not dict or set(credential) != _FIELDS:
             raise ApprovalError("approval credential has an invalid shape")
         token = dict(credential)
         if token.get("schema") != _SCHEMA:
@@ -219,7 +218,11 @@ class ApprovalVerifier:
                 "action", "project_id", "project_version", "request_id"
             }:
                 raise ApprovalError("approval expectation has an invalid shape")
-            result = self._verify_one(credential, **dict(expected))
+            scope = dict(expected)
+            if any(not isinstance(scope.get(field), str) or not _ID.fullmatch(scope[field])
+                   for field in ("action", "project_id", "project_version", "request_id")):
+                raise ApprovalError("approval expectation contains an invalid scope value")
+            result = self._verify_one(credential, **scope)
             verified.append(result)
         approval_ids = [item.approval_id for item in verified]
         nonces = [item.nonce for item in verified]
