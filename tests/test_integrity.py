@@ -174,5 +174,24 @@ class IntegrityChainTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertTrue(any("generation output does not match" in e for e in result["errors"]))
 
+
+    def test_published_flag_must_be_boolean(self):
+        for value in ("false", 0, [], {}):
+            project = complete_project()
+            project["published"] = value
+            result = validate_project_chain(project)
+            self.assertFalse(result["valid"])
+            self.assertTrue(any("published flag must be boolean" in e for e in result["errors"]))
+
+    def test_boolean_revision_history_number_is_rejected(self):
+        project = complete_project()
+        project["revision_history"] = [
+            {"stage":"biblical_source","revision":True,"previous_artifact_ref":None,
+             "artifact_ref":"biblical_source-v1","source_ref":"source:biblical_source","change_reason":"Initial"}
+        ]
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("non-contiguous revision history" in e for e in result["errors"]))
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
