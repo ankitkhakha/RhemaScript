@@ -599,5 +599,46 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(calls[0][0], "POST")
 
 
+    def test_analytics_rejects_datetime_and_malformed_parameters_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        valid = date(2026, 11, 1)
+        invalid_calls = (
+            {"start_date": datetime(2026, 11, 1), "end_date": valid},
+            {"start_date": valid, "end_date": datetime(2026, 11, 2)},
+            {"start_date": valid, "end_date": valid, "metrics": ""},
+            {"start_date": valid, "end_date": valid, "dimensions": " "},
+            {"start_date": valid, "end_date": valid, "filters": 42},
+            {"start_date": valid, "end_date": valid, "filters": "x" * 501},
+        )
+        for kwargs in invalid_calls:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(YouTubeIntegrationError):
+                    client.analytics(**kwargs)
+
+    def test_scheduled_publication_rejects_invalid_or_non_future_timestamps(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        invalid_values = ("not-a-timestamp", "2026-12-01T12:00:00", "2020-01-01T12:00:00Z")
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for value in invalid_values:
+                with self.subTest(publish_at=value):
+                    with self.assertRaisesRegex(YouTubeIntegrationError, "publish_at"):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            privacy_status="private", publish_at=value, **self.publish_context())
+
+    def test_upload_rejects_invalid_tags_and_category_before_network(self):
+        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            for kwargs in ({"tags": ["valid", " "]}, {"tags": ["x" * 501]},
+                           {"category_id": "not-a-category"}, {"category_id": True}):
+                with self.subTest(kwargs=kwargs):
+                    with self.assertRaises(YouTubeIntegrationError):
+                        client.upload_video(video.name, title="Approved", description="Test",
+                            **kwargs, **self.publish_context())
+
+
 if __name__ == "__main__":
     unittest.main()
