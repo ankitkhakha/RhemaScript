@@ -421,6 +421,24 @@ class YouTubeClient:
             human_director_acceptance=human_director_acceptance,
             publishing_authorisation=publishing_authorisation,
         )
+        # Resolve the exact final-film association before any provider request.
+        # Do not upload first and discover an invalid Evidence Pack afterwards.
+        from rhemascript.evidence import validate_evidence_pack
+        try:
+            validated_pack = validate_evidence_pack(evidence_pack)
+        except (ValueError, TypeError) as exc:
+            raise YouTubeIntegrationError(f"invalid upload Evidence Pack: {exc}") from None
+        final_films = [
+            item for item in validated_pack.artifacts
+            if item.get("artifact_type") == "EDITED_FILM"
+            and item.get("status") in {"APPROVED", "VERIFIED", "ACCEPTED"}
+            and (item.get("artifact_id") == final_film_evidence_ref
+                 or final_film_evidence_ref in item.get("evidence_refs", []))
+        ]
+        if len(final_films) != 1:
+            raise YouTubeIntegrationError(
+                "upload requires one approved final-film artifact matching the evidence reference"
+            )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
         self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
@@ -515,16 +533,6 @@ class YouTubeClient:
             raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
         if not isinstance(video_id, str) or not video_id:
             raise YouTubeIntegrationError("upload response contained an invalid video ID")
-        from rhemascript.evidence import validate_evidence_pack
-        validated_pack = validate_evidence_pack(evidence_pack)
-        final_films = [
-            item for item in validated_pack.artifacts
-            if item.get("artifact_type") == "EDITED_FILM"
-            and (item.get("artifact_id") == final_film_evidence_ref
-                 or final_film_evidence_ref in item.get("evidence_refs", []))
-        ]
-        if len(final_films) != 1:
-            raise YouTubeIntegrationError("uploaded video cannot be linked to a unique approved final film")
         self._last_upload_context = {
             "video_id": video_id,
             "project_id": project_id,
