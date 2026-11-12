@@ -286,6 +286,39 @@ class YouTubeClient:
         item = items[0]
         return {key: item.get(key) for key in ("id", "snippet", "contentDetails", "statistics")}
 
+    def verify_connection(self, *, expected_channel_id: str) -> dict[str, Any]:
+        """Perform an explicit read-only OAuth/channel identity check.
+
+        The caller must supply the expected channel ID from the owner's records.
+        This method does not upload, mutate channel settings, or grant authority.
+        """
+        if (not isinstance(expected_channel_id, str)
+                or not expected_channel_id.strip()
+                or expected_channel_id.strip() != expected_channel_id):
+            raise YouTubeIntegrationError("expected_channel_id must be a non-empty exact channel ID")
+        data = self._api(
+            "channels", params={"part": "snippet", "mine": "true"}
+        )
+        items = data.get("items", [])
+        if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
+            raise YouTubeIntegrationError("expected exactly one authenticated YouTube channel")
+        item = items[0]
+        channel_id = item.get("id")
+        if not isinstance(channel_id, str) or not channel_id:
+            raise YouTubeIntegrationError("Google returned an invalid channel identity")
+        if channel_id != expected_channel_id:
+            raise YouTubeIntegrationError(
+                "authenticated YouTube channel does not match the expected channel ID"
+            )
+        snippet = item.get("snippet")
+        title = snippet.get("title") if isinstance(snippet, dict) else None
+        return {
+            "authenticated": True,
+            "channel_id": channel_id,
+            "channel_title": title if isinstance(title, str) else None,
+            "read_only": True,
+        }
+
     def upload_video(self, file_path: str, *, title: str, description: str,
                      evidence_pack: dict[str, Any],
                      final_film_evidence_ref: str,
