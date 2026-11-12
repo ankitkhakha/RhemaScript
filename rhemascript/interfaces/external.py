@@ -328,6 +328,11 @@ class ExternalIntegrationGateway:
             event.update({"phase": "COMPLETED", "http_status": status,
                           "response_bytes": len(raw)})
             self.audit_sink(dict(event))
+            if (authority_operation == "PUBLISH"
+                    and (operation.upper() == "THUMBNAIL_WRITE"
+                         or (operation.upper() == "UPLOAD_CHUNK" and status in (200, 201)))):
+                with self._approval_lock:
+                    self._authorized_publish_requests.pop(request_id, None)
             return status, raw, response_headers
         except Exception as exc:
             event.update({"phase": "FAILED", "error_type": type(exc).__name__})
