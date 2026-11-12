@@ -45,6 +45,18 @@ A mismatch or failed check is recorded as FAILED and the command exits non-zero.
 - No credential values are to be pasted into ChatGPT, issue comments, source files, CI logs, or audit records.
 - This command is a connection diagnostic, not deployment, OAuth consent setup, or a live test until the owner runs it locally.
 
+## Repeatable validation harness
+
+From the repository root, run:
+
+```bash
+python ci/validate_if18_read_only.py --report-file if18-validation-report.json
+```
+
+The harness checks that the IF-18 binding contains exactly `OAUTH_TOKEN` and `CHANNEL_READ`, then runs the full contract and synthetic test suite through `ci/run_ci.py`. The JSON report contains the overall pass/fail result, check statuses, UTC generation time, and explicit limitations. It contains no credentials, access tokens, channel IDs, or channel titles.
+
+The harness is synthetic-only: it does not load the operator's credential file and does not contact Google. A PASS is not a live channel-identity certification. CI uploads the redacted report as a short-retention workflow artifact when the workflow runs.
+
 ## Validation
 
 The added synthetic tests cover successful identity match, identity mismatch, missing credential file, timestamped audit output, secret/channel redaction, and the exact two-operation IF-18 allowlist. CI results must be inspected before treating the implementation as validated.
