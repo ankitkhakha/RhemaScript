@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import threading
@@ -245,10 +245,13 @@ class ExternalIntegrationGateway:
         if not isinstance(path_prefix, str) or not path_prefix.startswith("/") or ".." in path_prefix.split("/"):
             raise ExternalIntegrationError("provider path contract is invalid")
         parsed = urlparse(url)
+        decoded_path = unquote(parsed.path)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                 or parsed.port not in (None, 443) or parsed.fragment
                 or parsed.hostname.lower() not in {h.lower() for h in hosts}
-                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))):
+                or not (parsed.path == path_prefix or parsed.path.startswith(path_prefix.rstrip("/") + "/"))
+                or "\\\\" in decoded_path or "\\x00" in decoded_path
+                or any(part in {".", ".."} for part in decoded_path.split("/"))):
             raise ExternalIntegrationError("request URL is outside the provider operation allowlist")
         if not isinstance(body, (bytes, type(None))) or not 0 < max_response_bytes <= 8_000_000:
             raise ExternalIntegrationError("request body or response limit is invalid")
