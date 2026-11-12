@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,47 @@ def _timestamp() -> str:
 def _required_text(value: Any, field: str) -> None:
     if not isinstance(value, str) or not value.strip():
         raise StoreError(f"{field} must be a non-empty string")
+
+
+def _create_private_sqlite_target(path: Path) -> None:
+    """Atomically create a new owner-only SQLite target in a private directory."""
+    if not path.parent.is_dir():
+        raise StoreError("backup directory must already exist")
+    if os.name == "posix":
+        try:
+            parent = path.parent.lstat()
+        except OSError:
+            raise StoreError("backup directory is unavailable") from None
+        if (stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != os.getuid()
+                or stat.S_IMODE(parent.st_mode) & 0o077):
+            raise StoreError("backup directory must be owner-controlled with mode 0700 or stricter")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            if os.name == "posix":
+                os.fchmod(descriptor, 0o600)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except FileExistsError:
+        raise StoreError("backup destination already exists; refusing to overwrite") from None
+    except OSError:
+        raise StoreError("backup destination could not be created safely") from None
+
+
+def _validate_private_backup_file(path: Path) -> None:
+    """Reject symlink, foreign-owned, or broadly accessible backup files."""
+    try:
+        info = path.lstat()
+    except OSError:
+        raise StoreError("backup file does not exist or is inaccessible") from None
+    if not stat.S_ISREG(info.st_mode):
+        raise StoreError("backup must be a regular non-symlink file")
+    if os.name == "posix":
+        if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+            raise StoreError("backup file must be owner-owned with mode 0600 or stricter")
 
 
 class EvidenceStore:
@@ -287,19 +330,28 @@ class EvidenceStore:
         return True
 
     def backup_to(self, destination: str | Path) -> None:
-        """Create a consistent SQLite backup using SQLite's online backup API."""
+        """Create a consistent owner-only SQLite backup in a private directory."""
         destination_path = Path(destination)
         if destination_path.resolve() == Path(self.path).resolve():
             raise StoreError("backup destination must differ from the live database")
-        if destination_path.exists():
-            raise StoreError("backup destination already exists; refusing to overwrite")
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        _create_private_sqlite_target(destination_path)
         source = self._connect()
-        target = sqlite3.connect(str(destination_path), timeout=10)
+        target = None
         try:
+            target = sqlite3.connect(str(destination_path), timeout=10)
             source.backup(target)
-        finally:
             target.close()
+            target = None
+            if os.name == "posix":
+                os.chmod(destination_path, 0o600)
+            with destination_path.open("rb") as backup_file:
+                os.fsync(backup_file.fileno())
+        except Exception:
+            destination_path.unlink(missing_ok=True)
+            raise
+        finally:
+            if target is not None:
+                target.close()
             source.close()
 
     @staticmethod
@@ -307,6 +359,13 @@ class EvidenceStore:
         """Validate the source DB before copying or initializing a restore target."""
         if not path.is_file():
             raise StoreError("backup file does not exist")
+        _validate_private_backup_file(path)
+        if os.name == "posix":
+            parent = path.parent.lstat()
+            if (stat.S_ISLNK(parent.st_mode) or not stat.S_ISDIR(parent.st_mode)
+                    or parent.st_uid != os.getuid()
+                    or stat.S_IMODE(parent.st_mode) & 0o077):
+                raise StoreError("backup directory must be owner-controlled with mode 0700 or stricter")
         uri = path.resolve().as_uri() + "?mode=ro"
         try:
             source = sqlite3.connect(uri, uri=True, timeout=10)
@@ -382,7 +441,7 @@ class EvidenceStore:
 
     @staticmethod
     def restore_from(backup: str | Path, destination: str | Path) -> "EvidenceStore":
-        """Restore a validated backup to a new path; never overwrite existing data."""
+        """Restore a validated private backup to a new owner-only path."""
         backup_path, destination_path = Path(backup), Path(destination)
         if not backup_path.is_file():
             raise StoreError(f"backup file does not exist: {backup_path}")
@@ -391,16 +450,26 @@ class EvidenceStore:
         if backup_path.resolve() == destination_path.resolve():
             raise StoreError("restore source and destination must differ")
         EvidenceStore._validate_backup(backup_path)
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        _create_private_sqlite_target(destination_path)
         source = sqlite3.connect(str(backup_path), timeout=10)
-        target = sqlite3.connect(str(destination_path), timeout=10)
+        target = None
         try:
+            target = sqlite3.connect(str(destination_path), timeout=10)
             source.backup(target)
-        except sqlite3.Error as exc:
-            destination_path.unlink(missing_ok=True)
-            raise StoreError("backup restore copy failed") from exc
-        finally:
             target.close()
+            target = None
+            if os.name == "posix":
+                os.chmod(destination_path, 0o600)
+            with destination_path.open("rb") as restored_file:
+                os.fsync(restored_file.fileno())
+        except Exception as exc:
+            destination_path.unlink(missing_ok=True)
+            if isinstance(exc, sqlite3.Error):
+                raise StoreError("backup restore copy failed") from exc
+            raise
+        finally:
+            if target is not None:
+                target.close()
             source.close()
         try:
             restored = EvidenceStore(destination_path)
