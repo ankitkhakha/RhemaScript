@@ -120,6 +120,20 @@ class YouTubeConfig:
             )
         return cls(*values)
 
+    @classmethod
+    def from_private_file(cls, path: str | os.PathLike[str]) -> "YouTubeConfig":
+        """Load credentials from a strictly permission-checked local file."""
+        from rhemascript.integrations.credentials import (
+            PrivateCredentialError, load_private_credentials,
+        )
+        try:
+            values = load_private_credentials(path)
+        except PrivateCredentialError as exc:
+            raise YouTubeIntegrationError(str(exc)) from None
+        return cls(
+            values["client_id"], values["client_secret"], values["refresh_token"]
+        )
+
     def validate(self) -> None:
         if not all((self.client_id, self.client_secret, self.refresh_token)):
             raise YouTubeIntegrationError("OAuth configuration is incomplete")
