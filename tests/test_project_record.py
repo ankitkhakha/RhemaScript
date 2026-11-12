@@ -81,5 +81,33 @@ class ProjectRecordTests(unittest.TestCase):
         self.assertEqual("source-v1", revised["stages"]["biblical_source"]["artifact_ref"])
 
 
+    def test_revise_rejects_non_string_stage_and_malformed_containers(self):
+        project = create_project_record("RS-LOCAL-TEST-007")
+        for stage in ([], {}, None):
+            with self.subTest(stage=stage), self.assertRaises(IntegrityError):
+                revise_stage(project, stage, "asset", "source", "reason")
+        malformed = dict(project, stages=[])
+        with self.assertRaises(IntegrityError):
+            revise_stage(malformed, "biblical_source", "asset", "source", "reason")
+        malformed = dict(project, revision_history={})
+        with self.assertRaises(IntegrityError):
+            revise_stage(malformed, "biblical_source", "asset", "source", "reason")
+        malformed = dict(project, approvals=[])
+        with self.assertRaises(IntegrityError):
+            revise_stage(malformed, "biblical_source", "asset", "source", "reason")
+
+    def test_revise_rejects_malformed_existing_stage(self):
+        project = create_project_record("RS-LOCAL-TEST-008")
+        project["stages"]["biblical_source"] = []
+        with self.assertRaises(IntegrityError):
+            revise_stage(project, "biblical_source", "asset-v2", "source", "reason")
+
+    def test_compare_rejects_invalid_project_identity(self):
+        for project_id in ([], {}, ""):
+            record = create_project_record("RS-LOCAL-TEST-009")
+            record["project_id"] = project_id
+            with self.subTest(project_id=project_id), self.assertRaises(IntegrityError):
+                compare_project_records(record, record)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
