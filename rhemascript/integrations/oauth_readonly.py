@@ -99,11 +99,11 @@ def _exchange_code(*, client_id: str, client_secret: str, code: str,
     opener = build_opener(_NoRedirect())
     try:
         with opener.open(request, timeout=timeout) as response:
+            if response.status != 200:
+                raise OAuthBootstrapError("Google OAuth token exchange was rejected")
             raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 raise OAuthBootstrapError("Google OAuth response exceeded the safety limit")
-            if response.status != 200:
-                raise OAuthBootstrapError("Google OAuth token exchange was rejected")
     except HTTPError:
         raise OAuthBootstrapError("Google OAuth token exchange was rejected") from None
     except (URLError, TimeoutError, OSError):
@@ -119,9 +119,12 @@ def _exchange_code(*, client_id: str, client_secret: str, code: str,
 
 def _receive_loopback_code(*, client_id: str, timeout_seconds: int = 300) -> tuple[str, str, str]:
     """Run a one-shot 127.0.0.1 callback and return code, verifier, redirect URI."""
+    if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 900:
+        raise OAuthBootstrapError("OAuth callback timeout must be between 1 and 900 seconds")
     verifier, challenge = _create_pkce_pair()
     state = secrets.token_urlsafe(32)
     result: dict[str, str] = {}
+
     class _LoopbackHTTPServer(HTTPServer):
         request_queue_size = 1
 
@@ -227,8 +230,14 @@ def _callback_handler(result: dict[str, str], expected_state: str):
 def run_bootstrap(*, client_id: str, client_secret: str,
                   credential_path: str | Path = DEFAULT_CREDENTIAL_PATH,
                   timeout_seconds: int = 300) -> None:
-    if not client_id.strip() or not client_secret.strip():
+    if (not isinstance(client_id, str) or not client_id.strip()
+            or not isinstance(client_secret, str) or not client_secret.strip()):
         raise OAuthBootstrapError("OAuth desktop client ID and secret are required")
+    if not isinstance(timeout_seconds, int) or not 1 <= timeout_seconds <= 900:
+        raise OAuthBootstrapError("OAuth callback timeout must be between 1 and 900 seconds")
+    target = Path(credential_path).expanduser()
+    if target.exists() or target.is_symlink():
+        raise OAuthBootstrapError("credential destination already exists; refusing to overwrite it")
     code, verifier, redirect_uri = _receive_loopback_code(
         client_id=client_id.strip(), timeout_seconds=timeout_seconds
     )
