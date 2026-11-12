@@ -245,6 +245,7 @@ class YouTubeClient:
         self._gateway_source_version = source_version
         self._gateway_authority: dict[str, bool] = {}
         self._access_token: str | None = None
+        self._last_upload_context: dict[str, str] | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -513,6 +514,22 @@ class YouTubeClient:
             raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
         if not isinstance(video_id, str) or not video_id:
             raise YouTubeIntegrationError("upload response contained an invalid video ID")
+        from rhemascript.evidence import validate_evidence_pack
+        validated_pack = validate_evidence_pack(evidence_pack)
+        final_films = [
+            item for item in validated_pack.artifacts
+            if item.get("artifact_type") == "EDITED_FILM"
+            and (item.get("artifact_id") == final_film_evidence_ref
+                 or final_film_evidence_ref in item.get("evidence_refs", []))
+        ]
+        if len(final_films) != 1:
+            raise YouTubeIntegrationError("uploaded video cannot be linked to a unique approved final film")
+        self._last_upload_context = {
+            "video_id": video_id,
+            "project_id": project_id,
+            "project_version": project_version,
+            "final_film_artifact_id": final_films[0]["artifact_id"],
+        }
         return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
                 "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
                 "upload_completed": True, "verification_required": True}
@@ -586,8 +603,24 @@ class YouTubeClient:
             raise YouTubeIntegrationError("YouTube returned an invalid upload status")
         if processing_status is not None and not isinstance(processing_status, str):
             raise YouTubeIntegrationError("YouTube returned an invalid processing status")
-        return {"video_id": video_id, "title": title, "privacy_status": privacy_status,
-                "upload_status": upload_status, "processing_status": processing_status}
+        result = {"video_id": video_id, "title": title, "privacy_status": privacy_status,
+                  "upload_status": upload_status, "processing_status": processing_status}
+        context = self._last_upload_context
+        if (context is not None and context.get("video_id") == video_id
+                and upload_status in {"uploaded", "processed"}
+                and processing_status in {"succeeded", "processed"}):
+            result["verification_evidence"] = {
+                "project_id": context["project_id"],
+                "project_version": context["project_version"],
+                "artifact_type": "YOUTUBE_VIDEO_VERIFICATION",
+                "status": "VERIFIED",
+                "youtube_video_id": video_id,
+                "verified_final_film_artifact_id": context["final_film_artifact_id"],
+                "verification_method": "YOUTUBE_API_VIDEO_READ",
+                "upload_status": upload_status,
+                "processing_status": processing_status,
+            }
+        return result
 
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
