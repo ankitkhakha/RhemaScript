@@ -138,6 +138,21 @@ class ProjectRecordTests(unittest.TestCase):
         report = compare_project_records(before, after)
         self.assertIn("biblical_accuracy", report["gates_without_current_approval_evidence"])
 
+    def test_reusing_old_approval_reference_is_not_fresh_evidence(self):
+        before = create_project_record("RS-COMPARE-REUSE-001")
+        before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
+        before["approvals"]["creative_direction"] = {
+            "status": "approved", "approval_ref": "approval:old",
+            "artifact_ref": "source-v1"
+        }
+        after = revise_stage(before, "biblical_source", "source-v2", "bible:ref2", "Correction")
+        after["approvals"]["creative_direction"] = {
+            "status": "approved", "approval_ref": "approval:old",
+            "artifact_ref": "source-v2", "note": "changed metadata only"
+        }
+        report = compare_project_records(before, after)
+        self.assertIn("creative_direction", report["gates_without_current_approval_evidence"])
+
     def test_compare_accepts_approval_linked_to_current_artifact(self):
         before = create_project_record("RS-COMPARE-CURRENT-001")
         before = revise_stage(before, "biblical_source", "source-v1", "bible:ref", "Initial")
