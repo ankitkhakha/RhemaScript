@@ -69,7 +69,8 @@ class InterfaceContractTests(unittest.TestCase):
         gateway = InterfaceGateway()
         first = gateway.invoke("IF-01", request())
         second = gateway.invoke("IF-01", request())
-        self.assertIs(first, second)
+        self.assertEqual(first, second)
+        self.assertIsNot(first, second)
         self.assertEqual(first.idempotency_key, second.idempotency_key)
 
 
