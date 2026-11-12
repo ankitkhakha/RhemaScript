@@ -119,3 +119,8 @@ The preflight:
 
 A successful preflight is only a local configuration check. It cannot verify Google Cloud API enablement, project billing/quota, OAuth consent, refresh-token validity, channel identity or upload permissions. Those require separate owner-led checks. Do not paste credential values or refresh tokens into terminal transcripts, issue comments, CI, or chat. Configure secrets only in the local execution environment using an appropriately protected mechanism.
 
+
+
+## Google connection readiness checklist
+
+Before owner-led Cloud and OAuth setup, follow [Google Connection Readiness V1](YOUTUBE_GOOGLE_CONNECTION_READINESS_V1.md). It covers the existing-project boundary, required APIs, OAuth consent/client setup, least-privilege scopes, local refresh-token handling, audit destination checks, staged read-only validation and separate publishing approval. The checklist is operational guidance only; it does not perform OAuth or verify the live Google project.
