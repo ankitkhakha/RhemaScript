@@ -206,7 +206,8 @@ def search_knowledge(
         if item["status"] == "PENDING_REVIEW" and not include_pending:
             continue
         haystack = " ".join(
-            [item["title"], item["summary"], *item["claims"], *item.get("tags", [])]
+            [item["title"], item["summary"], item["domain"], item["source_type"],
+             *item["claims"], *item.get("tags", [])]
         ).lower()
         if all(term in haystack for term in terms):
             matches.append(item)
