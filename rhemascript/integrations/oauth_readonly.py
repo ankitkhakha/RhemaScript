@@ -111,6 +111,10 @@ def _exchange_code(*, client_id: str, code: str,
             if len(error_body) <= MAX_RESPONSE_BYTES:
                 error_payload = json.loads(error_body.decode("utf-8"))
                 candidate = error_payload.get("error") if isinstance(error_payload, dict) else None
+                description = (
+                    error_payload.get("error_description")
+                    if isinstance(error_payload, dict) else None
+                )
                 safe_errors = {
                     "invalid_client", "invalid_grant", "redirect_uri_mismatch",
                     "unauthorized_client", "unsupported_grant_type",
@@ -118,6 +122,9 @@ def _exchange_code(*, client_id: str, code: str,
                 }
                 if isinstance(candidate, str) and candidate in safe_errors:
                     category = candidate
+                    detail = _safe_google_error_detail(description)
+                    if detail:
+                        category = f"{category}:{detail}"
         except (UnicodeDecodeError, ValueError, OSError):
             pass
         raise OAuthBootstrapError(
@@ -133,6 +140,23 @@ def _exchange_code(*, client_id: str, code: str,
     if not isinstance(payload, dict):
         raise OAuthBootstrapError("Google returned an invalid OAuth token response")
     return payload
+
+
+def _safe_google_error_detail(description: Any) -> str | None:
+    """Map only exact, known Google descriptions to fixed safe diagnostics."""
+    if not isinstance(description, str):
+        return None
+    safe_descriptions = {
+        "Missing required parameter: code_verifier": "missing_code_verifier",
+        "Missing required parameter: redirect_uri": "missing_redirect_uri",
+        "Missing required parameter: client_id": "missing_client_id",
+        "Missing required parameter: grant_type": "missing_grant_type",
+        "Invalid code verifier.": "invalid_code_verifier",
+        "Invalid parameter value for redirect_uri": "invalid_redirect_uri",
+        "Invalid redirect URI": "invalid_redirect_uri",
+        "Invalid grant_type": "invalid_grant_type",
+    }
+    return safe_descriptions.get(description.strip())
 
 
 def _safe_callback_error_category(category: str) -> str:
