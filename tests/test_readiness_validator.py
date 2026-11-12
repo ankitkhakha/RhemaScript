@@ -1,5 +1,5 @@
 import unittest
-from raei.execution.validate_ledger import (
+from raei.execution.validate_ledger import _verified_evidence as _verified_evidence_for_test\nfrom raei.execution.validate_ledger import (
     BIBLE_BOOKS, ETHICS_CASES, RHEMA_IDS, ENGINEERING_CAPSTONES, validate, report
 )
 
@@ -171,6 +171,11 @@ class ReadinessValidatorTests(unittest.TestCase):
         data["production_authority"] = "granted"
         self.assertTrue(any("Production authority" in x for x in validate(data)))
 
+
+
+    def test_blank_explicit_evidence_ref_cannot_fall_back_to_legacy_evidence(self):
+        item = {"status": "verified", "evidence_ref": " ", "evidence": "legacy/ref", "score": 3}
+        self.assertFalse(_verified_evidence_for_test(item))
 
 if __name__ == "__main__":
     unittest.main()
