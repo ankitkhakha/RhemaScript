@@ -31,7 +31,6 @@ class YouTubeCredentialFileTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
         self.assertEqual(load_private_credentials(self.path), {
             "client_id": "client-id",
-            "client_secret": "client-secret",
             "refresh_token": "refresh-token",
         })
 
@@ -39,7 +38,6 @@ class YouTubeCredentialFileTests(unittest.TestCase):
         self.write()
         config = YouTubeConfig.from_private_file(self.path)
         self.assertEqual(config.client_id, "client-id")
-        self.assertEqual(config.client_secret, "client-secret")
         self.assertEqual(config.refresh_token, "refresh-token")
 
     def test_refuses_to_overwrite_existing_file(self):
@@ -73,7 +71,7 @@ class YouTubeCredentialFileTests(unittest.TestCase):
         self.path.chmod(0o600)
         with self.assertRaisesRegex(PrivateCredentialError, "exactly"):
             load_private_credentials(self.path)
-        self.path.write_text('{"client_id":"id","client_secret":"","refresh_token":"token"}')
+        self.path.write_text('{"client_id":"id","refresh_token":""}')
         with self.assertRaisesRegex(PrivateCredentialError, "empty or invalid"):
             load_private_credentials(self.path)
 
