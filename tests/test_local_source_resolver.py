@@ -21,6 +21,8 @@ def entry(reference: str, path: str, content: bytes, project_id="PROJECT-1", pro
         expected_sha256=hashlib.sha256(content).hexdigest(),
         media_type="text/plain",
         catalog_revision="catalog-v1",
+        project_id=project_id,
+        project_version=project_version,
     )
 
 
