@@ -288,26 +288,88 @@ class EvidenceStore:
             source.close()
 
     @staticmethod
+    def _validate_backup(path: Path) -> None:
+        """Validate the source DB before copying or initializing a restore target."""
+        if not path.is_file():
+            raise StoreError("backup file does not exist")
+        uri = f"file:{path.resolve().as_posix()}?mode=ro"
+        try:
+            source = sqlite3.connect(uri, uri=True, timeout=10)
+            source.row_factory = sqlite3.Row
+            try:
+                integrity = source.execute("PRAGMA integrity_check").fetchone()
+                if integrity is None or integrity[0] != "ok":
+                    raise StoreError("backup failed SQLite integrity check")
+                tables = {
+                    row[0] for row in source.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                required = {"units", "prerequisites", "events", "idempotency"}
+                if not required.issubset(tables):
+                    raise StoreError("backup is missing required evidence-store tables")
+                expected_columns = {
+                    "units": {"unit_id", "title", "status", "version"},
+                    "prerequisites": {"unit_id", "prerequisite_id"},
+                    "events": {"sequence", "timestamp", "action", "unit_id", "payload",
+                               "previous_hash", "event_hash"},
+                    "idempotency": {"idempotency_key", "request_hash", "response_json",
+                                    "event_sequence"},
+                }
+                for table, expected in expected_columns.items():
+                    actual = {row[1] for row in source.execute(f"PRAGMA table_info({table})")}
+                    if not expected.issubset(actual):
+                        raise StoreError(f"backup table is incomplete: {table}")
+                previous = "GENESIS"
+                for row in source.execute("SELECT * FROM events ORDER BY sequence"):
+                    try:
+                        payload = json.loads(row["payload"])
+                        body = {"timestamp": row["timestamp"], "action": row["action"],
+                                "unit_id": row["unit_id"], "payload": payload,
+                                "previous_hash": previous}
+                        if (row["previous_hash"] != previous
+                                or row["event_hash"] != _hash(body)):
+                            raise StoreError("backup failed audit-chain verification")
+                    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                        if isinstance(exc, StoreError):
+                            raise
+                        raise StoreError("backup contains malformed audit events") from exc
+                    previous = row["event_hash"]
+            finally:
+                source.close()
+        except sqlite3.Error as exc:
+            raise StoreError("backup is not a readable evidence-store database") from exc
+
+    @staticmethod
     def restore_from(backup: str | Path, destination: str | Path) -> "EvidenceStore":
-        """Restore a backup to a new path; refuse to overwrite an existing database."""
+        """Restore a validated backup to a new path; never overwrite existing data."""
         backup_path, destination_path = Path(backup), Path(destination)
         if not backup_path.is_file():
             raise StoreError(f"backup file does not exist: {backup_path}")
         if destination_path.exists():
             raise StoreError("restore destination already exists; refusing to overwrite")
+        if backup_path.resolve() == destination_path.resolve():
+            raise StoreError("restore source and destination must differ")
+        EvidenceStore._validate_backup(backup_path)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         source = sqlite3.connect(str(backup_path), timeout=10)
         target = sqlite3.connect(str(destination_path), timeout=10)
         try:
             source.backup(target)
+        except sqlite3.Error as exc:
+            destination_path.unlink(missing_ok=True)
+            raise StoreError("backup restore copy failed") from exc
         finally:
             target.close()
             source.close()
-        restored = EvidenceStore(destination_path)
-        if not restored.verify_event_chain():
+        try:
+            restored = EvidenceStore(destination_path)
+            if not restored.verify_event_chain():
+                raise StoreError("restored database failed audit-chain verification")
+            return restored
+        except Exception:
             destination_path.unlink(missing_ok=True)
-            raise StoreError("restored database failed audit-chain verification")
-        return restored
+            raise
 
     def event_count(self) -> int:
         with self._connect() as db:
