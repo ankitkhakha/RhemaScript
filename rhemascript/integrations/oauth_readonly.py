@@ -65,7 +65,14 @@ def _load_desktop_client_config(path: str | Path) -> tuple[str, str]:
     installed = payload.get("installed")
     if not isinstance(installed, dict):
         raise OAuthBootstrapError("OAuth Desktop app config is malformed")
-    if installed.get("auth_uri") != AUTHORIZATION_URL or installed.get("token_uri") != TOKEN_URL:
+    # Google-issued Desktop client JSON commonly uses this legacy client-config
+    # authorization URI. Validate it, but always use AUTHORIZATION_URL (v2)
+    # for the actual browser authorization request.
+    allowed_client_auth_uris = {
+        AUTHORIZATION_URL,
+        "https://accounts.google.com/o/oauth2/auth",
+    }
+    if installed.get("auth_uri") not in allowed_client_auth_uris or installed.get("token_uri") != TOKEN_URL:
         raise OAuthBootstrapError("OAuth Desktop app config contains unexpected Google endpoints")
     client_id = installed.get("client_id")
     client_secret = installed.get("client_secret")
