@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
