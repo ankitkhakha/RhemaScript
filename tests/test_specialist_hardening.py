@@ -56,6 +56,10 @@ class SpecialistEvidenceHardeningTests(unittest.TestCase):
             },
         }
 
+    def test_cap05_rejects_non_finite_target_duration(self):
+        with self.assertRaisesRegex(SpecialistInputError, "target_duration_seconds"):
+            assess_specialist("CAP-05", {"target_duration_seconds": math.nan})
+
     def test_cap08_accepts_valid_runtime_budgets_above_100_seconds(self):
         result = assess_specialist("CAP-08", self._cap08_evidence())
         self.assertEqual(result["runtime_budget_seconds"], 120.0)
