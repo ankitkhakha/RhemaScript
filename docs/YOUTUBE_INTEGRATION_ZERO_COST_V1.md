@@ -4,6 +4,8 @@
 
 This integration uses only Python's standard library and Google's official YouTube Data API v3 and YouTube Analytics API. It adds no package dependency, paid API, hosted service, or database. It does not create a Google Cloud project, enable an API, request OAuth consent, or store credentials.
 
+> **Owner verification update — 2026-11-12:** the owner has completed OAuth authorization and live read-only IF-18 channel identity verification. The expected channel matched, and the current grant is `youtube.readonly` only. The isolated OAuth bootstrap is proposed in draft PR #40 and has not been merged into `main`. This proves the read-only identity path only; it does not prove live uploads, thumbnails, analytics, scheduled publication or production readiness. The remaining sections describe implementation capabilities and staged requirements, not completed live activations.
+
 Implemented client operations:
 - Read the authenticated channel profile.
 - Resumable video upload with title, description, tags, category, privacy and optional scheduled publication metadata.
@@ -74,7 +76,7 @@ For a scheduled public release, YouTube requires the upload to be private and a 
 
 ## Remaining external activation and assurance
 
-A real channel connection and upload cannot be verified until the owner configures OAuth and explicitly authorises a test upload. API access, OAuth consent, channel permissions, quota and account-specific restrictions must be confirmed in the user's existing Google project. No live upload, thumbnail change, public release, or analytics access has been performed by this code change.
+The read-only channel connection has been verified by the owner. A live upload still cannot be considered verified until the owner separately authorises a test upload with the required upload scope and project-level approvals. API access, quota and account-specific restrictions must be confirmed in the existing Google project. No live upload, thumbnail change, public release or analytics access has been performed.
 
 The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. Before production use, add a local encrypted secret store if the deployment environment provides one; this implementation intentionally reads secrets from environment variables only.
 
@@ -113,7 +115,7 @@ The gateway extension preserves the original JSON POST invoke contract and adds 
 
 Automated CI has passed for the IF-18 gateway routing and fail-closed tests, the mocked end-to-end resumable upload (including binary chunk acknowledgements and final video verification), and the mocked gateway-backed thumbnail write. A path-segment boundary hardening test also verifies that sibling paths outside an operation's declared prefix are rejected before transport. These are mocked contract tests, not live Google account or provider validation.
 
-`JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable external requests. No OAuth consent, channel connection, live upload, thumbnail change, analytics query, public release, merge, or deployment has been performed. A passing CI run validates mocked contracts only; it does not validate account permissions, quota, billing status, or real Google responses.
+`JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable the relevant external requests. OAuth consent and read-only channel identity have now been completed locally; no live upload, thumbnail change, analytics query or public release has been performed. PR #40 remains unmerged and no deployment has occurred. A passing CI run validates mocked contracts only; it does not validate write permissions, quota, billing status or real write-operation outcomes.
 
 
 ### Local audit sink
