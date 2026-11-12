@@ -37,7 +37,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             def request(self, interface_id, operation, url, **kwargs):
                 self.calls.append((interface_id, operation, url, kwargs))
                 if operation == "OAUTH_TOKEN":
-                    return 200, b'{"access_token":"gateway-token"}', {}
+                    return 200, b'{"access_token":"gateway-token","scope":"https://www.googleapis.com/auth/youtube.readonly"}', {}
                 if operation == "CHANNEL_READ":
                     if kwargs["headers"].get("Authorization") != "Bearer gateway-token":
                         raise AssertionError("missing gateway access token")
@@ -61,7 +61,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             def request(self, interface_id, operation, url, **kwargs):
                 self.calls.append((interface_id, operation, url, kwargs))
                 if operation == "OAUTH_TOKEN":
-                    return 200, b'{"access_token":"read-only-token"}', {}
+                    return 200, b'{"access_token":"read-only-token","scope":"https://www.googleapis.com/auth/youtube.readonly"}', {}
                 if operation == "CHANNEL_READ":
                     self.assert_authorization(kwargs)
                     if "part=snippet" not in url or "mine=true" not in url:
@@ -91,7 +91,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         def transport(request, timeout):
             calls.append(request.get_method())
             if request.full_url.startswith("https://oauth2.googleapis.com/token"):
-                return 200, b'{"access_token":"read-only-token"}', {}
+                return 200, b'{"access_token":"read-only-token","scope":"https://www.googleapis.com/auth/youtube.readonly"}', {}
             return 200, b'{"items":[{"id":"UC-WRONG","snippet":{"title":"Other channel"}}]}', {}
         client = YouTubeClient(self.config(), transport=transport)
         with self.assertRaisesRegex(YouTubeIntegrationError, "does not match the expected channel ID"):
