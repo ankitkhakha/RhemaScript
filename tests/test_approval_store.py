@@ -99,6 +99,15 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         restored = SQLiteApprovalConsumptionStore(backup)
         self.assertTrue(restored.is_consumed(entry.approval_id, entry.nonce))
 
+    def test_checkpoint_rejects_wrong_key_and_malformed_payload(self):
+        checkpoint = self.store.checkpoint(b"approval-state-checkpoint-key-32-bytes!!")
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, b"wrong-key-which-is-at-least-32-bytes!"))
+        self.assertFalse(self.store.verify_checkpoint({"schema": "wrong"}, b"approval-state-checkpoint-key-32-bytes!!"))
+
+    def test_rejects_boolean_sqlite_timeout(self):
+        with self.assertRaisesRegex(ValueError, "timeout_seconds"):
+            SQLiteApprovalConsumptionStore(self.path, timeout_seconds=True)
+
     def test_rejects_symlinked_ancestor_directory(self):
         link = Path(self.temp.name) / "linked-private"
         link.symlink_to(self.directory, target_is_directory=True)
