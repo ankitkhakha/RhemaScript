@@ -82,7 +82,8 @@ def run_project_assessment(
     generation_authorisation: bool = False,
     run_id: str | None = None,
     orchestrator: Any = None,
-    evidence_root: str | None = None,\n    readiness_registry: Any = None,
+    evidence_root: str | None = None,
+    readiness_registry: Any = None,
 ) -> tuple[Any, OrchestrationResult, dict[str, Any]]:
     """Validate a project pack, assess it, and return its read-only readiness report."""
     from rhemascript.evidence import run_evidence_pack
