@@ -9,7 +9,10 @@ from dataclasses import asdict, is_dataclass
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
+import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -133,16 +136,46 @@ class ReadinessRunRegistry:
         return count == body["record_count"] and hmac.compare_digest(snapshot, str(body["registry_sha256"]))
 
     def backup_to(self, destination: str | Path) -> Path:
-        """Create a consistent SQLite backup at a new destination; never overwrite."""
-        target = Path(destination).expanduser()
+        """Create a consistent backup atomically without replacing an existing path.
+
+        The temporary database is created in the destination directory, then
+        hard-linked into place (which fails if any file or symlink already exists).
+        """
+        requested = Path(destination).expanduser()
+        if not requested.name or requested.name in {".", ".."}:
+            raise ValueError("backup destination must name a file")
+        parent = requested.parent
+        # Reject symlinked directory components rather than silently following them.
+        absolute_parent = Path(os.path.abspath(parent))
+        current = Path(absolute_parent.anchor)
+        for part in absolute_parent.parts[1:]:
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise ValueError("backup destination parent must contain only real directories")
+        resolved_parent = absolute_parent.resolve(strict=True)
+        target = resolved_parent / requested.name
         if target.exists() or target.is_symlink():
             raise ValueError("backup destination must not already exist")
-        if not target.parent.is_dir():
-            raise ValueError("backup destination parent directory must exist")
-        with self._connect() as source:
-            backup = sqlite3.connect(target)
+
+        fd, temporary_name = tempfile.mkstemp(prefix=".rhemascript-backup-", suffix=".sqlite3",
+                                              dir=resolved_parent)
+        os.close(fd)
+        temporary = Path(temporary_name)
+        try:
+            with self._connect() as source:
+                backup = sqlite3.connect(temporary)
+                try:
+                    backup.execute("PRAGMA synchronous=FULL")
+                    source.backup(backup)
+                finally:
+                    backup.close()
+            os.chmod(temporary, 0o600)
+            # link() is atomic and does not overwrite an existing destination.
+            os.link(temporary, target, follow_symlinks=False)
+            return target
+        finally:
             try:
-                source.backup(backup)
-            finally:
-                backup.close()
-        return target
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
