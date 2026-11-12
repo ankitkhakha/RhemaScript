@@ -155,6 +155,36 @@ class EvidenceStoreTests(unittest.TestCase):
             EvidenceStore.restore_from(backup, existing)
         self.assertEqual(existing.read_text(), "do not overwrite")
 
+    def test_restore_rejects_unrelated_sqlite_database_without_blessing_it(self):
+        import sqlite3
+        backup = Path(self.temp.name) / "unrelated.sqlite3"
+        with sqlite3.connect(backup) as db:
+            db.execute("CREATE TABLE unrelated (value TEXT)")
+        destination = Path(self.temp.name) / "must-not-exist.sqlite3"
+        with self.assertRaisesRegex(StoreError, "missing required"):
+            EvidenceStore.restore_from(backup, destination)
+        self.assertFalse(destination.exists())
+
+    def test_restore_rejects_corrupt_event_chain_before_copy(self):
+        import sqlite3
+        backup = Path(self.temp.name) / "tampered.sqlite3"
+        self.store.create_unit("U1", "Foundations")
+        self.store.backup_to(backup)
+        with sqlite3.connect(backup) as db:
+            db.execute("UPDATE events SET payload='{}' WHERE sequence=1")
+        destination = Path(self.temp.name) / "must-not-exist.sqlite3"
+        with self.assertRaisesRegex(StoreError, "audit-chain"):
+            EvidenceStore.restore_from(backup, destination)
+        self.assertFalse(destination.exists())
+
+    def test_restore_rejects_non_sqlite_file_with_controlled_error(self):
+        backup = Path(self.temp.name) / "not-sqlite.sqlite3"
+        backup.write_text("not a database")
+        destination = Path(self.temp.name) / "must-not-exist.sqlite3"
+        with self.assertRaises(StoreError):
+            EvidenceStore.restore_from(backup, destination)
+        self.assertFalse(destination.exists())
+
     def test_concurrent_competing_assessments_have_one_serial_winner(self):
         self.store.create_unit("U1", "Foundations")
         barrier = threading.Barrier(2)
