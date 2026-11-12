@@ -7,6 +7,7 @@ business semantics or enable external execution.
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 from rhemascript.registry.system_registry import INTERFACES
@@ -28,7 +29,7 @@ def validate_interface_request(interface_id: str, request: dict[str, Any]) -> st
     durable idempotency guarantee: persistence and cross-process replay control
     remain separate implementation requirements.
     """
-    if interface_id not in INTERFACES:
+    if not isinstance(interface_id, str) or interface_id not in INTERFACES:
         raise InterfaceContractError(f"unknown interface: {interface_id!r}")
     if not isinstance(request, dict):
         raise InterfaceContractError("request must be an object")
@@ -49,6 +50,34 @@ def validate_interface_request(interface_id: str, request: dict[str, Any]) -> st
     if not isinstance(classification, str) or not classification.strip():
         raise InterfaceContractError("classification must be a non-empty string")
 
+    def validate_json_value(value: Any, ancestors: set[int]) -> None:
+        value_type = type(value)
+        if value is None or value_type in (str, bool, int):
+            return
+        if value_type is float:
+            if not math.isfinite(value):
+                raise InterfaceContractError("request must contain finite JSON numbers")
+            return
+        if value_type in (dict, list):
+            identity = id(value)
+            if identity in ancestors:
+                raise InterfaceContractError("request must not contain circular references")
+            ancestors.add(identity)
+            try:
+                if value_type is dict:
+                    for key, nested in value.items():
+                        if not isinstance(key, str):
+                            raise InterfaceContractError("JSON object keys must be strings")
+                        validate_json_value(nested, ancestors)
+                else:
+                    for nested in value:
+                        validate_json_value(nested, ancestors)
+            finally:
+                ancestors.remove(identity)
+            return
+        raise InterfaceContractError("request must contain only JSON-compatible values")
+
+    validate_json_value(request, set())
     try:
         canonical = json.dumps(
             request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
