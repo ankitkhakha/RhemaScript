@@ -7,6 +7,9 @@ import unittest
 from pathlib import Path
 
 from raei.cli import main
+from raei.curriculum import build_registry
+from raei.knowledge import SCHEMA as KNOWLEDGE_SCHEMA, canonical_knowledge_bytes
+from raei.training import build_self_assessment_payload, canonical_assessment_bytes
 
 
 class RAEICLITests(unittest.TestCase):
@@ -93,6 +96,79 @@ class RAEICLITests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertIn("integrity verification failed", errors)
+
+    def test_record_knowledge_cli_keeps_item_pending_and_searchable_only_on_request(self):
+        self.run_cli("init", "--database", str(self.database))
+        evidence_root = self.private / "evidence"
+        evidence_root.mkdir(mode=0o700)
+        os.chmod(evidence_root, 0o700)
+        payload = {
+            "schema": KNOWLEDGE_SCHEMA,
+            "knowledge_id": "RS-CLI-KNOW-001",
+            "version": "1.0",
+            "title": "Python packaging guidance",
+            "domain": "engineering",
+            "source_type": "OFFICIAL_DOC",
+            "authority_level": "OFFICIAL_PRIMARY",
+            "source_name": "Python Packaging User Guide",
+            "source_version": "2026-11",
+            "source_reference": "local://python-packaging",
+            "summary": "Python packaging and build reliability.",
+            "claims": ["Build artifacts should be reproducible."],
+            "limitations": ["Applies to the recorded documentation version."],
+            "tags": ["python", "packaging"],
+            "evidence_id": "EV-CLI-KNOW-001",
+            "evidence_version": "1.0",
+            "status": "PENDING_REVIEW",
+            "source_authentication_status": "NOT_CHECKED",
+            "claim_relevance_status": "NOT_ASSESSED",
+            "created_at_utc": "2026-11-12T12:00:00+00:00",
+            "supersedes": [],
+        }
+        (evidence_root / "knowledge.json").write_bytes(canonical_knowledge_bytes(payload))
+        code, output, errors = self.run_cli(
+            "record-knowledge", "--database", str(self.database),
+            "--evidence-root", str(evidence_root), "--artifact-path", "knowledge.json",
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["knowledge_payload"]["status"], "PENDING_REVIEW")
+        code, output, errors = self.run_cli(
+            "knowledge-search", "--database", str(self.database),
+            "--evidence-root", str(evidence_root), "--query", "python packaging",
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output), [])
+        code, output, errors = self.run_cli(
+            "knowledge-search", "--database", str(self.database),
+            "--evidence-root", str(evidence_root), "--query", "python packaging",
+            "--include-pending",
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(len(json.loads(output)), 1)
+
+    def test_record_attempt_cli_binds_assessment_to_verified_artifact(self):
+        self.run_cli("init", "--database", str(self.database))
+        evidence_root = self.private / "evidence"
+        evidence_root.mkdir(mode=0o700)
+        os.chmod(evidence_root, 0o700)
+        unit = next(item for item in build_registry() if item["id"] == "CS-FOUND")
+        scores = {criterion: 3 for criterion in unit["rubric"]}
+        payload = build_self_assessment_payload(
+            "CS-FOUND", "ATT-CLI-001", "EV-CLI-ATT-001", "1.0", scores,
+            created_at_utc="2026-11-12T12:00:00+00:00",
+        )
+        (evidence_root / "assessment.json").write_bytes(canonical_assessment_bytes(payload))
+        code, output, errors = self.run_cli(
+            "record-attempt", "--database", str(self.database),
+            "--evidence-root", str(evidence_root), "--artifact-path", "assessment.json",
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["status"], "PROVISIONAL_PASS")
+        code, output, errors = self.run_cli(
+            "status", "--database", str(self.database), "--evidence-root", str(evidence_root),
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["recorded_units"], 1)
 
     def test_private_parent_is_required(self):
         public = self.root / "public"
