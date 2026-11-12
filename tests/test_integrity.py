@@ -111,5 +111,54 @@ class IntegrityChainTests(unittest.TestCase):
         with self.assertRaises(IntegrityError):
             validate_project_chain({"stages":{},"approvals":{}})
 
+
+    def test_project_identity_must_be_nonempty_string(self):
+        for value in (" ", 17, [], {}):
+            project = complete_project()
+            project["project_id"] = value
+            with self.subTest(value=value), self.assertRaises(IntegrityError):
+                validate_project_chain(project)
+
+    def test_stage_source_reference_must_be_nonempty_string(self):
+        for value in (" ", 17, [], {}):
+            project = complete_project()
+            project["stages"]["approved_script"]["source_ref"] = value
+            result = validate_project_chain(project)
+            self.assertFalse(result["valid"])
+            self.assertTrue(any("source reference: approved_script" in e for e in result["errors"]))
+
+    def test_approval_evidence_must_be_nonempty_string(self):
+        for value in (" ", 17, [], {}):
+            project = complete_project()
+            project["approvals"]["final_film"]["approval_ref"] = value
+            result = validate_project_chain(project)
+            self.assertFalse(result["valid"])
+            self.assertTrue(any("approval evidence: final_film" in e for e in result["errors"]))
+
+    def test_malformed_artifact_reference_does_not_crash_duplicate_check(self):
+        project = complete_project()
+        project["stages"]["asset"]["artifact_ref"] = []
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("artifact reference: asset" in e for e in result["errors"]))
+
+    def test_generation_flags_must_be_boolean(self):
+        project = complete_project()
+        project["generation"] = {"authorized": "false", "performed": 0}
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("authorized flag must be boolean" in e for e in result["errors"]))
+        self.assertTrue(any("performed flag must be boolean" in e for e in result["errors"]))
+
+    def test_malformed_asset_stage_does_not_crash_generation_check(self):
+        project = complete_project()
+        project["stages"]["asset"] = []
+        project["generation"] = {"authorized": True, "performed": True,
+                                 "authorization_ref": "approval:generation",
+                                 "asset_ref": "asset-v1"}
+        result = validate_project_chain(project)
+        self.assertFalse(result["valid"])
+        self.assertTrue(any("generation output does not match" in e for e in result["errors"]))
+
 if __name__=="__main__":
     unittest.main(verbosity=2)
