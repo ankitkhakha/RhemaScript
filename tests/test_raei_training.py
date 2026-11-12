@@ -175,6 +175,22 @@ class RAEITrainingTests(unittest.TestCase):
         with self.assertRaises(ReadinessReplayError):
             record_attempt(self.registry, changed, evidence2)
 
+    def test_rewritten_status_cannot_self_grant_independent_review(self):
+        payload, evidence = self.make_artifact()
+        record_attempt(self.registry, payload, evidence)
+        stored = self.registry.get("ATT-1")
+        stored["report"]["status"] = "INDEPENDENTLY_REVIEWED"
+        encoded = json.dumps(stored, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with sqlite3.connect(self.registry.database) as db:
+            db.execute(
+                "UPDATE readiness_runs SET payload_sha256=?, payload_json=? WHERE run_id=?",
+                (digest, encoded, "ATT-1"),
+            )
+        self.assertTrue(self.registry.verify())
+        with self.assertRaisesRegex(RAEITrainingError, "cannot grant"):
+            get_progress(self.registry)
+
     def test_external_checkpoint_protects_learning_history(self):
         payload, evidence = self.make_artifact()
         record_attempt(self.registry, payload, evidence)
