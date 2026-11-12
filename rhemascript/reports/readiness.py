@@ -117,7 +117,13 @@ def run_project_assessment(
             "evidence_id": evidence_record["evidence_id"],
             "capability_id": capability_id,
             "artifact_refs": artifact_ids,
-            "evidence_refs": list(evidence_record.get("evidence_refs", [])),
+            "evidence_refs": [
+                {
+                    "reference": reference,
+                    "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
+                }
+                for reference in evidence_record.get("evidence_refs", [])
+            ],
         })
     report["evidence_traceability"] = {
         "records": evidence_traceability,
@@ -137,6 +143,13 @@ def run_project_assessment(
                     verified_by_id[artifact["artifact_id"]].version
                     if artifact["artifact_id"] in verified_by_id else None
                 ),
+                "declared_evidence_refs": [
+                    {
+                        "reference": reference,
+                        "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
+                    }
+                    for reference in artifact.get("evidence_refs", [])
+                ],
             }
             for artifact in validated.artifacts
         ],
