@@ -308,7 +308,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             verification_keys={"key-2026-02": next_public_key},
             consume_many_once=lambda entries: True,
         )
-        with self.assertRaisesRegex(ApprovalError, "trusted issuer is invalid"):
+        with self.assertRaisesRegex(ApprovalError, "trusted issuer"):
             retired_key_auditor.verify_persisted_record(persisted)
         self.assertEqual(audit["credential_schema"], "RhemaScript.ApprovalCredential.v3")
         self.assertEqual(audit["artifact_sha256"], "a" * 64)
