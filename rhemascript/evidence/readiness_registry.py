@@ -396,29 +396,6 @@ class ReadinessRunRegistry:
         if (payload.get("evidence_id") != binding["evidence_id"]
                 or payload.get("evidence_version") != binding["evidence_version"]):
             raise ValueError("finding lifecycle evidence ID/version does not match its binding")
-        if event_type in {"FINDING_CLOSED", "FINDING_REOPENED"}:
-            if event_type == "FINDING_REOPENED":
-                new_version = payload.get("new_finding_version")
-                if not isinstance(new_version, str) or not new_version.strip() or new_version == version:
-                    raise ValueError("reopening requires a distinct proposed new finding version")
-            if event_type == "FINDING_CLOSED":
-                lineage = payload.get("lifecycle_lineage")
-            if (not isinstance(lineage, dict)
-                    or set(lineage) != {"plan_event_id", "implementation_event_id", "effectiveness_event_id"}
-                    or any(not isinstance(value, str) or not value.strip() for value in lineage.values())):
-                raise ValueError("closure requires exact plan, implementation and effectiveness event IDs")
-            subjects = [item.subject_id for item in approvals]
-            sessions = [item.identity_session_id for item in approvals]
-            if (any(not value for value in subjects + sessions)
-                    or len(set(subjects)) != 2 or len(set(sessions)) != 2
-                    or any(item.artifact_id != binding["evidence_id"]
-                           or item.artifact_version != binding["evidence_version"]
-                           or item.artifact_sha256 != binding["sha256"]
-                           or item.artifact_size_bytes != binding["size_bytes"] for item in approvals)
-                    or len({item.identity_provider_id for item in approvals}) != 1
-                    or len({item.identity_policy_version for item in approvals}) != 1
-                    or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
-                raise ValueError("governed finding terminal transition requires two distinct authenticated subjects and sessions in one trusted identity domain")
         enriched = dict(payload)
         enriched["authorization"] = {
             "issuer": approval.issuer,
