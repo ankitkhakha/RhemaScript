@@ -392,7 +392,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             evidence_root=str(self.evidence_root), evidence=evidence,
         )
 
-    def _capture_resumed_finding(self):
+    def _capture_resumed_finding(self, *, subject_id="subject-new-submitter-001", session_id="session-new-submitter-001"):
         payload = {
             "schema": FINDING_SCHEMA,
             "finding_id": self.finding_id,
@@ -416,8 +416,8 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         raw, evidence = self._write_report("observation-v1.1.json", payload, payload["evidence_id"])
         request_id = f"request-FINDING-SUBMIT-{self.finding_id}-1.1"
         credential = self._credential(
-            "FINDING_SUBMIT", evidence, subject_id="subject-new-submitter-001",
-            actor_id="actor-new-submitter-001", session_id="session-new-submitter-001",
+            "FINDING_SUBMIT", evidence, subject_id=subject_id,
+            actor_id=f"actor-{subject_id}", session_id=session_id,
             request_id=request_id,
         )
         return capture_finding(
@@ -445,6 +445,55 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         new_finding = next(item for item in findings if item["version"] == "1.1")
         self.assertEqual(new_finding["status"], "SUBMITTED")
         self.assertEqual(new_finding["supersedes"], [f"{self.finding_id}@1.0"])
+
+    def test_reopening_rejects_non_increasing_version_before_consuming_approvals(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        evidence = verify_artifact(
+            self.evidence_root, "effectiveness.json",
+            evidence_id="EV-FND-EFFECTIVENESS-001", version="1.0",
+        )
+        request_id = f"request-FINDING-REOPEN-LOW-{self.finding_id}"
+        credentials = (
+            self._credential("FINDING_REOPEN_REVIEW", evidence, subject_id="subject-reopen-reviewer-low",
+                             actor_id="actor-reopen-reviewer-low", session_id="session-reopen-reviewer-low", request_id=request_id),
+            self._credential("FINDING_REOPEN_CONFIRM", evidence, subject_id="subject-reopen-approver-low",
+                             actor_id="actor-reopen-approver-low", session_id="session-reopen-approver-low", request_id=request_id),
+        )
+        with self.assertRaisesRegex(RAEIGovernanceError, "numerically greater"):
+            record_finding_reopening(
+                self.registry, self.verifier, credentials,
+                finding_id=self.finding_id, finding_version="1.0", new_finding_version="0.9",
+                project_id=self.project_id, project_version=self.project_version,
+                request_id=request_id, rationale="Test invalid version progression.",
+                evidence_root=str(self.evidence_root), evidence=evidence,
+            )
+        self.assertFalse(any(event["event_type"] == "FINDING_REOPENED" for event in self.registry.list_activity_events()))
+
+    def test_reopened_version_submitter_cannot_reuse_reopening_reviewer(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        self._record_reopening()
+        with self.assertRaisesRegex(RAEIFindingError, "independent from reopening reviewers"):
+            self._capture_resumed_finding(
+                subject_id="subject-reopen-reviewer-001",
+                session_id="session-new-submitter-unique",
+            )
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_CAPTURED"
+            and event["payload"].get("version") == "1.1"
+            for event in self.registry.list_activity_events()
+        ))
 
     def test_reopening_rejects_same_closure_reviewer(self):
         self._record_research()
