@@ -59,3 +59,14 @@ Tests using in-memory or SQLite fakes are synthetic contract tests only. They ca
 The current implementation rechecks expiry, identity freshness, signing-key fingerprint/status and (when using the bound SQLite store) consumed/revoked state. The SQLite implementation now reads consumed and revoked flags from one consistent read snapshot. This improves consistency of the local state observation; it does **not** lock revocation through provider acceptance and does not close the read-to-dispatch race.
 
 No lease coordinator, provider-side fencing contract, production identity provider, production key registry, HSM/KMS signer, or independent audit system is currently established by the repository evidence. Until those controls exist and are independently tested, CI-green synthetic PUBLISH tests must not be interpreted as permission or readiness for live provider writes.
+
+
+## Synthetic reference model implementation — 13 November 2026
+
+The repository now includes `rhemascript/core/authorization_lease_model.py` and adversarial tests in `tests/test_authorization_lease_model.py`. This is a local SQLite state-machine model for exercising the ordering and fencing invariants in this document. It is intentionally not connected to `ExternalIntegrationGateway` or any live provider transport.
+
+The model serializes lease issuance, approval revocation, and dispatch-acceptance decisions with SQLite write transactions. It binds each lease to a resource, distinct approval IDs, dispatch nonce, request fingerprint, expiry and monotonic generation. It rejects stale generations, approval revocation, expired leases, changed request fingerprints and repeated dispatch acceptance. A newer lease supersedes an older generation for the same resource.
+
+**Security boundary:** this model is a synthetic executable contract, not the independently administered coordinator required for production. It has no authenticated caller identity, dual-approval signature verification, HSM/KMS lease signing, independent durable audit, cross-region linearizability, provider-side fencing or remote dispatch integration. In particular, a local SQLite acceptance decision cannot atomically serialize a remote provider's acceptance with approval revocation. The model must not be used to enable production writes or described as closing the distributed read-to-dispatch race.
+
+The tests exercise revocation after issuance, revocation before acquisition, stale-generation replay, changed fingerprints, expiry at acceptance, duplicate dispatch, overlapping approval sets and concurrent duplicate acceptance. Passing these tests validates only the local state-machine model.
