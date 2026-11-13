@@ -12,6 +12,8 @@ from rhemascript.integrations.youtube_analytics_artifact_store import (
     persist_analytics_evidence_artifact,
 )
 from rhemascript.evidence.artifact_verification import verify_artifact
+from rhemascript.evidence import validate_evidence_pack
+from rhemascript.evidence.evidence_pack_integrity import verify_pack_artifacts
 
 
 def make_snapshot(start, end, views):
@@ -59,6 +61,42 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             envelope = json.loads((Path(directory) / record["local_path"]).read_text(encoding="utf-8"))
             self.assertEqual(envelope["payload"], snapshot)
             self.assertEqual(os.stat(Path(directory) / record["local_path"]).st_mode & 0o777, 0o600)
+
+    def test_persisted_draft_is_byte_verified_when_referenced_by_project_evidence_pack(self):
+        snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
+        with tempfile.TemporaryDirectory() as directory:
+            record = persist_analytics_evidence_artifact(
+                snapshot, evidence_root=directory, relative_path="analytics.json",
+                artifact_id="YT-ANALYTICS-001", project_id="PROJECT-1",
+                project_version="3",
+            )
+            manifest = {
+                "manifest_id": "MANIFEST-1",
+                "schema_version": "1.0",
+                "project_record": {
+                    "record_id": "PROJECT-RECORD-1",
+                    "record_type": "RHEMASCRIPT_PROJECT",
+                    "schema_version": "1.0",
+                    "project_id": "PROJECT-1",
+                    "status": "DRAFT",
+                    "classification": "OPERATIONAL",
+                    "version": "3",
+                },
+                "artifacts": [record],
+                "evidence_records": [{
+                    "evidence_id": "EVIDENCE-1",
+                    "capability_id": "CAP-01",
+                    "payload": {},
+                    "evidence_refs": [],
+                    "artifact_refs": ["YT-ANALYTICS-001"],
+                }],
+                "source_to_final_links": [],
+            }
+            validated = validate_evidence_pack(manifest)
+            versions = verify_pack_artifacts(validated, directory)
+            self.assertEqual(len(versions), 1)
+            self.assertEqual(versions[0].evidence_id, "YT-ANALYTICS-001")
+            self.assertEqual(versions[0].sha256, record["sha256"])
 
     def test_refuses_to_overwrite_existing_evidence(self):
         snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
