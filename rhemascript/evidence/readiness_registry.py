@@ -1405,6 +1405,9 @@ class ReadinessRunRegistry:
         return [json.loads(row[0]) for row in rows]
 
     def get(self, run_id: str) -> dict[str, Any] | None:
+        """Return one readiness record only after validating the full registry history."""
+        if not self.verify():
+            raise ValueError("readiness registry integrity verification failed")
         with self._connect() as db:
             row = db.execute("SELECT payload_json FROM readiness_runs WHERE run_id=?", (run_id,)).fetchone()
         return json.loads(row[0]) if row else None
