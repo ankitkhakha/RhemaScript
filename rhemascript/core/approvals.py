@@ -8,6 +8,8 @@ batch, or persist none of them.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import hmac
 from datetime import datetime, timedelta, timezone
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -62,6 +64,7 @@ class VerifiedApproval:
     expires_at: datetime
     nonce: str
     key_id: str
+    verification_key_fingerprint: str | None = None
     artifact_id: str | None = None
     artifact_version: str | None = None
     artifact_sha256: str | None = None
@@ -356,6 +359,7 @@ class ApprovalVerifier:
             project_id=token["project_id"], project_version=token["project_version"],
             request_id=token["request_id"], issued_at=issued_at,
             expires_at=expires_at, nonce=token["nonce"], key_id=token["key_id"],
+            verification_key_fingerprint=hashlib.sha256(public_key).hexdigest(),
             artifact_id=token.get("artifact_id"),
             artifact_version=token.get("artifact_version"),
             artifact_sha256=token.get("artifact_sha256"),
@@ -513,6 +517,17 @@ class ApprovalVerifier:
                 raise ApprovalError("approval expectation contains an invalid scope value")
             result = self._verify_one(credential, artifact_binding=artifact_binding, **scope)
             verified.append(result)
+        # Re-resolve immediately before atomic consumption so an emergency
+        # revocation or key replacement during batch verification fails closed.
+        if self._key_registry is not None:
+            for item in verified:
+                current_key, current_record = self._resolve_verification_key(item.key_id)
+                if (current_record is None or current_record.status != "ACTIVE"
+                        or not hmac.compare_digest(
+                            hashlib.sha256(current_key).hexdigest(),
+                            item.verification_key_fingerprint or "",
+                        )):
+                    raise ApprovalError("verification key changed or was revoked before approval consumption")
         approval_ids = [item.approval_id for item in verified]
         nonces = [item.nonce for item in verified]
         if len(set(approval_ids)) != len(approval_ids) or len(set(nonces)) != len(nonces):
