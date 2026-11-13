@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
+from rhemascript.evidence.artifact_verification import EvidenceVersion, verify_artifact
 from raei.governance import (
     RAEIGovernanceError, record_finding_disposition, record_knowledge_review,
     list_governed_reviews,
@@ -20,6 +21,13 @@ class RAEIGovernanceTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.registry = ReadinessRunRegistry(Path(self.temp.name) / "readiness.sqlite")
+        self.evidence_root = Path(self.temp.name) / "evidence"
+        self.evidence_root.mkdir()
+        (self.evidence_root / "review.txt").write_bytes(b"independent review evidence")
+        self.evidence = verify_artifact(
+            self.evidence_root, "review.txt",
+            evidence_id="EVIDENCE-001", version="1.0",
+        )
         self.now = datetime.now(timezone.utc)
         self.private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
         public_key = self.private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -66,14 +74,6 @@ class RAEIGovernanceTests(unittest.TestCase):
             self.credential(second_action, actors[1], "approve-0001"),
         )
 
-    def binding(self):
-        return {
-            "evidence_id": "EVIDENCE-001",
-            "evidence_version": "1.0",
-            "sha256": "a" * 64,
-            "size_bytes": 128,
-        }
-
     def test_finding_disposition_requires_two_distinct_signed_actors(self):
         result = record_finding_disposition(
             self.registry, self.verifier,
@@ -82,7 +82,7 @@ class RAEIGovernanceTests(unittest.TestCase):
             project_id="RS-PWW-001", project_version="3.2",
             request_id="review-request-0001", disposition="ACCEPTED",
             rationale="Reproduced and independently confirmed.",
-            evidence_binding=self.binding(),
+            evidence_root=str(self.evidence_root), evidence=self.evidence,
         )
         self.assertTrue(result["recorded"])
         reviews = list_governed_reviews(
@@ -101,7 +101,7 @@ class RAEIGovernanceTests(unittest.TestCase):
             project_id="RS-PWW-001", project_version="3.2",
             request_id="review-request-0001", decision="APPROVED",
             rationale="Sources and claims independently reviewed.",
-            evidence_binding=self.binding(),
+            evidence_root=str(self.evidence_root), evidence=self.evidence,
         )
         self.assertTrue(result["recorded"])
         reviews = list_governed_reviews(
@@ -130,7 +130,7 @@ class RAEIGovernanceTests(unittest.TestCase):
                 project_id="RS-PWW-001", project_version="3.2",
                 request_id="review-request-0001", disposition="REJECTED",
                 rationale="Insufficient evidence.",
-                evidence_binding=self.binding(),
+                evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
         self.assertEqual(self.used, set())
 
@@ -147,11 +147,11 @@ class RAEIGovernanceTests(unittest.TestCase):
                 finding_id="RS-FND-003", finding_version="1.0",
                 project_id="RS-PWW-001", project_version="3.2",
                 request_id="review-request-0001", disposition="ACCEPTED",
-                rationale="Evidence checked.", evidence_binding=self.binding(),
+                rationale="Evidence checked.", evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
         self.assertEqual(list_governed_reviews(self.registry), [])
 
-    def test_missing_exact_evidence_binding_is_rejected(self):
+    def test_unverified_evidence_object_is_rejected(self):
         with self.assertRaises(RAEIGovernanceError):
             record_knowledge_review(
                 self.registry, self.verifier,
@@ -159,10 +159,25 @@ class RAEIGovernanceTests(unittest.TestCase):
                 knowledge_id="BWSF-02", knowledge_version="0.1",
                 project_id="RS-PWW-001", project_version="3.2",
                 request_id="review-request-0001", decision="APPROVED",
-                rationale="Review complete.", evidence_binding={},
+                rationale="Review complete.", evidence_root=str(self.evidence_root),
+                evidence=EvidenceVersion("EVIDENCE-001", "review.txt", "1.0", "0" * 64, 1),
             )
         self.assertEqual(self.used, set())
 
+
+    def test_changed_evidence_bytes_are_rejected_before_approval_consumption(self):
+        (self.evidence_root / "review.txt").write_bytes(b"tampered evidence")
+        with self.assertRaisesRegex(RAEIGovernanceError, "could not be reverified|bytes changed"):
+            record_knowledge_review(
+                self.registry, self.verifier,
+                self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"),
+                knowledge_id="BWSF-03", knowledge_version="0.1",
+                project_id="RS-PWW-001", project_version="3.2",
+                request_id="review-request-0001", decision="APPROVED",
+                rationale="Review complete.", evidence_root=str(self.evidence_root),
+                evidence=self.evidence,
+            )
+        self.assertEqual(self.used, set())
 
 if __name__ == "__main__":
     unittest.main()
