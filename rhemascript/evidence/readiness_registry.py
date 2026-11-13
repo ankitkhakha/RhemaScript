@@ -518,7 +518,7 @@ class ReadinessRunRegistry:
                     raise ValueError("finding plan requires a REPRODUCED outcome")
                 if not disposition_for_version or disposition_for_version[-1].get("disposition") != "ACCEPTED":
                     db.rollback()
-                    raise ValueError("finding plan requires an ACCEPTED governed disposition")
+                    raise ValueError("finding plan requires an accepted governed disposition")
                 if plans_for_version:
                     db.rollback()
                     raise ValueError("finding plan is already recorded for this version")
@@ -662,17 +662,51 @@ class ReadinessRunRegistry:
                 if not captured_payload:
                     db.rollback()
                     raise ValueError("finding disposition requires the exact captured finding version")
-                exact_refs = captured_payload.get("evidence_refs", [])
+                # A disposition may rely on original captured evidence or on a
+                # previously authenticated research/reproduction report for this
+                # exact finding version. Never accept an arbitrary later file.
+                eligible_bindings = []
+                for ref in captured_payload.get("evidence_refs", []):
+                    if isinstance(ref, dict):
+                        eligible_bindings.append({
+                            "evidence_id": ref.get("evidence_id"),
+                            "evidence_version": ref.get("version"),
+                            "sha256": ref.get("sha256"),
+                            "size_bytes": ref.get("size_bytes"),
+                        })
+                prior_evidence_rows = db.execute(
+                    """SELECT event_type, payload_json FROM activity_events
+                    WHERE event_type IN ('FINDING_RESEARCHED','FINDING_REPRODUCED')
+                    AND project_id=? AND subject_id=?
+                    ORDER BY sequence ASC""",
+                    (project_id, subject_id),
+                ).fetchall()
+                for prior_type, prior_json in prior_evidence_rows:
+                    prior_payload = json.loads(prior_json)
+                    if prior_payload.get("finding_version") != payload.get("finding_version"):
+                        continue
+                    prior_binding = prior_payload.get("evidence_binding")
+                    if isinstance(prior_binding, dict):
+                        eligible_bindings.append({
+                            "evidence_id": prior_binding.get("evidence_id"),
+                            "evidence_version": prior_binding.get("evidence_version"),
+                            "sha256": prior_binding.get("sha256"),
+                            "size_bytes": prior_binding.get("size_bytes"),
+                        })
                 if not any(
-                    isinstance(ref, dict)
-                    and ref.get("evidence_id") == binding["evidence_id"]
-                    and ref.get("version") == binding["evidence_version"]
-                    and ref.get("sha256") == binding["sha256"]
-                    and ref.get("size_bytes") == binding["size_bytes"]
-                    for ref in exact_refs
+                    item == {
+                        "evidence_id": binding["evidence_id"],
+                        "evidence_version": binding["evidence_version"],
+                        "sha256": binding["sha256"],
+                        "size_bytes": binding["size_bytes"],
+                    }
+                    for item in eligible_bindings
                 ):
                     db.rollback()
-                    raise ValueError("finding disposition evidence is not bound to the captured finding")
+                    raise ValueError(
+                        "finding disposition evidence must be bound to the captured finding "
+                        "or a prior authenticated research/reproduction report"
+                    )
             else:
                 run_id = f"KNOWLEDGE:{subject_id}:{payload.get('knowledge_version')}"
                 stored = db.execute(
