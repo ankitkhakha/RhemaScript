@@ -5,7 +5,7 @@ from pathlib import Path
 
 from rhemascript.evidence.artifact_verification import (
     AssessmentBinding, EvidenceIntegrityError, EvidenceVersion, IntegrityLedger,
-    bind_assessment, verify_artifact, verify_assessment_binding,
+    bind_assessment, verify_artifact, verify_json_artifact, verify_assessment_binding,
 )
 
 
@@ -25,6 +25,32 @@ class ArtifactVerificationTests(unittest.TestCase):
         item = self.verify()
         self.assertEqual(item.sha256, __import__("hashlib").sha256(b"approved evidence").hexdigest())
         self.assertEqual(item.size_bytes, len(b"approved evidence"))
+
+    def test_json_artifact_returns_the_exact_hashed_byte_snapshot(self):
+        content = b'{"evidence_id":"EV-JSON","evidence_version":"v7","value":"original"}'
+        (self.root / "record.json").write_bytes(content)
+        evidence, consumed = verify_json_artifact(self.root, "record.json")
+        self.assertEqual(consumed, content)
+        self.assertEqual(evidence.evidence_id, "EV-JSON")
+        self.assertEqual(evidence.version, "v7")
+        self.assertEqual(evidence.sha256, __import__("hashlib").sha256(content).hexdigest())
+        self.assertEqual(evidence.size_bytes, len(content))
+        (self.root / "record.json").write_text('{"evidence_id":"EV-JSON","evidence_version":"v8"}', encoding="utf-8")
+        self.assertEqual(evidence.sha256, __import__("hashlib").sha256(consumed).hexdigest())
+
+    def test_json_artifact_requires_valid_identity_and_object(self):
+        for content in (b"not-json", b"[]", b'{"evidence_id":"EV-1"}',
+                        b'{"evidence_version":"v1"}'):
+            (self.root / "invalid.json").write_bytes(content)
+            with self.assertRaises(EvidenceIntegrityError):
+                verify_json_artifact(self.root, "invalid.json")
+
+    def test_json_artifact_rejects_symlink(self):
+        target = self.root / "target.json"
+        target.write_text('{"evidence_id":"EV-1","evidence_version":"v1"}', encoding="utf-8")
+        (self.root / "linked.json").symlink_to(target)
+        with self.assertRaises(EvidenceIntegrityError):
+            verify_json_artifact(self.root, "linked.json")
 
     def test_missing_artifact_rejected(self):
         with self.assertRaises(EvidenceIntegrityError):
