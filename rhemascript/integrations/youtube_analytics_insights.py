@@ -433,8 +433,15 @@ def verify_analytics_period_comparison(
             if status == "ZERO_BASELINE":
                 if previous_value != 0 or pct is not None:
                     raise YouTubeAnalyticsInsightError("zero-baseline metric is inconsistent")
-            elif previous_value == 0 or pct != _decimal_text(delta / previous_value * 100):
+            elif previous_value == 0 or pct is None:
                 raise YouTubeAnalyticsInsightError("comparable metric percentage change is inconsistent")
+            else:
+                # Canonical serialization can round weighted-average values.
+                # Use a tight relative tolerance for arithmetic over those values.
+                expected_pct = delta / previous_value * Decimal(100)
+                tolerance = max(Decimal(1), abs(expected_pct)) * Decimal("1e-24")
+                if abs(pct - expected_pct) > tolerance:
+                    raise YouTubeAnalyticsInsightError("comparable metric percentage change is inconsistent")
 
     if (current_snapshot is None) != (previous_snapshot is None):
         raise YouTubeAnalyticsInsightError("both exact source snapshots are required for derivation verification")
