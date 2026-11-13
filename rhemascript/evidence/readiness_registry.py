@@ -574,6 +574,9 @@ class ReadinessRunRegistry:
                     db.rollback()
                     raise ValueError("finding reproduction is already recorded for this version")
                 research_auth = research_for_version[-1].get("authorization", {})
+                if research_auth.get("project_version") != project_version:
+                    db.rollback()
+                    raise ValueError("reproduction requires research from the same project version")
                 researcher = research_auth.get("subject_id")
                 research_session = research_auth.get("identity_session_id")
                 submitter_identity = captured.get("submitter_identity", {})
@@ -608,6 +611,10 @@ class ReadinessRunRegistry:
                     raise ValueError("finding plan is already recorded for this version")
                 research_auth = research_for_version[-1].get("authorization", {})
                 reproduction_auth = reproduction_for_version[-1].get("authorization", {})
+                if (research_auth.get("project_version") != project_version
+                        or reproduction_auth.get("project_version") != project_version):
+                    db.rollback()
+                    raise ValueError("finding plan requires research and reproduction from the same project version")
                 submitter_identity = captured.get("submitter_identity", {})
                 prior_identities = [research_auth, reproduction_auth]
                 if submitter_identity:
