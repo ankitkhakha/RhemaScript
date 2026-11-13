@@ -187,7 +187,20 @@ def export_composite_checkpoint_manifest(
         raise CompositeCheckpointError("authoritative stores changed during composite checkpoint capture")
 
     archive_raw = _safe_private_bytes(approval_archive_path, 64 * 1024 * 1024)
-    archive_file_digest = hashlib.sha256(archive_raw).hexdigest()
+    archive_confirm = _safe_private_bytes(approval_archive_path, 64 * 1024 * 1024)
+    if not hmac.compare_digest(hashlib.sha256(archive_raw).hexdigest(),
+                               hashlib.sha256(archive_confirm).hexdigest()):
+        raise CompositeCheckpointError("approval archive changed during composite checkpoint capture")
+    try:
+        archive_after = verify_checkpoint_archive(
+            approval_archive_path, key=archive_key, current_store=approval_store,
+        )
+    except Exception:
+        raise CompositeCheckpointError("approval archive changed or failed re-verification during capture") from None
+    if (archive_after.get("generation") != archive.get("generation")
+            or archive_after.get("snapshot_sha256") != archive.get("snapshot_sha256")
+            or archive_after.get("matches_current_state") is not True):
+        raise CompositeCheckpointError("approval archive changed during composite checkpoint capture")
     checkpoint_digest = hashlib.sha256(_canonical(readiness_before)).hexdigest()
     body = {
         "schema": SCHEMA,
@@ -254,7 +267,10 @@ def verify_composite_checkpoint_manifest(
         )
     except Exception:
         raise CompositeCheckpointError("approval archive verification failed") from None
-    if (archive.get("archive_valid") is not True
+    archive_confirm = _safe_private_bytes(approval_archive_path, 64 * 1024 * 1024)
+    if (not hmac.compare_digest(hashlib.sha256(archive_raw).hexdigest(),
+                                hashlib.sha256(archive_confirm).hexdigest())
+            or archive.get("archive_valid") is not True
             or archive.get("matches_current_state") is not True
             or archive.get("generation") != envelope["generation"]
             or archive.get("snapshot_sha256") != envelope["approval_snapshot_sha256"]):
@@ -317,6 +333,8 @@ def advance_composite_checkpoint_anchor(
     age = (current.astimezone(timezone.utc) - latest.resolved_at.astimezone(timezone.utc)).total_seconds()
     if age < -30 or age > 30:
         raise CompositeCheckpointError("independent anchor response is stale or future-dated")
+    if latest.recorded_at > current.astimezone(timezone.utc) + __import__("datetime").timedelta(seconds=30):
+        raise CompositeCheckpointError("independent anchor record is future-dated")
     return latest
 
 
