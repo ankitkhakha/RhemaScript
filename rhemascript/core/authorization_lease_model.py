@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 import sqlite3
 import uuid
 
@@ -93,10 +94,12 @@ class SQLiteLeaseStateModel:
         values = (resource_id, dispatch_nonce, request_fingerprint)
         if any(not isinstance(v, str) or not v.strip() for v in values):
             raise ValueError("lease binding fields must be non-empty strings")
-        if (not isinstance(approval_ids, tuple) or len(approval_ids) < 2
+        if (not isinstance(approval_ids, tuple) or len(approval_ids) != 2
                 or any(not isinstance(v, str) or not v.strip() for v in approval_ids)
-                or len(set(approval_ids)) != len(approval_ids)):
-            raise ValueError("lease requires distinct approval identifiers")
+                or len(set(approval_ids)) != 2):
+            raise ValueError("lease requires exactly two distinct approval identifiers")
+        if not re.fullmatch(r"[0-9a-f]{64}", request_fingerprint):
+            raise ValueError("request_fingerprint must be a lowercase SHA-256 hex digest")
         expiry = self._utc(expires_at)
         if datetime.fromisoformat(expiry) <= datetime.now(timezone.utc):
             raise ValueError("lease expiry must be in the future")
