@@ -103,7 +103,9 @@ def verify_analytics_evidence_snapshot(snapshot: dict[str, Any]) -> bool:
         timestamp = datetime.fromisoformat(
             snapshot["retrieved_at"].replace("Z", "+00:00")
         )
-        _retrieval_timestamp(timestamp)
+        normalized_timestamp = _retrieval_timestamp(timestamp)
+        if normalized_timestamp != snapshot["retrieved_at"]:
+            raise ValueError("retrieval timestamp is not canonical UTC")
         _validate_analytics_request(snapshot["query"])
         _validate_analytics_report(snapshot["response"], snapshot["query"])
     except (KeyError, TypeError, ValueError, YouTubeIntegrationError):
@@ -113,7 +115,10 @@ def verify_analytics_evidence_snapshot(snapshot: dict[str, Any]) -> bool:
     if snapshot["response_sha256"] != response_digest:
         raise YouTubeAnalyticsEvidenceError("Analytics response digest does not match")
     rows = snapshot["response"].get("rows", [])
-    if (snapshot["row_count"] != len(rows)
+    if (isinstance(snapshot["row_count"], bool)
+            or not isinstance(snapshot["row_count"], int)
+            or snapshot["row_count"] != len(rows)
+            or not isinstance(snapshot["no_data"], bool)
             or snapshot["no_data"] is not (not bool(rows))):
         raise YouTubeAnalyticsEvidenceError("Analytics row metadata does not match response")
     body = {key: value for key, value in snapshot.items() if key != "snapshot_sha256"}
