@@ -9,7 +9,7 @@ import stat
 import sys
 from typing import Any
 
-from rhemascript.evidence.artifact_verification import verify_artifact
+from rhemascript.evidence.artifact_verification import verify_json_artifact
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 from .curriculum import registry_summary
 from .knowledge import RAEIKnowledgeError, record_knowledge, search_knowledge
@@ -170,22 +170,13 @@ def main(argv: list[str] | None = None) -> int:
 
         root = Path(args.evidence_root).expanduser()
         if args.command == "capture-finding":
-            evidence = verify_artifact(
-                root, args.artifact_path,
-                evidence_id=_read_identity(root, args.artifact_path, "evidence_id"),
-                version=_read_identity(root, args.artifact_path, "evidence_version"),
-            )
-            artifact_bytes = (root / args.artifact_path).read_bytes()
+            evidence, artifact_bytes = verify_json_artifact(root, args.artifact_path)
             result = capture_finding(registry, root, artifact_bytes, evidence)
             print(_json(result))
             return 0
 
-        artifact = verify_artifact(
-            root, args.artifact_path,
-            evidence_id=_read_identity(root, args.artifact_path, "evidence_id"),
-            version=_read_identity(root, args.artifact_path, "evidence_version"),
-        )
-        payload = json.loads((root / args.artifact_path).read_bytes())
+        artifact, artifact_bytes = verify_json_artifact(root, args.artifact_path)
+        payload = json.loads(artifact_bytes)
         if args.command == "record-attempt":
             result = record_attempt(registry, payload, artifact)
         elif args.command == "record-knowledge":
@@ -197,16 +188,6 @@ def main(argv: list[str] | None = None) -> int:
     except (RAEICLIError, RAEITrainingError, RAEIKnowledgeError, RAEIFindingError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"RAEI: {exc}", file=sys.stderr)
         return 2
-
-
-def _read_identity(root: Path, relative_path: str, field: str) -> str:
-    try:
-        value = json.loads((root / relative_path).read_bytes())[field]
-    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise RAEICLIError(f"artifact must contain a valid {field}") from exc
-    if not isinstance(value, str) or not value.strip():
-        raise RAEICLIError(f"artifact must contain a non-empty {field}")
-    return value
 
 
 if __name__ == "__main__":
