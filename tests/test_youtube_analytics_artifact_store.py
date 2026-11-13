@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import os
 from pathlib import Path
 import tempfile
@@ -6,7 +7,10 @@ import unittest
 from datetime import datetime, timezone
 
 from rhemascript.integrations.youtube_analytics_evidence import build_analytics_evidence_snapshot
-from rhemascript.integrations.youtube_analytics_insights import compare_analytics_periods
+from rhemascript.integrations.youtube_analytics_insights import (
+    compare_analytics_periods,
+    _canonical_digest,
+)
 from rhemascript.integrations.youtube_analytics_artifact_store import (
     YouTubeAnalyticsArtifactStoreError,
     persist_analytics_evidence_artifact,
@@ -156,6 +160,7 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
                 artifact_id="YT-COMP-001", project_id="PROJECT-1",
                 project_version="3", current_snapshot_artifact_id="YT-CURRENT",
                 previous_snapshot_artifact_id="YT-PREVIOUS",
+                current_snapshot=current, previous_snapshot=previous,
             )
             self.assertEqual(record["artifact_type"], "YOUTUBE_ANALYTICS_COMPARISON")
             self.assertEqual(record["comparison_sha256"], comparison["comparison_sha256"])
@@ -163,6 +168,45 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             self.assertEqual(record["previous_snapshot_artifact_id"], "YT-PREVIOUS")
             self.assertEqual(record["current_snapshot_sha256"], comparison["current_snapshot_sha256"])
             self.assertEqual(record["previous_snapshot_sha256"], comparison["previous_snapshot_sha256"])
+
+    def test_comparison_persistence_requires_both_exact_source_snapshots(self):
+        previous = make_snapshot("2026-10-01", "2026-10-01", 10)
+        current = make_snapshot("2026-10-02", "2026-10-02", 15)
+        comparison = compare_analytics_periods(current, previous)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                YouTubeAnalyticsArtifactStoreError, "requires both exact source snapshots"
+            ):
+                persist_analytics_evidence_artifact(
+                    comparison, evidence_root=directory, relative_path="comparison.json",
+                    artifact_id="YT-COMP-002", project_id="PROJECT-1",
+                    project_version="3", current_snapshot_artifact_id="YT-CURRENT",
+                    previous_snapshot_artifact_id="YT-PREVIOUS",
+                )
+            self.assertFalse((Path(directory) / "comparison.json").exists())
+
+    def test_comparison_persistence_rejects_rehashed_but_wrong_source_derivation(self):
+        previous = make_snapshot("2026-10-01", "2026-10-01", 10)
+        current = make_snapshot("2026-10-02", "2026-10-02", 15)
+        forged = compare_analytics_periods(current, previous)
+        forged["metrics"]["views"]["current_value"] = "99"
+        forged["metrics"]["views"]["absolute_change"] = "89"
+        forged["metrics"]["views"]["percentage_change"] = "890"
+        forged["comparison_sha256"] = _canonical_digest({
+            key: value for key, value in forged.items() if key != "comparison_sha256"
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                YouTubeAnalyticsArtifactStoreError, "exact source snapshots"
+            ):
+                persist_analytics_evidence_artifact(
+                    forged, evidence_root=directory, relative_path="forged-comparison.json",
+                    artifact_id="YT-COMP-FORGED", project_id="PROJECT-1",
+                    project_version="3", current_snapshot_artifact_id="YT-CURRENT",
+                    previous_snapshot_artifact_id="YT-PREVIOUS",
+                    current_snapshot=current, previous_snapshot=previous,
+                )
+            self.assertFalse((Path(directory) / "forged-comparison.json").exists())
 
 
 if __name__ == "__main__":
