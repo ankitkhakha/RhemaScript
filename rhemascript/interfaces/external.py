@@ -531,9 +531,16 @@ class ExternalIntegrationGateway:
         session_context = None
         if operation.upper() in {"UPLOAD_SESSION", "UPLOAD_CHUNK"}:
             from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+            from rhemascript.integrations.session_url_vault import (
+                SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
+            )
             if not isinstance(self.publish_session_registry, SQLitePublishSessionRegistry):
                 raise ExternalIntegrationError(
                     "a durable SQLitePublishSessionRegistry is required before YouTube provider writes"
+                )
+            if not isinstance(self.session_url_vault, SQLiteEncryptedSessionUrlVault):
+                raise ExternalIntegrationError(
+                    "an encrypted SQLite session URL vault is required before YouTube provider writes"
                 )
             approval_fingerprint = _publish_approval_fingerprint(approvals)
             session_identity = {
@@ -546,6 +553,7 @@ class ExternalIntegrationGateway:
                 "artifact_sha256": first.artifact_sha256,
                 "artifact_size_bytes": first.artifact_size_bytes,
             }
+            vault_ref = publish_session_vault_reference(session_identity)
             owner_id = self._session_owner_id
             lease_seconds = min(600.0, max(60.0, binding.timeout_seconds * 4))
             if operation.upper() == "UPLOAD_SESSION":
@@ -562,10 +570,26 @@ class ExternalIntegrationGateway:
                         "this approval/request/artifact tuple already has a publish-session claim"
                     )
                 session_context = {
-                    **session_identity, "owner_id": owner_id, "phase": "CREATE",
+                    **session_identity, "owner_id": owner_id, "phase": "CREATE", "vault_ref": vault_ref,
                 }
             else:
                 session_url_sha256 = sha256(url.encode("utf-8")).hexdigest()
+                try:
+                    current_session = self.publish_session_registry.get_publish_session(
+                        project_id=project_id, project_version=source_version, request_id=request_id,
+                    )
+                    if (current_session is None
+                            or current_session.get("session_url_sha256") != session_url_sha256):
+                        raise ExternalIntegrationError("publish session is not bound to this exact provider URL")
+                    stored_url = self.session_url_vault.retrieve(
+                        vault_ref, expected_sha256=session_url_sha256,
+                    )
+                    if stored_url != url:
+                        raise ExternalIntegrationError("provider URL differs from the encrypted session vault record")
+                except ExternalIntegrationError:
+                    raise
+                except Exception:
+                    raise ExternalIntegrationError("encrypted publish-session URL could not be recovered") from None
                 range_kind, start, end, total = _parse_upload_content_range(headers or {}, body or b"")
                 try:
                     if range_kind == "RECONCILE":
@@ -590,7 +614,7 @@ class ExternalIntegrationGateway:
                         "upload chunk is not bound to the active durable publish session or next byte range"
                     )
                 session_context = {
-                    **session_identity, "owner_id": owner_id, "phase": phase,
+                    **session_identity, "owner_id": owner_id, "phase": phase, "vault_ref": vault_ref,
                     "session_url_sha256": session_url_sha256, "total_bytes": total,
                     "chunk_start": start, "chunk_end": end,
                 }
@@ -645,6 +669,7 @@ class ExternalIntegrationGateway:
                 "artifact_sha256": session_context["artifact_sha256"],
                 "artifact_size_bytes": session_context["artifact_size_bytes"],
             })
+            event["session_vault_ref"] = session_context["vault_ref"]
             if session_context.get("session_url_sha256"):
                 event["session_url_sha256"] = session_context["session_url_sha256"]
             if session_context.get("total_bytes") is not None:
@@ -697,6 +722,28 @@ class ExternalIntegrationGateway:
                                 "provider session response was not safely bindable; do not create a replacement"
                             )
                         session_digest = sha256(location.encode("utf-8")).hexdigest()
+                        try:
+                            vault_digest = self.session_url_vault.store(
+                                session_context["vault_ref"], location,
+                            )
+                        except Exception:
+                            registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                            session_context["phase"] = "TERMINAL"
+                            raise ExternalIntegrationError(
+                                "provider session URL could not be retained in the encrypted vault; do not retry"
+                            ) from None
+                        if not hmac.compare_digest(vault_digest, session_digest):
+                            try:
+                                self.session_url_vault.delete(
+                                    session_context["vault_ref"], expected_sha256=vault_digest,
+                                )
+                            except Exception:
+                                pass
+                            registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                            session_context["phase"] = "TERMINAL"
+                            raise ExternalIntegrationError(
+                                "encrypted session URL digest did not match provider URL; do not retry"
+                            )
                         if not registry.bind_publish_session(
                             **{key: session_context[key] for key in (
                                 "project_id", "project_version", "request_id", "approval_fingerprint",
@@ -705,6 +752,12 @@ class ExternalIntegrationGateway:
                             session_url_sha256=session_digest, owner_id=owner_id,
                         ):
                             registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                            try:
+                                self.session_url_vault.delete(
+                                    session_context["vault_ref"], expected_sha256=session_digest,
+                                )
+                            except Exception:
+                                pass
                             raise ExternalIntegrationError(
                                 "provider session could not be bound to its durable claim; do not retry"
                             )
