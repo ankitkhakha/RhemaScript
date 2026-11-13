@@ -63,6 +63,13 @@ class SQLiteLeaseStateModel:
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS one_lease_per_approval
                     ON lease_approvals(approval_id);
+                CREATE TABLE IF NOT EXISTS dispatch_outcomes (
+                    lease_id TEXT PRIMARY KEY REFERENCES leases(lease_id),
+                    status TEXT NOT NULL,
+                    provider_operation_id TEXT,
+                    reason_code TEXT,
+                    updated_at TEXT NOT NULL
+                );
             """)
 
     def _connect(self):
@@ -230,3 +237,79 @@ class SQLiteLeaseStateModel:
             raise LeaseStateError("dispatch acceptance transaction failed") from None
         finally:
             db.close()
+
+    def mark_indeterminate(self, lease_id: str, *, reason_code: str) -> bool:
+        """Record an accepted dispatch whose remote outcome is unknown; never retry it."""
+        if not isinstance(lease_id, str) or not lease_id.strip():
+            raise ValueError("lease_id must be non-empty")
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            raise ValueError("reason_code must be non-empty")
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT state FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
+            if row is None or row[0] != "ACCEPTED":
+                db.execute("ROLLBACK")
+                return False
+            stamp = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "INSERT INTO dispatch_outcomes VALUES(?,?,?,?,?)",
+                (lease_id, "INDETERMINATE", None, reason_code, stamp),
+            )
+            db.execute("UPDATE leases SET state='INDETERMINATE' WHERE lease_id=?", (lease_id,))
+            db.execute("COMMIT")
+            return True
+        except sqlite3.IntegrityError:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            return False
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise LeaseStateError("indeterminate dispatch recording failed") from None
+        finally:
+            db.close()
+
+    def reconcile_dispatch(
+        self, lease_id: str, *, provider_operation_id: str, outcome: str,
+    ) -> bool:
+        """Resolve an indeterminate dispatch from provider evidence; this never dispatches."""
+        if not isinstance(lease_id, str) or not lease_id.strip():
+            raise ValueError("lease_id must be non-empty")
+        if not isinstance(provider_operation_id, str) or not provider_operation_id.strip():
+            raise ValueError("provider_operation_id must be non-empty")
+        if outcome not in ("SUCCEEDED", "REJECTED"):
+            raise ValueError("outcome must be SUCCEEDED or REJECTED")
+        terminal = "COMPLETED" if outcome == "SUCCEEDED" else "FAILED"
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status,provider_operation_id FROM dispatch_outcomes WHERE lease_id=?",
+                (lease_id,),
+            ).fetchone()
+            if row is None:
+                db.execute("ROLLBACK")
+                return False
+            if row[0] in ("COMPLETED", "FAILED"):
+                same = row == (terminal, provider_operation_id)
+                db.execute("ROLLBACK")
+                return same
+            if row[0] != "INDETERMINATE":
+                db.execute("ROLLBACK")
+                return False
+            stamp = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                "UPDATE dispatch_outcomes SET status=?,provider_operation_id=?,updated_at=? WHERE lease_id=?",
+                (terminal, provider_operation_id, stamp, lease_id),
+            )
+            db.execute("UPDATE leases SET state=? WHERE lease_id=?", (terminal, lease_id))
+            db.execute("COMMIT")
+            return True
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise LeaseStateError("dispatch reconciliation failed") from None
+        finally:
+            db.close()
+
