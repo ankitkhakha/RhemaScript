@@ -43,7 +43,7 @@ def _retrieval_timestamp(value: datetime) -> str:
         raise YouTubeAnalyticsEvidenceError(
             "retrieved_at must be a timezone-aware datetime"
         )
-    return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def build_analytics_evidence_snapshot(
@@ -100,8 +100,11 @@ def verify_analytics_evidence_snapshot(snapshot: dict[str, Any]) -> bool:
             or snapshot.get("operation") != "reports.query"):
         raise YouTubeAnalyticsEvidenceError("snapshot identity or schema is unsupported")
     try:
+        raw_timestamp = snapshot["retrieved_at"]
+        if not isinstance(raw_timestamp, str):
+            raise ValueError("retrieval timestamp must be a string")
         timestamp = datetime.fromisoformat(
-            snapshot["retrieved_at"].replace("Z", "+00:00")
+            raw_timestamp.replace("Z", "+00:00")
         )
         normalized_timestamp = _retrieval_timestamp(timestamp)
         if normalized_timestamp != snapshot["retrieved_at"]:
