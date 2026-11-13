@@ -194,15 +194,8 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
-    def test_unclassified_mutating_operation_can_proceed_only_with_explicit_external_write_authority(self):
-        class MethodTransport:
-            def __init__(self):
-                self.calls = []
-            def send_request(self, url, method, headers, body, timeout):
-                self.calls.append((url, method, body))
-                return 200, b"{}", {}
-
-        transport = MethodTransport()
+    def test_unclassified_mutating_operation_rejects_forged_boolean_authority(self):
+        transport = NeverTransport()
         gateway = ExternalIntegrationGateway(
             (ProviderBinding(
                 interface_id="IF-18", provider_name="youtube",
@@ -214,15 +207,63 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 }},
             ),), transport=transport, audit_sink=lambda event: None, enabled=True,
         )
-        gateway.request(
-            "IF-18", "CUSTOM_MUTATION",
-            "https://www.googleapis.com/custom/resource",
-            method="POST", body=b"mutation", request_id="custom-write-002",
-            project_id="RS-1", source_version="1.0",
-            authority={"external_action_authorisation": True},
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "signed external-write authority",
+        ):
+            gateway.request(
+                "IF-18", "CUSTOM_MUTATION",
+                "https://www.googleapis.com/custom/resource",
+                method="POST", body=b"mutation", request_id="custom-write-002",
+                project_id="RS-1", source_version="1.0",
+                authority={"external_action_authorisation": True},
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_oauth_token_exception_rejects_non_google_token_endpoint(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"OAUTH_TOKEN": {
+                    "method": "POST", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/custom/token",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
         )
-        self.assertEqual(len(transport.calls), 1)
-        self.assertEqual(transport.calls[0][1], "POST")
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "exact Google token endpoint",
+        ):
+            gateway.request(
+                "IF-18", "OAUTH_TOKEN", "https://www.googleapis.com/custom/token",
+                method="POST", body=b"grant_type=refresh_token",
+                request_id="oauth-alias-001", project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_oauth_token_exception_rejects_token_path_suffix(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("oauth2.googleapis.com",),
+                operations={"OAUTH_TOKEN": {
+                    "method": "POST", "hosts": ("oauth2.googleapis.com",),
+                    "path_prefix": "/token",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "exact Google token endpoint",
+        ):
+            gateway.request(
+                "IF-18", "OAUTH_TOKEN", "https://oauth2.googleapis.com/token/extra",
+                method="POST", body=b"grant_type=refresh_token",
+                request_id="oauth-suffix-001", project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
 
     def test_method_aware_request_rejects_path_prefix_sibling(self):
         class MethodTransport:
