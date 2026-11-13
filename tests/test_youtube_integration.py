@@ -788,7 +788,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 with self.assertRaises(YouTubeIntegrationError) as caught:
                     client.upload_video(video.name, title="Test", description="Test", **context)
         self.assertEqual(caught.exception.code, "INDETERMINATE_WRITE")
-        self.assertIn("do not retry", str(caught.exception))
+        self.assertIn("before retrying", str(caught.exception))
         self.assertEqual(calls, ["POST", "POST"])
 
     def test_resumable_upload_rejects_impossible_acknowledgement(self):
