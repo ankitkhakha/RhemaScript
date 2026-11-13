@@ -685,7 +685,20 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             authority=self.publish_authority("request-4", project_id="project-1", source_version="1.0"),
         )
         self.assertNotEqual(first_fingerprint, second_events[0]["request_fingerprint"])
-        self.assertNotIn("secret", repr(events + second_events))
+        third_events = []
+        gateway.audit_sink = third_events.append
+        gateway.request(
+            "IF-18", "UPLOAD_CHUNK",
+            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
+            method="PUT", headers={
+                "Authorization": "Bearer secret",
+                "Content-Range": "bytes 10-19/100",
+            },
+            body=b"video bytes", request_id="request-5", project_id="project-1", source_version="1.0",
+            authority=self.publish_authority("request-5", project_id="project-1", source_version="1.0"),
+        )
+        self.assertNotEqual(first_fingerprint, third_events[0]["request_fingerprint"])
+        self.assertNotIn("secret", repr(events + second_events + third_events))
         self.assertNotIn("opaque", repr(events + second_events))
         self.assertNotIn("different-opaque-id", repr(events + second_events))
         self.assertNotIn("video bytes", repr(events + second_events))
