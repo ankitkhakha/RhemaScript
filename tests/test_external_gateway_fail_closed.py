@@ -414,6 +414,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         session_url = "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=session-opaque"
         temporary, registry = self.make_registry(authority, "upload-2", session_url=session_url)
         self.addCleanup(temporary.cleanup)
+        events = []
         gateway = ExternalIntegrationGateway(
             (binding,), transport=transport, audit_sink=events.append,
             publish_session_registry=registry, enabled=True,
