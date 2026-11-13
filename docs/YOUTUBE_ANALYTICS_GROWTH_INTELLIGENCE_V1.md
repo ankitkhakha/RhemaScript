@@ -43,3 +43,12 @@ The diagnostic is bound to the exact source snapshot and can be recomputed for v
 4. Generate recommendations only as labelled hypotheses, then record implementation decisions and measured outcomes independently.
 
 No live Analytics data is included in this change. Synthetic tests verify arithmetic and failure handling only.
+
+
+## Offline artifact persistence
+
+`persist_analytics_evidence_artifact` accepts only a verified V1 snapshot or a digest-verified period comparison. It writes a canonical JSON envelope beneath an existing evidence-root directory, refuses to overwrite an existing path, rejects symlinked path components, uses owner-only file permissions, flushes the file and parent directory, and re-verifies the resulting file bytes.
+
+The returned project evidence-pack artifact record is always `DRAFT`. It carries the file-byte `sha256` separately from the internal `snapshot_sha256` or `comparison_sha256`. Comparison records also carry the exact current and previous snapshot artifact IDs. The caller must add these records to the project's evidence pack and link the two snapshot artifacts to the derived comparison. Byte verification proves local content identity only; it does not grant approval, establish provider authenticity, or create immutable external custody.
+
+Parent directories must already exist. The helper does not create directories, follow symlinks, replace existing evidence, contact Google, or access credentials.
