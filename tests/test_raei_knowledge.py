@@ -37,6 +37,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
             "CODE": "UNVERIFIED",
             "SECONDARY": "SECONDARY",
             "LESSON_FROM_FAILURE": "UNVERIFIED",
+            "RAEI_CLOSED_FINDING": "UNVERIFIED",
         }[source_type]
         payload = {
             "schema": SCHEMA,
