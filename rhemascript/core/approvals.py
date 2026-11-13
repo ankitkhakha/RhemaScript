@@ -217,10 +217,12 @@ class ApprovalVerifier:
         if token["action"] in _HIGH_RISK_ACTIONS and schema != _SCHEMA_V3:
             raise ApprovalError("high-risk approval requires credential schema v3 identity assurance")
         if schema == _SCHEMA_V3:
-            for name in _IDENTITY_FIELDS:
+            for name in _IDENTITY_FIELDS - {"authenticated_at"}:
                 value = token.get(name)
                 if not isinstance(value, str) or not _ID.fullmatch(value):
                     raise ApprovalError(f"approval identity claim {name} is invalid")
+            if not isinstance(token.get("authenticated_at"), str):
+                raise ApprovalError("approval identity claim authenticated_at is invalid")
             policy = self._identity_policies.get(token["identity_policy_version"])
             if policy is None:
                 raise ApprovalError("approval identity policy is not configured or trusted")
