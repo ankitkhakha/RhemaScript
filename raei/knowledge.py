@@ -252,10 +252,25 @@ def record_knowledge(
         raise RAEIKnowledgeError("knowledge payload does not match the verified artifact bytes")
     _validate_payload(payload, evidence)
     existing = list_knowledge(registry)
+    supersedes = _string_list(payload, "supersedes")
     known_versions = {f"{item['knowledge_id']}@{item['version']}" for item in existing}
-    for superseded in _string_list(payload, "supersedes"):
+    new_id = payload["knowledge_id"]
+    new_version = tuple(int(part) for part in payload["version"].split("."))
+    for superseded in supersedes:
         if superseded not in known_versions:
             raise RAEIKnowledgeError(f"superseded knowledge version does not exist: {superseded}")
+        old_id, old_version_text = superseded.rsplit("@", 1)
+        if old_id != new_id:
+            raise RAEIKnowledgeError("a knowledge item may only supersede an earlier version of the same knowledge_id")
+        old_version = tuple(int(part) for part in old_version_text.split("."))
+        width = max(len(new_version), len(old_version))
+        if new_version + (0,) * (width - len(new_version)) <= old_version + (0,) * (width - len(old_version)):
+            raise RAEIKnowledgeError("superseded knowledge version must be strictly older")
+        if any(
+            superseded in _string_list(item, "supersedes")
+            for item in existing
+        ):
+            raise RAEIKnowledgeError("knowledge version already has a successor; competing supersession is not allowed")
     run_id = f"KNOWLEDGE:{payload['knowledge_id']}:{payload['version']}"
     report = {
         "record_type": RECORD_TYPE,
