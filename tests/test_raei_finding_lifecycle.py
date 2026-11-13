@@ -784,10 +784,18 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "identity_authentication_status": "UNVERIFIED",
             "observation_evidence": {
                 "evidence_id": evidence.evidence_id,
+                "relative_path": evidence.relative_path,
                 "version": evidence.version,
                 "sha256": evidence.sha256,
                 "size_bytes": evidence.size_bytes,
             },
+            "evidence_refs": [{
+                "evidence_id": evidence.evidence_id,
+                "relative_path": evidence.relative_path,
+                "version": evidence.version,
+                "sha256": evidence.sha256,
+                "size_bytes": evidence.size_bytes,
+            }],
             "supersedes": ["RS-FND-CROSS-PROJECT-002@1.0"],
         }
         before = len(self.registry.list_activity_events())
