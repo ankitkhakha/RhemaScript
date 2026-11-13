@@ -31,12 +31,16 @@ class RemoteCIWorkflowTests(unittest.TestCase):
     def test_job_has_timeout(self):
         self.assertRegex(self.workflow, r"(?m)^    timeout-minutes: 10$")
 
-    def test_test_job_waits_for_generated_lock(self):
-        self.assertRegex(self.workflow, r"(?ms)^  test:\n    needs: generate-lock-candidate$")
+    def test_test_job_uses_committed_lock_directly(self):
+        self.assertNotIn("needs: generate-lock-candidate", self.workflow)
+        self.assertNotIn("actions/download-artifact", self.workflow)
+        self.assertTrue((ROOT / "requirements-ci.lock").is_file())
+        self.assertTrue((ROOT / "requirements-ci.lock.sha256").is_file())
+        self.assertIn("--require-hashes -r requirements-ci.lock", self.workflow)
 
     def test_clean_environment_uses_hash_locked_dependencies(self):
-        self.assertIn("--require-hashes -r lock-candidate/requirements-ci.lock", self.workflow)
         self.assertIn("sha256sum --check requirements-ci.lock.sha256", self.workflow)
+        self.assertIn("python -m venv .venv", self.workflow)
         self.assertIn("--no-deps --no-build-isolation -e .", self.workflow)
         self.assertIn(".venv/bin/python -m pip check", self.workflow)
 
