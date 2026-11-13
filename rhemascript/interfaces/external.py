@@ -88,10 +88,14 @@ def _trusted_upload_session_url(location: object, spec: Mapping[str, Any]) -> bo
         return False
     hosts = {host.rstrip(".").lower() for host in spec.get("hosts", ())}
     root = prefix.rstrip("/") or "/"
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
     return (
         parsed.scheme.lower() == "https" and parsed.hostname is not None
         and parsed.hostname.rstrip(".").lower() in hosts
-        and parsed.port in (None, 443) and not parsed.username and not parsed.password
+        and port in (None, 443) and not parsed.username and not parsed.password
         and not parsed.fragment
         and (path == root or path.startswith(root.rstrip("/") + "/"))
     )
@@ -597,7 +601,10 @@ class ExternalIntegrationGateway:
                  "host": parsed.hostname, "request_fingerprint": fingerprint,
                  "request_bytes": len(body or b""), "phase": "REQUESTED"}
         self.audit_sink(dict(event))
-        write_attempted = method.upper() not in {"GET", "HEAD", "OPTIONS"}
+        write_attempted = (
+            method.upper() not in {"GET", "HEAD", "OPTIONS"}
+            and operation.upper() != "OAUTH_TOKEN"
+        )
         transport_started = False
         response_received = False
         try:
