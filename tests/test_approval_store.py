@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 import json
+import hashlib
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -14,7 +15,7 @@ from pathlib import Path
 
 from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, VerifiedApproval
 from rhemascript.core.approval_store import (
-    ApprovalStoreError, SQLiteApprovalConsumptionStore,
+    ApprovalStoreError, SQLiteApprovalConsumptionStore, SQLitePublishSessionRegistry,
 )
 
 
@@ -435,6 +436,180 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
                 ('{"subject_id":"tampered-subject"}', verified.approval_id),
             )
         self.assertFalse(self.store.verify_checkpoint(checkpoint, checkpoint_key))
+
+
+class SQLitePublishSessionRegistryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.directory = Path(self.temp.name) / "private"
+        self.directory.mkdir(mode=0o700)
+        os.chmod(self.directory, 0o700)
+        self.path = self.directory / "publish.sqlite3"
+        self.store = SQLitePublishSessionRegistry(self.path)
+        self.session_url = "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=secret-token"
+        self.url_digest = hashlib.sha256(self.session_url.encode()).hexdigest()
+        self.identity = {
+            "project_id": "PROJECT-1",
+            "project_version": "7",
+            "request_id": "REQUEST-1",
+            "approval_fingerprint": "a" * 64,
+            "artifact_id": "FILM-1",
+            "artifact_version": "4",
+            "artifact_sha256": "b" * 64,
+            "artifact_size_bytes": 10,
+        }
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def reserve_and_bind(self, owner="gateway-A"):
+        self.assertTrue(self.store.reserve_publish_session(
+            **self.identity, owner_id=owner, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.bind_publish_session(
+            **self.identity, session_url_sha256=self.url_digest, owner_id=owner,
+        ))
+
+    def test_session_url_digest_only_and_duplicate_session_claim_rejected(self):
+        self.reserve_and_bind()
+        self.assertFalse(self.store.reserve_publish_session(
+            **self.identity, owner_id="gateway-B",
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "ACTIVE")
+        self.assertEqual(record["session_url_sha256"], self.url_digest)
+        self.assertNotIn("session_url", record)
+        self.assertNotIn(b"secret-token", self.path.read_bytes())
+
+    def test_chunk_offsets_are_monotonic_and_completion_is_terminal(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertFalse(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-B", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", status=308, range_header="bytes=0-4",
+        ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A",
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["acknowledged_offset"], 5)
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=5, end=9, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", status=201,
+        ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A",
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "COMPLETE")
+        self.assertEqual(record["acknowledged_offset"], 10)
+        self.assertFalse(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=10, end=10, total=10,
+            body_size=1, lease_seconds=60,
+        ))
+
+    def test_wrong_session_url_and_out_of_order_ranges_are_rejected(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": "c" * 64}
+        self.assertFalse(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        args["session_url_sha256"] = self.url_digest
+        self.assertFalse(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=1, end=5, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+
+    def test_indeterminate_chunk_can_be_reconciled_but_not_replayed(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.mark_publish_session_indeterminate(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A",
+        ))
+        self.assertTrue(self.store.begin_publish_reconciliation(
+            **args, owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-B", status=308, range_header="bytes=0-2",
+        ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-B",
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "ACTIVE")
+        self.assertEqual(record["acknowledged_offset"], 3)
+
+    def test_stale_inflight_chunk_requires_lease_expiry_before_restart_reconciliation(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertFalse(self.store.begin_publish_reconciliation(
+            **args, owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                ("2000-01-01T00:00:00+00:00", "REQUEST-1"),
+            )
+        self.assertTrue(self.store.begin_publish_reconciliation(
+            **args, owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
+
+    def test_checkpoint_covers_publish_sessions_and_detects_tampering(self):
+        self.reserve_and_bind()
+        key = b"publish-session-checkpoint-key-32-bytes!"
+        checkpoint = self.store.checkpoint(key)
+        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v4")
+        self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET acknowledged_offset=1 WHERE request_id=?",
+                ("REQUEST-1",),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+
+    def test_registry_state_survives_reopening_database(self):
+        self.reserve_and_bind()
+        reopened = SQLitePublishSessionRegistry(self.path)
+        record = reopened.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "ACTIVE")
+        self.assertEqual(record["session_url_sha256"], self.url_digest)
+
 
 
 if __name__ == "__main__":
