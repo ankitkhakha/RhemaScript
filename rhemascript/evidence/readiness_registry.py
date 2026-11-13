@@ -1117,20 +1117,22 @@ class ReadinessRunRegistry:
                         or binding != effectiveness_payload.get("evidence_binding")):
                     db.rollback()
                     raise ValueError("only an EFFECTIVE assessment and its exact evidence can be closed")
+                prior_identities = [
+                    research_payload.get("authorization", {}),
+                    reproduction_payload.get("authorization", {}),
+                    plan_payload.get("authorization", {}),
+                    implementation_payload.get("authorization", {}),
+                    effectiveness_payload.get("authorization", {}),
+                ]
+                if captured.get("submitter_identity"):
+                    prior_identities.append(captured["submitter_identity"])
                 if any(
                     approval.subject_id == prior.get("subject_id")
                     or approval.identity_session_id == prior.get("identity_session_id")
                     or approval.identity_provider_id != prior.get("identity_provider_id")
                     or approval.identity_policy_version != prior.get("identity_policy_version")
                     for approval in approvals
-                    for prior in [
-                        captured.get("submitter_identity") or {},
-                        research_payload.get("authorization", {}),
-                        reproduction_payload.get("authorization", {}),
-                        plan_payload.get("authorization", {}),
-                        implementation_payload.get("authorization", {}),
-                        effectiveness_payload.get("authorization", {}),
-                    ]
+                    for prior in prior_identities
                 ):
                     db.rollback()
                     raise ValueError("closure reviewers must be independent of lifecycle participants")
