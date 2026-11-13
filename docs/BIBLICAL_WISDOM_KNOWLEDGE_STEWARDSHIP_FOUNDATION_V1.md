@@ -108,7 +108,7 @@ The following are the first research tracks. They are a structured beginning, no
 
 **Primary passages:** 1 Corinthians 4:1–5; 1 Peter 4:7–11; Matthew 25:14–30.
 
-**Context and findings:** In 1 Corinthians 4, Paul describes apostolic servants as stewards of God's mysteries and emphasises that a steward must be found faithful. First Peter 4 connects gifts with service and stewardship under God's grace. Matthew 25 is a parable within Jesus' teaching about readiness and accountability; it should be read within that larger discourse.
+**Context and findings:** In 1 Corinthians 4, Paul describes himself and Apollos as servants of Christ and stewards of God's mysteries while correcting factional boasting and the Corinthians' distorted evaluation of their leaders. Faithfulness is the steward's required quality; the passage is not a generic corporate-governance code. First Peter 4 connects gifts with service and stewardship under God's grace. Matthew 25 is a parable within Jesus' teaching about readiness and accountability; it should be read within that larger discourse.
 
 **Principle:** Entrusted responsibilities and gifts call for faithfulness, service and accountability.
 
@@ -120,7 +120,7 @@ The following are the first research tracks. They are a structured beginning, no
 
 **Primary passages:** Nehemiah 1–6; Proverbs 15:22; Luke 14:25–33.
 
-**Context and findings:** Nehemiah hears of Jerusalem's condition, grieves, prays, confesses, petitions the king, inspects the wall, organises the work and responds to opposition. The narrative also addresses internal injustice and the need to protect the people while the work continues. Luke 14:25–33 uses the examples of building a tower and considering a king's resources in a teaching about the cost of discipleship.
+**Context and findings:** Nehemiah hears of Jerusalem's condition, grieves, prays, confesses, petitions the king, inspects the wall, organises the work and responds to opposition. The narrative does not portray opposition as only external: Nehemiah 5 exposes debt, economic exploitation and internal injustice, while Nehemiah's own conduct as governor is contrasted with exploitative predecessors. The wall is completed amid continuing political and social pressure. Luke 14:25–33 uses the examples of building a tower and considering a king's resources in a teaching about the cost of discipleship.
 
 **Principle:** Prayer, truthful assessment, preparation, organisation, wise counsel, perseverance and concern for people belong together.
 
@@ -244,6 +244,10 @@ A BWSF implementation is not complete merely because this document exists. Valid
 - Biblical and Ancient Greek Linguistics 12 (2024), study of the Greek syntax and context of James 1:5–8: https://bagl.org/files/volume12/BAGL_12-4_Kim.pdf
 - H. G. M. Williamson, *Ezra, Nehemiah*, cited outline and contextual guide: https://172f3a4095ca0bf15b1c-ae5363e9551d8a03bc4a6e66deff1b22.r66.cf2.rackcdn.com/uploaded/p/0e6636578_1507667570_preaching-guide.pdf
 - Bible.org, 1 Corinthians 4 commentary and stewardship context: https://bible.org/seriespage/1-corinthians-4
+- IVP New Testament Commentary Series, “Who Is Wise Among You?” (James 3:13–18), on wisdom's relation to teaching, humility and conduct: https://classic.biblegateway.com/resources/ivp-nt/Who-Is-Wise-You
+- The Gospel Coalition Biblical Commentary, Proverbs 2:1–11, on the diligent pursuit and internalisation of wisdom: https://www.thegospelcoalition.org/commentary/proverbs/
+- Working Preacher, commentary on 1 Corinthians 4:1–5, on Paul and Apollos as servants/stewards in the context of Corinthian factions: https://www.workingpreacher.org/commentaries/revised-common-lectionary/eighth-sunday-after-epiphany/commentary-on-1-corinthians-41-5-2
+- Cambridge History of Judaism, “The Nehemiah Memoir,” on the Persian-period narrative, external opposition and internal economic conflict: https://www.jstor.org/stable/j.ctt1g0b90d.13
 
 ## 10. Current status and next research
 
