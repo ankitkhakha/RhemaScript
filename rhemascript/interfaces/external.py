@@ -522,6 +522,70 @@ class ExternalIntegrationGateway:
             except AuthorityError:
                 raise ExternalIntegrationError("consequential operation lacks explicit authority") from None
 
+        session_context = None
+        if operation.upper() in {"UPLOAD_SESSION", "UPLOAD_CHUNK"}:
+            if self.publish_session_registry is None:
+                raise ExternalIntegrationError(
+                    "durable publish-session registry is required before YouTube provider writes"
+                )
+            approval_fingerprint = _publish_approval_fingerprint(approvals)
+            session_identity = {
+                "project_id": project_id,
+                "project_version": source_version,
+                "request_id": request_id,
+                "approval_fingerprint": approval_fingerprint,
+                "artifact_id": first.artifact_id,
+                "artifact_version": first.artifact_version,
+                "artifact_sha256": first.artifact_sha256,
+                "artifact_size_bytes": first.artifact_size_bytes,
+            }
+            owner_id = self._session_owner_id
+            lease_seconds = max(60.0, binding.timeout_seconds * 4)
+            if operation.upper() == "UPLOAD_SESSION":
+                try:
+                    reserved = self.publish_session_registry.reserve_publish_session(
+                        **session_identity, owner_id=owner_id, lease_seconds=lease_seconds,
+                    )
+                except Exception:
+                    raise ExternalIntegrationError(
+                        "durable publish-session reservation failed; provider write denied"
+                    ) from None
+                if not reserved:
+                    raise ExternalIntegrationError(
+                        "this approval/request/artifact tuple already has a publish-session claim"
+                    )
+                session_context = {
+                    **session_identity, "owner_id": owner_id, "phase": "CREATE",
+                }
+            else:
+                session_url_sha256 = sha256(url.encode("utf-8")).hexdigest()
+                range_kind, start, end, total = _parse_upload_content_range(headers or {}, body or b"")
+                try:
+                    if range_kind == "RECONCILE":
+                        claimed = self.publish_session_registry.begin_publish_reconciliation(
+                            **session_identity, session_url_sha256=session_url_sha256,
+                            owner_id=owner_id, total=total, lease_seconds=lease_seconds,
+                        )
+                        phase = "RECONCILE"
+                    else:
+                        claimed = self.publish_session_registry.begin_publish_chunk(
+                            **session_identity, session_url_sha256=session_url_sha256,
+                            owner_id=owner_id, start=start, end=end, total=total,
+                            body_size=len(body or b""), lease_seconds=lease_seconds,
+                        )
+                        phase = "CHUNK"
+                except Exception:
+                    raise ExternalIntegrationError(
+                        "durable publish-session claim failed; provider chunk denied"
+                    ) from None
+                if not claimed:
+                    raise ExternalIntegrationError(
+                        "upload chunk is not bound to the active durable publish session or next byte range"
+                    )
+                session_context = {
+                    **session_identity, "owner_id": owner_id, "phase": phase,
+                }
+
         fingerprint = sha256(
             interface_id.encode() + b":" + operation.upper().encode() + b":" +
             method.upper().encode() + b":" + parsed.hostname.encode() + b":" +
@@ -558,12 +622,67 @@ class ExternalIntegrationGateway:
                 raise ExternalIntegrationError("provider transport returned an invalid response contract")
             if len(raw) > max_response_bytes:
                 raise ExternalIntegrationError("provider response exceeds size limit")
+            if session_context is not None:
+                registry = self.publish_session_registry
+                identity = {
+                    "project_id": session_context["project_id"],
+                    "project_version": session_context["project_version"],
+                    "request_id": session_context["request_id"],
+                }
+                owner_id = session_context["owner_id"]
+                if session_context["phase"] == "CREATE":
+                    if status in (200, 201):
+                        location = _header_value(response_headers, "Location")
+                        if not _trusted_upload_session_url(location, spec):
+                            registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                            raise ExternalIntegrationError(
+                                "provider session response was not safely bindable; do not create a replacement"
+                            )
+                        session_digest = sha256(location.encode("utf-8")).hexdigest()
+                        if not registry.bind_publish_session(
+                            **{key: session_context[key] for key in (
+                                "project_id", "project_version", "request_id", "approval_fingerprint",
+                                "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes",
+                            )},
+                            session_url_sha256=session_digest, owner_id=owner_id,
+                        ):
+                            registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                            raise ExternalIntegrationError(
+                                "provider session could not be bound to its durable claim; do not retry"
+                            )
+                        session_context["phase"] = "RECORDED"
+                    elif status >= 500:
+                        registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                        session_context["phase"] = "TERMINAL"
+                    else:
+                        registry.mark_publish_session_failed(**identity, owner_id=owner_id)
+                        session_context["phase"] = "TERMINAL"
+                else:
+                    range_header = _header_value(response_headers, "Range")
+                    recorded = registry.record_publish_response(
+                        **identity, owner_id=owner_id, status=status, range_header=range_header,
+                    )
+                    if not recorded and status < 500:
+                        raise ExternalIntegrationError(
+                            "provider acknowledgement violated the durable upload-session byte-range contract"
+                        )
+                    session_context["phase"] = "RECORDED" if status < 500 else "TERMINAL"
             event.update({"phase": "COMPLETED", "http_status": status,
                           "response_bytes": len(raw)})
             try:
                 self.audit_sink(dict(event))
             except Exception:
                 if write_attempted:
+                    if session_context is not None:
+                        try:
+                            self.publish_session_registry.mark_publish_session_indeterminate(
+                                project_id=session_context["project_id"],
+                                project_version=session_context["project_version"],
+                                request_id=session_context["request_id"],
+                                owner_id=session_context["owner_id"],
+                            )
+                        except Exception:
+                            pass
                     event["phase"] = "INDETERMINATE"
                     event["error_type"] = "CompletionAuditFailure"
                     try:
@@ -571,16 +690,46 @@ class ExternalIntegrationGateway:
                     except Exception:
                         pass
                     raise ExternalIntegrationError(
-                        "provider write outcome is indeterminate: response received but completion audit failed; do not retry automatically"
+                        "provider write outcome is indeterminate: response received but completion audit failed; do not retry automatically",
+                        code="INDETERMINATE_WRITE",
                     ) from None
                 raise
+            if session_context is not None and session_context["phase"] == "RECORDED":
+                if not self.publish_session_registry.finalize_publish_session_operation(
+                    project_id=session_context["project_id"],
+                    project_version=session_context["project_version"],
+                    request_id=session_context["request_id"],
+                    owner_id=session_context["owner_id"],
+                ):
+                    self.publish_session_registry.mark_publish_session_indeterminate(
+                        project_id=session_context["project_id"],
+                        project_version=session_context["project_version"],
+                        request_id=session_context["request_id"],
+                        owner_id=session_context["owner_id"],
+                    )
+                    raise ExternalIntegrationError(
+                        "publish-session state could not be finalized after provider response"
+                    )
             return status, raw, response_headers
         except Exception as exc:
+            if session_context is not None and transport_started and not response_received:
+                try:
+                    self.publish_session_registry.mark_publish_session_indeterminate(
+                        project_id=session_context["project_id"],
+                        project_version=session_context["project_version"],
+                        request_id=session_context["request_id"],
+                        owner_id=session_context["owner_id"],
+                    )
+                except Exception:
+                    raise ExternalIntegrationError(
+                        "provider write outcome is indeterminate and durable session state could not be recorded; do not retry"
+                    ) from None
             if event.get("phase") == "INDETERMINATE":
                 if isinstance(exc, ExternalIntegrationError):
                     raise
                 raise ExternalIntegrationError(
-                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled"
+                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled",
+                    code="INDETERMINATE_WRITE",
                 ) from None
             if write_attempted and transport_started and (not response_received or
                     isinstance(exc, ExternalIntegrationError) and "completion audit failed" in str(exc)):
