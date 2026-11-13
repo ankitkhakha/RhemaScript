@@ -207,14 +207,20 @@ class ReadinessRunRegistry:
             raise ValueError("governed event payload must be an object without caller-supplied authorization")
         if not isinstance(approvals, tuple) or len(approvals) != 2:
             raise ValueError("exactly two independently signed approvals are required")
-        if (not isinstance(expected_actions, tuple) or len(expected_actions) != 2
-                or any(not isinstance(action, str) or not action.strip() for action in expected_actions)):
-            raise ValueError("two expected approval actions are required")
+        required_actions = (
+            ("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
+            if event_type == "FINDING_DISPOSITIONED"
+            else ("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM")
+        )
+        if expected_actions != required_actions:
+            raise ValueError("governed event approval actions do not match the event policy")
         if any(not is_verified_approval(item) for item in approvals):
             raise ValueError("governed events require verifier-issued, consumed approvals")
         actors = [item.actor_id for item in approvals]
-        if len(set(actors)) != 2:
-            raise ValueError("governed review requires two distinct authenticated actors")
+        if (len(set(actors)) != 2
+                or len({item.approval_id for item in approvals}) != 2
+                or len({item.issuer for item in approvals}) != 1):
+            raise ValueError("governed review requires two distinct actors and approval IDs from one trusted issuer")
         now = datetime.now(timezone.utc)
         for item, action in zip(approvals, expected_actions):
             if (item.action != action or item.project_id != project_id
