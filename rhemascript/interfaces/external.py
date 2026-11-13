@@ -441,7 +441,7 @@ class ExternalIntegrationGateway:
                 if record.get(field) != artifact_binding.get(field):
                     raise ExternalIntegrationError("resume artifact does not match the existing publish session")
             if record.get("state") not in {
-                "ACTIVE", "INDETERMINATE", "CHUNK_IN_FLIGHT", "RECONCILING", "COMPLETE",
+                "ACTIVE", "INDETERMINATE", "CHUNK_IN_FLIGHT", "RECONCILING",
             }:
                 raise ExternalIntegrationError("publish session is not in a recoverable state")
             digest = record.get("session_url_sha256")
