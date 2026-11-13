@@ -139,20 +139,20 @@ No Google/YouTube authorization, live identity-provider connection, deployment o
 
 ## 11. Verifier key lifecycle implementation boundary — 13 November 2026
 
-A focused review of the current verifier implementation found that `ApprovalVerifier` accepts a static mapping of `key_id -> 32-byte Ed25519 public key`. Every key present in that mapping is eligible for ordinary credential verification. The mapping has no per-key status, environment, validity interval, activation time, retirement time, revocation time, provenance, or cache-freshness metadata. The verifier has no live key-registry refresh or emergency-revocation interface.
+The candidate now includes `rhemascript/core/verification_keys.py`, a typed `VerificationKeyRecord` and `VerificationKeyRegistry` adapter contract, and an `ApprovalVerifier` integration that can resolve current key metadata instead of relying only on a static public-key mapping.
 
-The existing rotation test demonstrates only configuration overlap: a new verifier configured with both old and new public keys can re-verify a persisted signature made by the old key. A verifier configured with only the new key rejects that old persisted signature. This does not implement a complete rotation or revocation lifecycle, and it does not provide separate policy for accepting a credential for a new action versus verifying its signature for historical audit.
+The verifier enforces the following when configured with a registry:
+- exact key ID, issuer and environment binding;
+- bounded registry-response age (default 30 seconds, configurable up to five minutes) and rejection of future-dated responses;
+- **ACTIVE** status and current validity interval for new authorization;
+- a second live resolution immediately before atomic approval consumption, rejecting revocation or public-key substitution between signature verification and consumption;
+- historical signature verification for ACTIVE, VERIFY_ONLY and REVOKED keys, with the current registry revision/status returned in the audit result;
+- historical trust classification against the key's validity interval and revocation time. A signature made after the recorded revocation time is cryptographically checked but returned with `issuer_trusted=false` and `key_trusted_at_issuance=false`.
 
-Production consequence: the configured public-key mapping is a local trust allowlist, not a production key registry. A key removed from the mapping is no longer usable for historical signature re-verification by that verifier instance. A key left in the mapping remains eligible for fresh credential verification until the verifier configuration is replaced. The repository does not itself establish that a compromised key is promptly removed from every relying-party process or that old signatures remain auditable after retirement.
+Static `verification_keys` remains supported for existing offline/test configurations and is not a production key registry. Registry errors, mismatched records, stale responses and non-ACTIVE status fail closed. The verifier does not cache registry responses.
 
-Before production approval, the issuer/verifier integration must provide an authenticated, integrity-protected key registry or equivalent trusted resolver with explicit key states and policy. At minimum it must distinguish:
-- **ACTIVE** — may verify newly issued credentials within the key's authorized environment and validity interval;
-- **VERIFY_ONLY** — may verify retained historical signatures, but must not authorize newly presented credentials for a new action;
-- **REVOKED/COMPROMISED** — must fail closed for new authorization; historical audit must report the revocation state and must not imply that a cryptographically valid signature proves the key was uncompromised when signed;
-- **UNKNOWN/NOT_YET_VALID/EXPIRED** — fail closed for new authorization.
+Adversarial synthetic tests now cover VERIFY_ONLY rejection for new authorization, REVOKED rejection, stale registry responses, a revocation occurring between initial signature verification and the pre-consumption recheck, historical signature verification under VERIFY_ONLY, and historical trust downgrade when issuance is at/after the recorded revocation time.
 
-The resolver must define bounded cache lifetime, authenticated refresh, emergency invalidation, environment/issuer/schema binding, clock handling, key provenance and independent operational ownership. Key rotation must publish and validate the new public key before signing with it; retain the old key as VERIFY_ONLY for the approved historical-retention period; and remove or mark it REVOKED according to the incident and retention policy. Private keys remain exclusively in approved HSM/KMS custody.
+The remaining production requirements are not implemented: no concrete authenticated registry adapter, registry signing/provenance protocol, independent operator, emergency invalidation channel, HSM/KMS signer, durable key-status decision archive, key lifecycle operations console or operational rotation/revocation drill exists. The adapter contract requires a concrete implementation to authenticate registry responses and to provide current state; the local verifier cannot independently prove that an arbitrary adapter's response is authentic. Registry status and revision are currently returned by historical audit but are not yet persisted as a separate immutable key-decision record in the approval-consumption database. A production rollout must close these gaps and independently review key substitution, stale cache, registry outage, emergency compromise and historical-retention behavior.
 
-Required adversarial tests include: active-to-verify-only transition; verify-only rejection for new actions while historical signature audit remains possible; revoked-key rejection even when a verifier was constructed before revocation; stale-cache and registry-outage fail-closed behavior; unknown/future/expired key rejection; issuer/environment/schema mismatch; key substitution under an existing key ID; emergency compromise handling; and preservation of the exact key-status decision in audit evidence.
-
-Status: **NOT IMPLEMENTED** in the repository verifier. The current static mapping and synthetic overlap test are not production key lifecycle controls. This is an explicit production blocker, not a claim that an HSM/KMS or external registry is already connected.
+Status: **PARTIALLY IMPLEMENTED IN CANDIDATE CODE; NOT PRODUCTION-READY**. No HSM/KMS, external registry or production key is connected.
