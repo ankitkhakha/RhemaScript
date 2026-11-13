@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from rhemascript.core.approval_archive import export_checkpoint_archive
 from rhemascript.core.approval_store import SQLiteApprovalConsumptionStore
@@ -148,7 +149,7 @@ class CompositeCheckpointTests(unittest.TestCase):
                 )
             return result
 
-        with unittest.mock.patch.object(
+        with patch.object(
             self.readiness_registry, "checkpoint", side_effect=changing_checkpoint,
         ):
             with self.assertRaisesRegex(CompositeCheckpointError, "changed during"):
