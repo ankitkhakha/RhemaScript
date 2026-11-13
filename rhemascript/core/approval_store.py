@@ -654,7 +654,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
                 SELECT state, session_url_sha256, acknowledged_offset,
-                       inflight_start, inflight_end, lease_expires_at
+                       inflight_start, inflight_end, lease_expires_at, inflight_owner
                   FROM publish_sessions
                  WHERE project_id=? AND project_version=? AND request_id=?
                    AND approval_fingerprint=? AND artifact_id=? AND artifact_version=?
@@ -663,7 +663,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             if row is None or row[1] != url_digest:
                 db.execute("ROLLBACK")
                 return False
-            state, _stored_url, acknowledged, old_start, old_end, old_lease = row
+            state, _stored_url, acknowledged, old_start, old_end, old_lease, old_owner = row
             if reconciliation:
                 stale = False
                 if state in {"CHUNK_IN_FLIGHT", "RECONCILING"} and old_lease:
@@ -676,7 +676,8 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                     return False
                 new_state, new_start, new_end = "RECONCILING", old_start, old_end
             else:
-                if state != "ACTIVE" or start != acknowledged:
+                if (state != "ACTIVE" or start != acknowledged
+                        or old_owner is not None or old_start is not None or old_end is not None):
                     db.execute("ROLLBACK")
                     return False
                 new_state, new_start, new_end = "CHUNK_IN_FLIGHT", start, end
@@ -772,8 +773,9 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             elif status >= 500:
                 new_state = "INDETERMINATE"
             retained_owner = None if new_state == "INDETERMINATE" else owner_id
-            retained_start = start if new_state == "INDETERMINATE" else None
-            retained_end = end if new_state == "INDETERMINATE" else None
+            retain_range = new_state in {"ACTIVE", "INDETERMINATE"}
+            retained_start = start if retain_range else None
+            retained_end = end if retain_range else None
             db.execute("""
                 UPDATE publish_sessions
                    SET state=?, acknowledged_offset=?, inflight_start=?,
@@ -822,8 +824,8 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 UPDATE publish_sessions
-                   SET inflight_owner=NULL, lease_expires_at=NULL,
-                       updated_at=?
+                   SET inflight_start=NULL, inflight_end=NULL,
+                       inflight_owner=NULL, lease_expires_at=NULL, updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
                    AND inflight_owner=? AND state IN ('ACTIVE','COMPLETE','FAILED')
             """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
