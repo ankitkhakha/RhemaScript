@@ -27,6 +27,7 @@ _ACTIVITY_EVENT_TYPES = {
     "FINDING_CAPTURED", "FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED",
     "FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED", "DECISION_RECORDED", "REQUIREMENT_RECORDED",
     "CHANGE_RECORDED", "TASK_RECORDED", "IMPLEMENTATION_RECORDED",
+    "FINDING_IMPLEMENTED",
     "TEST_RECORDED", "DEFECT_RECORDED", "LESSON_RECORDED",
     "HANDOVER_RECORDED",
 }
@@ -538,6 +539,171 @@ class ReadinessRunRegistry:
                     db.rollback()
                     raise ValueError("finding plan requires an independent planner in the same trusted identity domain")
             self._append_event_tx(db, event_id, event_type, normalised, project_id, finding_id)
+            db.commit()
+        return True
+
+    def append_authenticated_finding_implementation_event(
+        self, event_id: str, payload: dict[str, Any], *,
+        project_id: str, project_version: str, request_id: str, approval: Any,
+    ) -> bool:
+        """Append an implementation report bound to the exact previously accepted plan."""
+        from datetime import datetime, timezone
+        from rhemascript.core.approvals import is_consumed_verified_approval
+
+        if not is_consumed_verified_approval(approval):
+            raise ValueError("implementation requires a verifier-issued, consumed approval")
+        if (approval.credential_schema != "RhemaScript.ApprovalCredential.v3"
+                or approval.action != "FINDING_IMPLEMENT"
+                or approval.project_id != project_id
+                or approval.project_version != project_version
+                or approval.request_id != request_id
+                or approval.expires_at <= datetime.now(timezone.utc)):
+            raise ValueError("implementation approval schema, action, scope or expiry is invalid")
+        for name, value in (("event_id", event_id), ("project_id", project_id),
+                            ("project_version", project_version), ("request_id", request_id)):
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"{name} must be non-empty trimmed text")
+        if not isinstance(payload, dict) or "authorization" in payload:
+            raise ValueError("implementation payload must be an object without caller authorization")
+        required = {
+            "schema", "finding_id", "finding_version", "plan_event_id", "plan_evidence_binding",
+            "implementation_summary", "changes", "test_results", "deviations", "rollback_reference",
+            "evidence_id", "evidence_version", "evidence_binding", "evidence_refs", "created_at_utc",
+        }
+        if set(payload) != required or payload.get("schema") != "raei-finding-implementation-v1":
+            raise ValueError("implementation report has an invalid field set or schema")
+        for field in ("finding_id", "finding_version", "plan_event_id", "implementation_summary",
+                      "rollback_reference", "evidence_id", "evidence_version", "created_at_utc"):
+            if not isinstance(payload.get(field), str) or not payload[field].strip():
+                raise ValueError(f"{field} must be non-empty text")
+        for field in ("changes", "test_results", "deviations"):
+            if (not isinstance(payload.get(field), list)
+                    or (field in {"changes", "test_results"} and not payload[field])
+                    or any(not isinstance(item, str) or not item.strip() for item in payload[field])):
+                raise ValueError(f"{field} must be a valid list of non-empty strings")
+        binding = payload.get("evidence_binding")
+        plan_binding = payload.get("plan_evidence_binding")
+        if (not isinstance(binding, dict)
+                or set(binding) != {"evidence_id", "evidence_version", "sha256", "size_bytes"}
+                or not isinstance(plan_binding, dict)
+                or set(plan_binding) != {"evidence_id", "evidence_version", "sha256", "size_bytes"}):
+            raise ValueError("implementation requires exact implementation and plan evidence bindings")
+        for item in (binding, plan_binding):
+            if (not isinstance(item.get("evidence_id"), str) or not item["evidence_id"].strip()
+                    or not isinstance(item.get("evidence_version"), str) or not item["evidence_version"].strip()
+                    or not isinstance(item.get("sha256"), str)
+                    or len(item["sha256"]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in item["sha256"])
+                    or not isinstance(item.get("size_bytes"), int)
+                    or isinstance(item.get("size_bytes"), bool) or item["size_bytes"] < 0):
+                raise ValueError("implementation evidence binding is malformed")
+        refs = payload.get("evidence_refs")
+        if (payload.get("evidence_id") != binding["evidence_id"]
+                or payload.get("evidence_version") != binding["evidence_version"]
+                or not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict)
+                or any(refs[0].get(k) != binding[v] for k, v in (
+                    ("evidence_id", "evidence_id"), ("version", "evidence_version"),
+                    ("sha256", "sha256"), ("size_bytes", "size_bytes")))
+                or not isinstance(refs[0].get("relative_path"), str)
+                or not refs[0]["relative_path"].strip()):
+            raise ValueError("implementation evidence reference does not match its exact binding")
+        if (approval.artifact_id != binding["evidence_id"]
+                or approval.artifact_version != binding["evidence_version"]
+                or approval.artifact_sha256 != binding["sha256"]
+                or approval.artifact_size_bytes != binding["size_bytes"]
+                or not all((approval.subject_id, approval.actor_id, approval.actor_role,
+                            approval.authn_context, approval.identity_session_id,
+                            approval.identity_policy_version, approval.identity_provider_id,
+                            approval.authenticated_at))):
+            raise ValueError("implementation approval is not bound to evidence or identity claims")
+        finding_id, finding_version = payload["finding_id"], payload["finding_version"]
+        if event_id != f"FINDING_IMPLEMENTED:{finding_id}@{finding_version}:{request_id}":
+            raise ValueError("implementation event ID is invalid")
+        enriched = dict(payload)
+        enriched["authorization"] = {
+            "issuer": approval.issuer, "approval_id": approval.approval_id,
+            "actor_id": approval.actor_id, "subject_id": approval.subject_id,
+            "actor_role": approval.actor_role, "action": approval.action,
+            "identity_provider_id": approval.identity_provider_id,
+            "identity_policy_version": approval.identity_policy_version,
+            "identity_session_id": approval.identity_session_id,
+            "authenticated_at_utc": approval.authenticated_at.isoformat(),
+            "project_id": project_id, "project_version": project_version,
+            "request_id": request_id, "artifact_sha256": binding["sha256"],
+            "artifact_size_bytes": binding["size_bytes"],
+            "signature_sha256": hashlib.sha256((approval.signature or "").encode("ascii")).hexdigest(),
+        }
+        normalised = self._normalise(enriched)
+        encoded = self._canonical(normalised)
+        if not self.verify():
+            raise ValueError("cannot append to an invalid activity history")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT event_type,project_id,subject_id,payload_json FROM activity_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if existing:
+                if existing != ("FINDING_IMPLEMENTED", project_id, finding_id, encoded):
+                    db.rollback()
+                    raise ReadinessReplayError("implementation event ID was replayed with different data")
+                db.commit()
+                return False
+            captured_rows = db.execute(
+                "SELECT payload_json FROM activity_events WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?",
+                (project_id, finding_id),
+            ).fetchall()
+            captured = next((json.loads(row[0]) for row in captured_rows
+                             if json.loads(row[0]).get("version") == finding_version), None)
+            plans = db.execute(
+                "SELECT event_id,payload_json FROM activity_events WHERE event_type='FINDING_PLANNED' AND project_id=? AND subject_id=? ORDER BY sequence",
+                (project_id, finding_id),
+            ).fetchall()
+            plan = next(((eid, json.loads(raw)) for eid, raw in plans
+                         if json.loads(raw).get("finding_version") == finding_version), None)
+            if not captured or not plan:
+                db.rollback()
+                raise ValueError("implementation requires the exact captured finding and approved plan")
+            plan_event_id, plan_payload = plan
+            actual_plan_binding = plan_payload.get("evidence_binding")
+            if (payload["plan_event_id"] != plan_event_id
+                    or payload["plan_evidence_binding"] != actual_plan_binding
+                    or plan_payload.get("finding_version") != finding_version):
+                db.rollback()
+                raise ValueError("implementation does not bind the exact approved plan event and evidence")
+            if sum(1 for eid, raw in plans if json.loads(raw).get("finding_version") == finding_version) != 1:
+                db.rollback()
+                raise ValueError("implementation requires exactly one approved plan")
+            prior_events = db.execute(
+                """SELECT event_type,payload_json FROM activity_events
+                WHERE project_id=? AND subject_id=? AND event_type IN
+                ('FINDING_RESEARCHED','FINDING_REPRODUCED','FINDING_PLANNED','FINDING_IMPLEMENTED')
+                ORDER BY sequence""", (project_id, finding_id),
+            ).fetchall()
+            if any(kind == "FINDING_IMPLEMENTED" and json.loads(raw).get("finding_version") == finding_version
+                   for kind, raw in prior_events):
+                db.rollback()
+                raise ValueError("implementation is already recorded for this finding version")
+            if not any(kind == "FINDING_REPRODUCED" and json.loads(raw).get("finding_version") == finding_version
+                       and json.loads(raw).get("outcome") == "REPRODUCED" for kind, raw in prior_events):
+                db.rollback()
+                raise ValueError("implementation requires a reproduced finding")
+            prior_auth = []
+            submitter = captured.get("submitter_identity")
+            if submitter:
+                prior_auth.append(submitter)
+            for kind, raw in prior_events:
+                event_payload = json.loads(raw)
+                if event_payload.get("finding_version") == finding_version:
+                    prior_auth.append(event_payload.get("authorization", {}))
+            for prior in prior_auth:
+                if (approval.subject_id == prior.get("subject_id")
+                        or approval.identity_session_id == prior.get("identity_session_id")
+                        or approval.identity_provider_id != prior.get("identity_provider_id")
+                        or approval.identity_policy_version != prior.get("identity_policy_version")):
+                    db.rollback()
+                    raise ValueError("implementation requires an independent implementer in the same trusted identity domain")
+            self._append_event_tx(db, event_id, "FINDING_IMPLEMENTED", normalised, project_id, finding_id)
             db.commit()
         return True
 
