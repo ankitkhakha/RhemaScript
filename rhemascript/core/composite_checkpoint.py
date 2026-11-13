@@ -58,8 +58,13 @@ def _safe_private_bytes(path: str | os.PathLike[str], limit: int) -> bytes:
                 or stat.S_IMODE(info.st_mode) & 0o077
                 or info.st_size <= 0 or info.st_size > limit):
             raise CompositeCheckpointError("checkpoint file must be bounded, owner-owned and private")
+        before = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
         with os.fdopen(fd, "rb", closefd=False) as stream:
             raw = stream.read(limit + 1)
+        after_info = os.fstat(fd)
+        after = (after_info.st_dev, after_info.st_ino, after_info.st_size, after_info.st_mtime_ns)
+        if before != after:
+            raise CompositeCheckpointError("checkpoint file changed while being read")
         if len(raw) > limit:
             raise CompositeCheckpointError("checkpoint file exceeds its size limit")
         return raw
@@ -96,8 +101,13 @@ def _read_manifest(path: str | os.PathLike[str], key: bytes) -> tuple[dict[str, 
                 or stat.S_IMODE(info.st_mode) & 0o077
                 or info.st_size <= 0 or info.st_size > _MAX_BYTES):
             raise CompositeCheckpointError("manifest must be a bounded, owner-owned private regular file")
+        before = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
         with os.fdopen(fd, "rb", closefd=False) as stream:
             raw = stream.read(_MAX_BYTES + 1)
+        after_info = os.fstat(fd)
+        after = (after_info.st_dev, after_info.st_ino, after_info.st_size, after_info.st_mtime_ns)
+        if before != after:
+            raise CompositeCheckpointError("composite manifest changed while being read")
         if len(raw) > _MAX_BYTES:
             raise CompositeCheckpointError("composite manifest exceeds the size limit")
     except OSError:
@@ -324,9 +334,12 @@ def advance_composite_checkpoint_anchor(
     latest = anchor.read_latest()
     if (not isinstance(result, CheckpointAnchorRecord)
             or not isinstance(latest, CheckpointAnchorRecord)
+            or result.generation != envelope["generation"]
+            or result.snapshot_sha256 != digest
             or latest.generation != envelope["generation"]
             or latest.snapshot_sha256 != digest
-            or latest.record_id != result.record_id):
+            or latest.record_id != result.record_id
+            or latest.recorded_at != result.recorded_at):
         raise CompositeCheckpointError("independent anchor rejected or failed composite read-back")
     current = now or datetime.now(timezone.utc)
     if not isinstance(current, datetime) or current.tzinfo is None or current.utcoffset() is None:
@@ -359,4 +372,6 @@ def verify_composite_checkpoint_against_anchor(
     age = (current.astimezone(timezone.utc) - latest.resolved_at.astimezone(timezone.utc)).total_seconds()
     if age < -30 or age > 30:
         raise CompositeCheckpointError("independent anchor response is stale or future-dated")
+    if latest.recorded_at > current.astimezone(timezone.utc) + timedelta(seconds=30):
+        raise CompositeCheckpointError("independent anchor record is future-dated")
     return latest
