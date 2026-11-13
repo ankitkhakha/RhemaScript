@@ -376,8 +376,23 @@ class YouTubeClient:
             raw = exc.read(8_000_001)
             if len(raw) > 8_000_000:
                 raise YouTubeIntegrationError("YouTube response exceeds the 8 MB safety limit") from None
+            if (method.upper() in {"POST", "PUT"}
+                    and parsed.hostname in {"www.googleapis.com", "youtube.googleapis.com"}
+                    and parsed.path.startswith("/upload/youtube/v3/videos")
+                    and exc.code >= 500):
+                raise YouTubeIntegrationError(
+                    "YouTube upload write outcome is indeterminate; reconcile the existing upload session before retrying.",
+                    code="INDETERMINATE_WRITE",
+                ) from None
             return exc.code, raw, dict(exc.headers.items())
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError):
+            if (method.upper() in {"POST", "PUT"}
+                    and parsed.hostname in {"www.googleapis.com", "youtube.googleapis.com"}
+                    and parsed.path.startswith("/upload/youtube/v3/videos")):
+                raise YouTubeIntegrationError(
+                    "YouTube upload write outcome is indeterminate; reconcile the existing upload session before retrying.",
+                    code="INDETERMINATE_WRITE",
+                ) from None
             raise YouTubeIntegrationError("YouTube network request failed") from None
 
     def _token(self) -> str:
@@ -506,6 +521,45 @@ class YouTubeClient:
             "read_only": True,
         }
 
+    def _query_upload_status(self, session_url: str, total: int) -> tuple[int, bytes]:
+        """Reconcile a resumable session after a transport-ambiguous chunk write."""
+        headers = {
+            "Authorization": f"Bearer {self._token()}",
+            "Content-Length": "0",
+            "Content-Range": f"bytes */{total}",
+        }
+        status, raw, response_headers = self._request(
+            session_url, method="PUT", body=b"", headers=headers,
+        )
+        if status == 308:
+            acknowledged = response_headers.get("Range") or response_headers.get("range")
+            if not acknowledged:
+                return 0, b""
+            try:
+                if not acknowledged.startswith("bytes=0-"):
+                    raise ValueError
+                offset = int(acknowledged.rsplit("-", 1)[1]) + 1
+            except (ValueError, TypeError):
+                raise YouTubeIntegrationError(
+                    "upload status reconciliation returned an invalid byte range"
+                ) from None
+            if offset < 0 or offset > total:
+                raise YouTubeIntegrationError(
+                    "upload status reconciliation returned an impossible byte range"
+                )
+            return offset, b""
+        if status in (200, 201):
+            return total, raw
+        if status in (404, 410):
+            raise YouTubeIntegrationError(
+                "resumable upload session is no longer available; publication outcome requires manual reconciliation",
+                code="UPLOAD_SESSION_UNAVAILABLE",
+            )
+        raise YouTubeIntegrationError(
+            "resumable upload status could not be reconciled; do not start a replacement upload",
+            code="INDETERMINATE_WRITE",
+        )
+
     def upload_video(self, file_path: str, *, title: str, description: str,
                      evidence_pack: dict[str, Any],
                      final_film_evidence_ref: str,
@@ -614,9 +668,38 @@ class YouTubeClient:
                     "Content-Length": str(len(chunk)),
                     "Content-Range": f"bytes {offset}-{end}/{total}",
                 }
-                status, final_raw, chunk_response_headers = self._authorized_request(
-                    location, method="PUT", body=chunk, headers=chunk_headers,
-                )
+                try:
+                    status, final_raw, chunk_response_headers = self._authorized_request(
+                        location, method="PUT", body=chunk, headers=chunk_headers,
+                    )
+                except YouTubeIntegrationError as exc:
+                    if exc.code != "INDETERMINATE_WRITE":
+                        raise
+                    reconciled_offset, reconciled_result = self._query_upload_status(
+                        location, total
+                    )
+                    if reconciled_result:
+                        status, final_raw = 201, reconciled_result
+                        offset = total
+                        continue
+                    if reconciled_offset < offset:
+                        raise YouTubeIntegrationError(
+                            "upload status regressed behind previously acknowledged bytes; refusing to replay",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
+                    if reconciled_offset > end + 1:
+                        raise YouTubeIntegrationError(
+                            "upload status advanced beyond the submitted chunk; refusing to continue",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
+                    if reconciled_offset == offset:
+                        # Status proves the attempted bytes were not accepted; retry
+                        # only this exact unacknowledged range on the same session.
+                        video.seek(offset)
+                        continue
+                    offset = reconciled_offset
+                    video.seek(offset)
+                    continue
                 if status in (200, 201):
                     offset = total
                 elif status == 308:
