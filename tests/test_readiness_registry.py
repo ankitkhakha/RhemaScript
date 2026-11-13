@@ -240,16 +240,31 @@ class ReadinessRunRegistryTests(unittest.TestCase):
             finally:
                 writer.close()
 
+        class InterleavingCursor:
+            def __init__(self, cursor, trigger=False):
+                self.cursor = cursor
+                self.trigger = trigger
+
+            def fetchall(self):
+                rows = self.cursor.fetchall()
+                if self.trigger:
+                    interleave()
+                return rows
+
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+
         class InterleavingConnection:
             def __init__(self, connection):
                 self.connection = connection
 
             def execute(self, sql, *args):
-                result = self.connection.execute(sql, *args)
-                if ("SELECT run_id,payload_sha256,payload_json FROM readiness_runs "
-                        "ORDER BY created_at,rowid" in sql):
-                    interleave()
-                return result
+                cursor = self.connection.execute(sql, *args)
+                trigger = (
+                    "SELECT run_id,payload_sha256,payload_json FROM readiness_runs "
+                    "ORDER BY created_at,rowid" in sql
+                )
+                return InterleavingCursor(cursor, trigger)
 
             def __enter__(self):
                 self.connection.__enter__()
