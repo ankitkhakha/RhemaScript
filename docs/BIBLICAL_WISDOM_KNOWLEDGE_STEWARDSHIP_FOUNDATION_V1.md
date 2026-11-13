@@ -48,7 +48,7 @@ The following are the first research tracks. They are a structured beginning, no
 
 **Primary passages:** 1 Kings 3:5–15; read in the larger narrative of 1 Kings 1–4. Cross-reference 2 Chronicles 1:7–12; Proverbs 2:1–11.
 
-**Context and findings:** Solomon is newly established as king and is conscious of the responsibility of governing God's people. In 1 Kings 3:9 the Hebrew expression is commonly rendered literally as a “hearing” or “listening heart.” The request is for the capacity to hear, understand and judge rightly, distinguishing good from evil for the benefit of the people. It is not merely a request for intelligence, status or technical cleverness. The narrative presents God's approval of this request. The wider account also shows Solomon's wisdom expressed in administration and learning (1 Kings 4).
+**Context and findings:** Solomon is newly established as king and is conscious of the responsibility of governing God's people. HINOVBSI's note at 1 Kings 3:9 identifies the literal expression as a “hearing heart” behind its rendering. The Hebrew phrase *lēb šōmēaʿ* joins “heart/mind” with “hearing/listening”; the purpose clauses immediately connect it to judging God's people and discerning good from evil. Solomon asks because he recognises his inexperience and the weight of the people entrusted to him. The next scene (1 Kings 3:16–28) narrates a concrete judgement involving two women and demonstrates wisdom in the administration of justice. Verse 14 also places the promise in a covenantal condition of walking in God's ways. The parallel in 2 Chronicles 1:7–13 emphasises wisdom and knowledge for judging God's people. The wider account presents Solomon's wisdom in administration and learning (1 Kings 4), while 1 Kings 11 later records his serious failures. A 2013 Acta Theologica study by N. Cachia argues that the “listening heart” includes openness to God and attentiveness to the people the king is called to govern.
 
 **Principle:** Seek wisdom that listens, discerns and serves justly; do not seek knowledge merely for status, power or self-interest.
 
@@ -232,6 +232,7 @@ A BWSF implementation is not complete merely because this document exists. Valid
 **Primary Scripture source**
 
 Initial HINOVBSI chapter-level capture log (Bible Society of India / YouVersion, version 1683; Copyright © 2012 BSI; Used by permission):
+- 1 Kings 3: https://www.bible.com/en-GB/bible/1683/1KI.3.HINOVBSI
 - 2 Chronicles 1: https://www.bible.com/bible/1683/2CH.1.HINOVBSI
 - Exodus 31: https://www.bible.com/bible/1683/EXO.31.HINOVBSI
 - James 1: https://www.bible.com/bible/1683/JAS.1.HINOVBSI
@@ -241,7 +242,7 @@ Initial HINOVBSI chapter-level capture log (Bible Society of India / YouVersion,
 - 2 Timothy 3: https://www.bible.com/bible/1683/2TI.3.HINOVBSI
 - 1 Corinthians 4: https://www.bible.com/bible/1683/1CO.4.HINOVBSI
 
-This register records that the exact HINOVBSI chapter pages were opened and their version metadata inspected. It does not claim a complete verse-by-verse collation, exhaustive literary-context review, original-language analysis or formal human approval. The 1 Kings 3 page was not successfully retrieved in HINOVBSI during this pass; 2 Chronicles 1:7–13 is a verified canonical parallel, not a replacement edition of 1 Kings 3.
+This register records that the exact HINOVBSI chapter pages were opened and their version metadata inspected. It does not claim a complete verse-by-verse collation, exhaustive literary-context review, original-language analysis or formal human approval. The HINOVBSI 1 Kings 3 footnote identifies the literal sense behind the rendering at verse 9 as “hearing heart”; the exact Hebrew expression and its contextual function still require the full original-language review prescribed by Standard V1.2.
 
 - Bible Society of India / YouVersion, *पवित्र बाइबिल OV (Re-edited) Bible (BSI)*, version identifier HINOVBSI, copyright © 2012 Bible Society of India: https://www.bible.com/versions/1683
 - Bible Society of India Hindi Bible information: https://www.indian.bible/hi
@@ -252,6 +253,7 @@ This register records that the exact HINOVBSI chapter pages were opened and thei
 
 **Secondary contextual research — not Scripture**
 - Vanessa Lovelace, Working Preacher, commentary on 1 Kings 3:5–12: https://www.workingpreacher.org/commentaries/revised-common-lectionary/ordinary-17/commentary-on-1-kings-35-12-6
+- N. Cachia, “לֵב שֹׁמֵעַ (1 Kgs 3:9): Receiving and Forming Towards a Listening Heart,” *Acta Theologica*, Supplementum 17 (2013), pp. 69–88, DOI: https://doi.org/10.4314/actat.v32i2S.3. The study discusses the phrase's relation to openness to God and attentiveness to the people entrusted to the king.
 - Jay Sklar, The Gospel Coalition Biblical Commentary, Exodus 31:1–11: https://www.thegospelcoalition.org/commentary/exodus/
 - Working Preacher, commentary on 2 Timothy 3:14–4:5: https://www.workingpreacher.org/commentaries/revised-common-lectionary/ordinary-29-3/commentary-on-2-timothy-314-45-3
 - Biblical and Ancient Greek Linguistics 12 (2024), study of the Greek syntax and context of James 1:5–8: https://bagl.org/files/volume12/BAGL_12-4_Kim.pdf
@@ -266,8 +268,7 @@ This register records that the exact HINOVBSI chapter pages were opened and thei
 
 **Initial research synthesis:** recorded.  
 **Integration target:** existing L1, CAP-01–CAP-03 and RAEI curriculum/knowledge systems.  
-**HINOVBSI chapter-level source capture:** verified for 2 Chronicles 1, Exodus 31, James 1, Proverbs 2, 1 Thessalonians 5, Nehemiah 1, 2, 4, 5 and 6, 2 Timothy 3, and 1 Corinthians 4. These are source-capture checks, not completed theological adjudications or word-for-word approval of every quotation.
-**1 Kings 3 HINOVBSI capture:** unresolved in the current retrieval. A separate HINCLBSI edition was surfaced but is not a substitute for HINOVBSI; do not silently substitute it.
+**HINOVBSI chapter-level source capture:** verified for 1 Kings 3, 2 Chronicles 1, Exodus 31, James 1, Proverbs 2, 1 Thessalonians 5, Nehemiah 1, 2, 4, 5 and 6, 2 Timothy 3, and 1 Corinthians 4. These are source-capture checks, not completed theological adjudications or word-for-word approval of every quotation. A separate HINCLBSI edition was also surfaced; it is not interchangeable with HINOVBSI.
 **Full canonical study:** not complete.  
 **Exact HINOVBSI passage capture and word-for-word comparison for each unit:** pending.  
 **Full historical, textual-critical, original-language and scholarly review:** pending where materially relevant.  
