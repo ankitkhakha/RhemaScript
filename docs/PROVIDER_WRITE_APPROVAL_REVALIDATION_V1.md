@@ -9,6 +9,7 @@ Close the time gap between atomic approval consumption and the first external pr
 - `ApprovalVerifier` attaches an opaque reference to the exact verifier instance that created each `VerifiedApproval`.
 - `revalidate_consumed_verified_approval` accepts only the exact in-process approval object already marked as consumed by the verifier.
 - `ApprovalVerifier.revalidate_consumed_approval` rechecks:
+  - when the atomic-consumption callback is a bound durable store method exposing `is_consumed` and `is_revoked`, the exact approval remains present in the consumption ledger and has not subsequently been revoked; ledger read failures fail closed;
   - that the credential remains unexpired;
   - that the signing key still resolves from the verifier's configured trust source;
   - that the current key fingerprint matches the key used during signature verification;
@@ -31,6 +32,7 @@ The final key-registry read occurs immediately before transport, but the registr
 Synthetic tests cover:
 - a key revoked after approval consumption and rejected by write-boundary revalidation;
 - a gateway write rejected when revalidation fails;
+- an approval revoked after durable consumption and rejected by write-boundary revalidation;
 - no provider transport call on revalidation failure.
 
 CI success validates the local code contracts and synthetic test doubles only. It does not prove production registry deployment, revocation propagation latency, external identity assurance, HSM/KMS custody, or provider-side fencing.
