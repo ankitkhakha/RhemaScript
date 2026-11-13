@@ -26,7 +26,8 @@ class FakeAnchor:
             return None
         self.record = CheckpointAnchorRecord(
             generation=new_generation, snapshot_sha256=snapshot_sha256,
-            recorded_at=self.now, record_id=f"anchor-record-{new_generation:04d}",
+            recorded_at=self.now, resolved_at=self.now,
+            record_id=f"anchor-record-{new_generation:04d}",
         )
         return self.record
 
@@ -100,6 +101,22 @@ class CheckpointFreshnessTests(unittest.TestCase):
                 anchor=self.anchor, expected_generation=0, recorded_at=self.anchor.now,
             )
         self.assertIsNone(self.anchor.record)
+
+    def test_stale_anchor_read_response_is_rejected(self):
+        from dataclasses import replace
+        archive = self.make_archive(1, "checkpoint-0001.json")
+        advance_checkpoint_anchor(
+            str(archive), key=self.key, anchor=self.anchor, expected_generation=0,
+            recorded_at=self.anchor.now,
+        )
+        self.anchor.record = replace(
+            self.anchor.record,
+            resolved_at=self.anchor.now.replace(year=2020),
+        )
+        with self.assertRaisesRegex(ValueError, "response is stale"):
+            verify_checkpoint_against_anchor(
+                str(archive), key=self.key, anchor=self.anchor,
+            )
 
     def test_nonconsecutive_generation_is_rejected(self):
         archive = self.make_archive(3, "checkpoint-0003.json")
