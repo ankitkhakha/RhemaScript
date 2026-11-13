@@ -44,10 +44,10 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         }
 
 
-    def publish_authority(self, request_id, project_id="RS-1", source_version="1.0", identity_overrides=None):
+    def publish_authority(self, request_id, project_id="RS-1", source_version="1.0", identity_overrides=None, verification_time=None):
         private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-        now = datetime.now(timezone.utc)
+        now = verification_time or datetime.now(timezone.utc)
         binding = {
             "artifact_id": "ART-FINAL-001",
             "artifact_version": "1",
@@ -69,7 +69,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "project_version": source_version,
                 "request_id": request_id,
                 "issued_at": now.isoformat(),
-                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "expires_at": (now + timedelta(minutes=10)).isoformat(),
                 "nonce": f"nonce-{suffix}-{request_id}",
                 "key_id": "key-2026-01",
                 "artifact_id": binding["artifact_id"],
@@ -260,6 +260,33 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "https://www.googleapis.com/upload/youtube/v3/videos/session",
                 method="PUT", headers={"Authorization": "Bearer test"},
                 body=b"chunk", request_id="shared-session", project_id="RS-1",
+                source_version="1.0", authority=authority,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_provider_write_rechecks_authentication_freshness_at_use_time(self):
+        from datetime import datetime, timedelta, timezone
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        verified_at = datetime.now(timezone.utc) - timedelta(minutes=6)
+        authority = self.publish_authority("stale-at-write", verification_time=verified_at)
+        with self.assertRaisesRegex(ExternalIntegrationError, "actor separation"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="stale-at-write", project_id="RS-1",
                 source_version="1.0", authority=authority,
             )
         self.assertEqual(transport.calls, [])
