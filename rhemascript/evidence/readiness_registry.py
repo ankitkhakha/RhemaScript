@@ -25,7 +25,7 @@ class ReadinessReplayError(ValueError):
 _ACTIVITY_EVENT_TYPES = {
     "READINESS_RUN_RECORDED", "LEGACY_READINESS_RECORD_IMPORTED",
     "FINDING_CAPTURED", "FINDING_RESEARCHED", "FINDING_REPRODUCED",
-    "FINDING_DISPOSITIONED", "DECISION_RECORDED", "REQUIREMENT_RECORDED",
+    "FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED", "DECISION_RECORDED", "REQUIREMENT_RECORDED",
     "CHANGE_RECORDED", "TASK_RECORDED", "IMPLEMENTATION_RECORDED",
     "TEST_RECORDED", "DEFECT_RECORDED", "LESSON_RECORDED",
     "HANDOVER_RECORDED",
@@ -152,6 +152,8 @@ class ReadinessRunRegistry:
             raise ValueError("event_id must be a non-empty trimmed string")
         if not isinstance(event_type, str) or event_type not in _ACTIVITY_EVENT_TYPES - _INTERNAL_EVENT_TYPES:
             raise ValueError("unsupported external activity event type")
+        if event_type in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
+            raise ValueError("governed review events require append_governed_activity_event")
         for name, value in (("project_id", project_id), ("subject_id", subject_id)):
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{name} must be null or a non-empty string")
@@ -172,6 +174,110 @@ class ReadinessRunRegistry:
                 if row != (event_type, project_id, subject_id, encoded):
                     db.rollback()
                     raise ReadinessReplayError("event_id already exists with different event data")
+                db.commit()
+                return False
+            self._append_event_tx(db, event_id, event_type, normalised, project_id, subject_id)
+            db.commit()
+        return True
+
+    def append_governed_activity_event(
+        self, event_id: str, event_type: str, payload: dict[str, Any], *,
+        project_id: str, project_version: str, subject_id: str,
+        request_id: str, approvals: tuple[Any, ...], expected_actions: tuple[str, ...],
+    ) -> bool:
+        """Append a reviewed finding/knowledge decision backed by consumed signed approvals.
+
+        Approval credentials must already have been signature-verified, scope-checked,
+        and atomically consumed by ApprovalVerifier. This registry independently checks
+        the in-process verification capability, exact scope, expiry and distinct actors.
+        """
+        from datetime import datetime, timezone
+        from rhemascript.core.approvals import is_verified_approval
+
+        if event_type not in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
+            raise ValueError("unsupported governed event type")
+        for name, value in (
+            ("event_id", event_id), ("project_id", project_id),
+            ("project_version", project_version), ("subject_id", subject_id),
+            ("request_id", request_id),
+        ):
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"{name} must be non-empty trimmed text")
+        if not isinstance(payload, dict) or "authorization" in payload:
+            raise ValueError("governed event payload must be an object without caller-supplied authorization")
+        if not isinstance(approvals, tuple) or len(approvals) != 2:
+            raise ValueError("exactly two independently signed approvals are required")
+        if (not isinstance(expected_actions, tuple) or len(expected_actions) != 2
+                or any(not isinstance(action, str) or not action.strip() for action in expected_actions)):
+            raise ValueError("two expected approval actions are required")
+        if any(not is_verified_approval(item) for item in approvals):
+            raise ValueError("governed events require verifier-issued, consumed approvals")
+        actors = [item.actor_id for item in approvals]
+        if len(set(actors)) != 2:
+            raise ValueError("governed review requires two distinct authenticated actors")
+        now = datetime.now(timezone.utc)
+        for item, action in zip(approvals, expected_actions):
+            if (item.action != action or item.project_id != project_id
+                    or item.project_version != project_version or item.request_id != request_id
+                    or item.expires_at <= now):
+                raise ValueError("approval action, project, version, request or expiry does not match")
+        if event_type == "FINDING_DISPOSITIONED":
+            required = {"finding_id", "finding_version", "disposition", "rationale", "evidence_binding"}
+            decisions = {"ACCEPTED", "REJECTED", "DUPLICATE", "DEFERRED", "WITHDRAWN"}
+            identity_field, version_field = "finding_id", "finding_version"
+        else:
+            required = {"knowledge_id", "knowledge_version", "decision", "rationale", "evidence_binding"}
+            decisions = {"APPROVED", "REJECTED"}
+            identity_field, version_field = "knowledge_id", "knowledge_version"
+        if set(payload) != required:
+            raise ValueError("governed review payload has an invalid field set")
+        if payload.get(identity_field) != subject_id:
+            raise ValueError("governed review subject does not match its payload")
+        version = payload.get(version_field)
+        if not isinstance(version, str) or not version.strip():
+            raise ValueError("governed review subject version is required")
+        decision_field = "disposition" if event_type == "FINDING_DISPOSITIONED" else "decision"
+        if payload.get(decision_field) not in decisions:
+            raise ValueError("governed review decision is unsupported")
+        rationale = payload.get("rationale")
+        if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 4000:
+            raise ValueError("governed review rationale must be non-empty and at most 4000 characters")
+        binding = payload.get("evidence_binding")
+        if (not isinstance(binding, dict)
+                or set(binding) != {"evidence_id", "evidence_version", "sha256", "size_bytes"}
+                or any(not isinstance(binding.get(key), str) or not binding[key].strip()
+                       for key in ("evidence_id", "evidence_version"))
+                or not isinstance(binding.get("sha256"), str)
+                or len(binding["sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in binding["sha256"])
+                or not isinstance(binding.get("size_bytes"), int)
+                or isinstance(binding.get("size_bytes"), bool) or binding["size_bytes"] < 0):
+            raise ValueError("governed review requires an exact evidence ID/version/SHA-256/size binding")
+        enriched = dict(payload)
+        enriched["authorization"] = {
+            "issuer": approvals[0].issuer,
+            "actor_ids": actors,
+            "approval_ids": [item.approval_id for item in approvals],
+            "actions": [item.action for item in approvals],
+            "project_id": project_id,
+            "project_version": project_version,
+            "request_id": request_id,
+            "authenticated_at_utc": now.isoformat(),
+        }
+        normalised = self._normalise(enriched)
+        encoded = self._canonical(normalised)
+        if not self.verify():
+            raise ValueError("cannot append to an invalid activity history")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT event_type,project_id,subject_id,payload_json
+                FROM activity_events WHERE event_id=?""", (event_id,),
+            ).fetchone()
+            if row:
+                if row != (event_type, project_id, subject_id, encoded):
+                    db.rollback()
+                    raise ReadinessReplayError("event_id already exists with different governed review data")
                 db.commit()
                 return False
             self._append_event_tx(db, event_id, event_type, normalised, project_id, subject_id)
