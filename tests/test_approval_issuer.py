@@ -17,6 +17,10 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         self.assertEqual(final.project_id, publish.project_id)
         self.assertEqual(final.project_version, publish.project_version)
         self.assertEqual(final.request_id, publish.request_id)
+        self.assertEqual(final.artifact_id, publish.artifact_id)
+        self.assertEqual(final.artifact_version, publish.artifact_version)
+        self.assertEqual(final.artifact_sha256, publish.artifact_sha256)
+        self.assertEqual(final.artifact_size_bytes, publish.artifact_size_bytes)
 
     def test_scope_rejects_missing_identity_fields(self):
         with self.assertRaisesRegex(ValueError, "request_id"):
