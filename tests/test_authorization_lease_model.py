@@ -165,6 +165,15 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         self.assertFalse(worker.is_alive(), "dispatch worker did not finish")
         self.assertEqual(outcome, [False])
 
+    def test_unaccepted_lease_cannot_be_marked_indeterminate(self):
+        lease = self.acquire(nonce="dispatch-not-accepted")
+        self.assertFalse(self.model.mark_indeterminate(
+            lease.lease_id, reason_code="RESPONSE_LOST_AFTER_SEND",
+        ))
+        self.assertFalse(self.model.reconcile_dispatch(
+            lease.lease_id, provider_operation_id="provider-op-none", outcome="SUCCEEDED",
+        ))
+
     def test_indeterminate_dispatch_requires_reconciliation_and_cannot_be_replayed(self):
         lease = self.acquire(nonce="dispatch-indeterminate")
         self.assertTrue(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
