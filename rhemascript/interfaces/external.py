@@ -545,7 +545,7 @@ class ExternalIntegrationGateway:
                 "artifact_size_bytes": first.artifact_size_bytes,
             }
             owner_id = self._session_owner_id
-            lease_seconds = max(60.0, binding.timeout_seconds * 4)
+            lease_seconds = min(600.0, max(60.0, binding.timeout_seconds * 4))
             if operation.upper() == "UPLOAD_SESSION":
                 try:
                     reserved = self.publish_session_registry.reserve_publish_session(
