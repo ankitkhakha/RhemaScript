@@ -44,9 +44,15 @@ class SQLiteLeaseStateModel:
                     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                     sequence INTEGER NOT NULL,
                     generation_high_water INTEGER NOT NULL,
-                    checkpoint_sha256 TEXT NOT NULL
+                    checkpoint_sha256 TEXT NOT NULL,
+                    checkpoint_json TEXT
                 )
             """)
+            anchor_columns = {
+                row[1] for row in anchor.execute("PRAGMA table_info(recovery_anchor)")
+            }
+            if "checkpoint_json" not in anchor_columns:
+                anchor.execute("ALTER TABLE recovery_anchor ADD COLUMN checkpoint_json TEXT")
         with self._connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS resource_fences (
@@ -403,13 +409,24 @@ class SQLiteLeaseStateModel:
                 anchor.execute("ROLLBACK")
                 raise LeaseStateError("checkpoint generation is below trusted recovery anchor")
             sequence = previous_sequence + 1
+            checkpoint = {
+                "schema_version": 1,
+                "sequence": sequence,
+                "generation_high_water": generation,
+                "state": state,
+                "sha256": digest,
+            }
+            checkpoint_json = json.dumps(checkpoint, sort_keys=True, separators=(",", ":"))
             anchor.execute(
-                """INSERT INTO recovery_anchor VALUES(1,?,?,?)
+                """INSERT INTO recovery_anchor
+                   (singleton,sequence,generation_high_water,checkpoint_sha256,checkpoint_json)
+                   VALUES(1,?,?,?,?)
                    ON CONFLICT(singleton) DO UPDATE SET
                    sequence=excluded.sequence,
                    generation_high_water=excluded.generation_high_water,
-                   checkpoint_sha256=excluded.checkpoint_sha256""",
-                (sequence, generation, digest),
+                   checkpoint_sha256=excluded.checkpoint_sha256,
+                   checkpoint_json=excluded.checkpoint_json""",
+                (sequence, generation, digest, checkpoint_json),
             )
             anchor.execute("COMMIT")
         except sqlite3.Error:
@@ -418,13 +435,23 @@ class SQLiteLeaseStateModel:
             raise LeaseStateError("recovery anchor update failed") from None
         finally:
             anchor.close()
-        return {
-            "schema_version": 1,
-            "sequence": sequence,
-            "generation_high_water": generation,
-            "state": state,
-            "sha256": digest,
-        }
+        return checkpoint
+
+    def get_latest_recovery_checkpoint(self) -> dict[str, object] | None:
+        """Recover the exact checkpoint if a caller lost the post-commit response."""
+        anchor = self._anchor_connect()
+        try:
+            row = anchor.execute(
+                "SELECT checkpoint_json FROM recovery_anchor WHERE singleton=1"
+            ).fetchone()
+            if row is None or row[0] is None:
+                return None
+            checkpoint = json.loads(row[0])
+            return checkpoint if self.verify_recovery_checkpoint(checkpoint) else None
+        except (sqlite3.Error, ValueError, TypeError):
+            return None
+        finally:
+            anchor.close()
 
     def verify_recovery_checkpoint(self, checkpoint: dict[str, object]) -> bool:
         """Verify integrity and freshness against the separate local anchor."""
