@@ -7,7 +7,7 @@ This integration uses only Python's standard library and Google's official YouTu
 Implemented client operations:
 - Read the authenticated channel profile.
 - Resumable video upload with title, description, tags, category, privacy and optional scheduled publication metadata.
-- Set a custom thumbnail.
+- Thumbnail writes are deliberately disabled until a dedicated signed thumbnail-artifact approval contract is implemented.
 - Verify upload/video processing and privacy status.
 - Read channel analytics by date range, with optional video filter.
 
@@ -74,13 +74,13 @@ For a scheduled public release, YouTube requires the upload to be private and a 
 
 ## Remaining external activation and assurance
 
-The owner-operated read-only OAuth connection has since been completed, and the authenticated channel ID matched the owner-supplied expected ID using exactly `youtube.readonly`. This verifies channel identity only. Upload-scope and Analytics-scope consent, live upload, thumbnail write, public/scheduled release and Analytics access remain unperformed. API write permissions, quota and account-specific restrictions still require separate owner-led checks.
+The repository and its CI evidence do not establish that a live owner-operated OAuth connection or channel-identity check has been completed. Treat live authorization and channel identity as unverified until the account owner completes and records the separate read-only check below. Upload-scope and Analytics-scope consent, live upload, thumbnail write, public/scheduled release and Analytics access remain unperformed. API write permissions, quota and account-specific restrictions still require separate owner-led checks.
 
 The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. Before production use, add a local encrypted secret store if the deployment environment provides one; this implementation intentionally reads secrets from environment variables only.
 
 ## External gateway integration status
 
-The YouTube client is now routed through the existing provider-neutral external gateway when an IF-18 gateway is explicitly supplied. The provider binding declares the supported Google hosts, API path families, and HTTP methods for OAuth, channel/video reads, analytics, resumable upload sessions, upload chunks, and thumbnail writes. The client refuses live traffic if neither an explicitly configured gateway nor an injected offline test transport is supplied.
+The YouTube client is now routed through the existing provider-neutral external gateway when an IF-18 gateway is explicitly supplied. The provider binding declares the supported Google hosts, API path families, and HTTP methods for OAuth, channel/video reads, analytics, resumable upload sessions, upload chunks, and thumbnail writes. The client refuses live traffic if neither an explicitly configured gateway nor an injected offline test transport is supplied. The direct `transport` injection is a test seam only; production traffic must use the IF-18 gateway and its audit, allowlist and authorization controls.
 
 ### Read-only channel identity verification
 
@@ -109,9 +109,9 @@ identity = client.verify_connection(expected_channel_id="OWNER_CONFIRMED_CHANNEL
 For this check, configure only the read-only YouTube scope needed for channel identity (`youtube.readonly`). Do not request `youtube.upload` or `yt-analytics.readonly` until those separate features are explicitly being prepared. Google may impose additional consent/verification requirements; review the current Google requirements before consent. Do not copy the placeholder channel ID, credentials or token values into the repository.
 
 
-The gateway extension preserves the original JSON POST invoke contract and adds a separate method-aware request path for OAuth and resumable protocols. Each provider request is audited without recording query values, authorization headers, OAuth body contents, upload-session URLs, or media bytes. Upload-session, upload-chunk, and thumbnail operations are checked against the separate PUBLISH authority at the gateway boundary. The YouTube client independently validates the Evidence Pack, all six ordered gates, final-film evidence, and human final acceptance before any publishing write.
+The gateway extension preserves the original JSON POST invoke contract and adds a separate method-aware request path for OAuth and resumable protocols. Each provider request is audited without recording query values, authorization headers, OAuth body contents, upload-session URLs, or media bytes. Upload-session and upload-chunk operations are checked against the separate PUBLISH authority at the gateway boundary. Thumbnail writes are rejected by the client and gateway until a dedicated signed thumbnail-artifact approval contract is implemented. The YouTube client independently validates the Evidence Pack, all six ordered gates, final-film evidence, and human final acceptance before any publishing write.
 
-Automated CI has passed for the IF-18 gateway routing and fail-closed tests, the mocked end-to-end resumable upload (including binary chunk acknowledgements and final video verification), and the mocked gateway-backed thumbnail write. A path-segment boundary hardening test also verifies that sibling paths outside an operation's declared prefix are rejected before transport. These are mocked contract tests, not live Google account or provider validation.
+Automated CI covers IF-18 gateway routing and fail-closed behavior and mocked resumable upload flows. Thumbnail write tests verify rejection before provider transport; they do not demonstrate a working thumbnail-write capability. A path-segment boundary hardening test also verifies that sibling paths outside an operation's declared prefix are rejected before transport. These are mocked contract tests, not live Google account or provider validation.
 
 `JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable external requests. The read-only OAuth consent and channel identity check remain pending an explicit owner-run authorization and verification step. CI and local preflight do not perform this step. No upload-scope or Analytics-scope consent, live upload, thumbnail change, analytics query, public release, merge or deployment has been performed. A passing CI run validates mocked contracts only; it does not validate write permissions, quota, billing status or real write behavior.
 
