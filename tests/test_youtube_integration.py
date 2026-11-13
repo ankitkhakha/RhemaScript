@@ -529,14 +529,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "distinct authenticated actors"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
     def test_thumbnail_write_remains_disabled_without_project_authority(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
-        with self.assertRaisesRegex(YouTubeIntegrationError, "distinct authenticated actors"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_final_gate_must_reference_the_approved_final_film(self):
@@ -553,7 +553,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             context["evidence_pack"]["gate_records"][1],
             context["evidence_pack"]["gate_records"][0],
         )
-        with self.assertRaisesRegex(YouTubeIntegrationError, "expected gate"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_invalid_video_metadata_is_rejected_before_network(self):
