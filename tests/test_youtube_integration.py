@@ -234,6 +234,33 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "final_film_artifact_id": "ART-8",
         }
 
+
+    def test_provider_gateway_rejects_boolean_publish_authority_before_transport(self):
+        calls = []
+
+        class RecordingTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                calls.append((url, method))
+                return 200, b"{}", {}
+
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),),
+            transport=RecordingTransport(),
+            credential_resolver=lambda provider: {},
+            audit_sink=lambda event: None,
+            enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "verifier-issued signed approvals"):
+            gateway.request(
+                YOUTUBE_INTERFACE_ID, "UPLOAD_SESSION",
+                "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                method="POST", headers={}, body=b"{}",
+                request_id="publish-request-001",
+                project_id="RS-TEST-001", source_version="1.0",
+                authority={"publishing_authorisation": True},
+            )
+        self.assertEqual(calls, [])
+
     def test_config_rejects_upload_chunk_larger_than_32_mib(self):
         with self.assertRaisesRegex(YouTubeIntegrationError, "between 256 KiB and 32 MiB"):
             YouTubeConfig("client", "secret", "refresh", chunk_size=33 * 1024 * 1024).validate()
