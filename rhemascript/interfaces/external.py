@@ -321,7 +321,7 @@ class ExternalIntegrationGateway:
                 project_id: str, source_version: str,
                 recipient_clearance: str = "OPERATIONAL",
                 task_need: bool = True, approved_scope: bool = True,
-                authority: dict[str, bool] | None = None,
+                authority: dict[str, Any] | None = None,
                 max_response_bytes: int = 8_000_000) -> tuple[int, bytes, dict[str, str]]:
         """Audited method-aware provider request for OAuth and resumable protocols."""
         from rhemascript.core.authority import authorise_action, AuthorityError
@@ -373,7 +373,26 @@ class ExternalIntegrationGateway:
         authority_operation = "PUBLISH" if operation.upper() in {
             "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
         } else operation.upper()
-        if authority_operation in self.CONSEQUENT_OPERATIONS or authority_operation == "PUBLISH":
+        if authority_operation == "PUBLISH":
+            from datetime import datetime, timezone
+            from rhemascript.core.approvals import is_verified_approval
+            approvals = (authority or {}).get("verified_approvals")
+            now = datetime.now(timezone.utc)
+            if (not isinstance(approvals, tuple) or len(approvals) != 2
+                    or any(not is_verified_approval(item) for item in approvals)):
+                raise ExternalIntegrationError("provider write requires verifier-issued signed approvals")
+            first, second = approvals
+            if (first.action != "FINAL_ACCEPTANCE" or second.action != "PUBLISH"
+                    or first.actor_id == second.actor_id
+                    or first.approval_id == second.approval_id
+                    or first.issuer != second.issuer
+                    or first.project_id != project_id or second.project_id != project_id
+                    or first.project_version != source_version
+                    or second.project_version != source_version
+                    or first.request_id != request_id or second.request_id != request_id
+                    or first.expires_at <= now or second.expires_at <= now):
+                raise ExternalIntegrationError("provider write approval scope or actor separation is invalid")
+        elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
                 authorise_action(authority_operation, authority or {})
             except AuthorityError:
