@@ -101,7 +101,14 @@ class RAEIFindingTests(unittest.TestCase):
         capture_finding(self.registry, self.evidence_root, encoded, evidence)
         changed = dict(first)
         changed["raw_observation"] = "A different observation was supplied."
-        encoded, evidence = self.write_artifact(changed)
+        encoded = json.dumps(
+            changed, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+        ).encode("utf-8")
+        (self.evidence_root / "finding-replay.json").write_bytes(encoded)
+        evidence = verify_artifact(
+            self.evidence_root, "finding-replay.json",
+            evidence_id=changed["evidence_id"], version=changed["evidence_version"],
+        )
         with self.assertRaises(ReadinessReplayError):
             capture_finding(self.registry, self.evidence_root, encoded, evidence)
 
