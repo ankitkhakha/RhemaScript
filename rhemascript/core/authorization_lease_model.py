@@ -371,6 +371,7 @@ class SQLiteLeaseStateModel:
             "lease_approvals": "SELECT lease_id,approval_id FROM lease_approvals ORDER BY lease_id,approval_id",
             "accepted_dispatches": "SELECT dispatch_nonce,lease_id,accepted_at FROM accepted_dispatches ORDER BY dispatch_nonce",
             "dispatch_outcomes": "SELECT lease_id,status,provider_operation_id,reason_code,updated_at FROM dispatch_outcomes ORDER BY lease_id",
+            "event_history": "SELECT sequence,event_type,subject_id,payload_json,previous_hash,event_hash,created_at FROM event_history ORDER BY sequence",
         }
         db = self._connect()
         try:
