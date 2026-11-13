@@ -763,8 +763,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                     else:
                         new_offset = int(match.group(1)) + 1
                         if (new_offset < acknowledged or new_offset > total
-                                or (state == "CHUNK_IN_FLIGHT" and end is not None
-                                    and new_offset > end + 1)):
+                                or (end is not None and new_offset > end + 1)):
                             new_state, new_offset = "INDETERMINATE", acknowledged
                 if new_state != "INDETERMINATE":
                     new_state = "ACTIVE"
@@ -773,14 +772,16 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             elif status >= 500:
                 new_state = "INDETERMINATE"
             retained_owner = None if new_state == "INDETERMINATE" else owner_id
+            retained_start = start if new_state == "INDETERMINATE" else None
+            retained_end = end if new_state == "INDETERMINATE" else None
             db.execute("""
                 UPDATE publish_sessions
-                   SET state=?, acknowledged_offset=?, inflight_start=NULL,
-                       inflight_end=NULL, inflight_owner=?, lease_expires_at=NULL,
+                   SET state=?, acknowledged_offset=?, inflight_start=?,
+                       inflight_end=?, inflight_owner=?, lease_expires_at=NULL,
                        updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
-            """, (new_state, new_offset, retained_owner, self._utc(datetime.now(timezone.utc)),
-                  project_id, project_version, request_id))
+            """, (new_state, new_offset, retained_start, retained_end, retained_owner,
+                  self._utc(datetime.now(timezone.utc)), project_id, project_version, request_id))
             db.execute("COMMIT")
             return new_state != "INDETERMINATE"
         except sqlite3.Error:
