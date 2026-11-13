@@ -161,6 +161,12 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "digest does not match"):
             verify_analytics_period_comparison(altered)
 
+    def test_rejects_negative_analytics_metric_values(self):
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", -1, 1.0, 12.0, 1]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 12.0, 1]])
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "is negative"):
+            compare_analytics_periods(current, previous)
+
     def test_rejects_boolean_and_fractional_integer_metric_values(self):
         for invalid in (True, 1.5):
             with self.subTest(invalid=invalid):
