@@ -115,6 +115,18 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             )
         self.assertFalse(self.model.verify_event_history())
 
+    def test_event_history_detects_deletion_of_checkpointed_events(self):
+        self.acquire(nonce="dispatch-checkpointed-event-history")
+        checkpoint = self.model.create_recovery_checkpoint()
+        self.assertTrue(self.model.verify_event_history())
+        self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint))
+        with sqlite3.connect(self.model.path) as db:
+            db.execute("DELETE FROM event_history WHERE sequence=1")
+        self.assertFalse(self.model.verify_event_history())
+        # The anchor still verifies the checkpoint bytes; local state/history
+        # comparison is a separate check and correctly detects the deletion.
+        self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint))
+
     def test_recovery_checkpoint_can_be_retrieved_after_lost_commit_response(self):
         lease = self.acquire(nonce="dispatch-checkpoint-response-lost")
         created = self.model.create_recovery_checkpoint()
