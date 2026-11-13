@@ -303,7 +303,7 @@ class SQLiteApprovalConsumptionStore:
         finally:
             db.close()
         payload = {
-            "schema": "RhemaScript.ApprovalStateCheckpoint.v1",
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v2",
             "consumed": [list(row) for row in consumed],
             "revoked": [list(row) for row in revoked],
         }
@@ -317,7 +317,7 @@ class SQLiteApprovalConsumptionStore:
             raise ValueError("checkpoint key must contain at least 32 bytes")
         payload = self._snapshot_bytes()
         return {
-            "schema": "RhemaScript.ApprovalStateCheckpoint.v1",
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v2",
             "snapshot_sha256": hashlib.sha256(payload).hexdigest(),
             "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
         }
@@ -327,7 +327,7 @@ class SQLiteApprovalConsumptionStore:
             return False
         if set(checkpoint) != {"schema", "snapshot_sha256", "hmac_sha256"}:
             return False
-        if checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v1":
+        if checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v2":
             return False
         try:
             expected = self.checkpoint(key)
