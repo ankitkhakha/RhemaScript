@@ -10,7 +10,7 @@ class EvidencePackError(ValueError):
     pass
 
 REQUIRED_FIELDS = {"manifest_id", "schema_version", "project_record", "artifacts", "evidence_records", "source_to_final_links"}
-ARTIFACT_TYPES = {"BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM", "YOUTUBE_VIDEO_VERIFICATION"}
+ARTIFACT_TYPES = {"BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM", "YOUTUBE_VIDEO_VERIFICATION", "YOUTUBE_ANALYTICS_SNAPSHOT", "YOUTUBE_ANALYTICS_COMPARISON"}
 CHAIN_ORDER = ("BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM")
 APPROVED_STATUSES = {"APPROVED", "VERIFIED", "ACCEPTED"}
 
@@ -143,6 +143,36 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
         _required_string(artifact.get("status"), f"artifact {ident}.status")
         if artifact["artifact_type"] in {"APPROVED_SCRIPT", "APPROVED_NARRATION"} and artifact["status"] not in APPROVED_STATUSES:
             raise EvidencePackError(f"{ident} approval status is not evidenced")
+        if artifact_type in {"YOUTUBE_ANALYTICS_SNAPSHOT", "YOUTUBE_ANALYTICS_COMPARISON"}:
+            digest_field = (
+                "snapshot_sha256" if artifact_type == "YOUTUBE_ANALYTICS_SNAPSHOT"
+                else "comparison_sha256"
+            )
+            digest = artifact.get(digest_field)
+            if (not isinstance(digest, str) or len(digest) != 64
+                    or any(char not in "0123456789abcdef" for char in digest)):
+                raise EvidencePackError(
+                    f"artifact {ident}.{digest_field} must be a lowercase SHA-256 digest"
+                )
+        if artifact_type == "YOUTUBE_ANALYTICS_COMPARISON":
+            current_id = _required_string(
+                artifact.get("current_snapshot_artifact_id"),
+                f"artifact {ident}.current_snapshot_artifact_id",
+            )
+            previous_id = _required_string(
+                artifact.get("previous_snapshot_artifact_id"),
+                f"artifact {ident}.previous_snapshot_artifact_id",
+            )
+            if current_id == previous_id:
+                raise EvidencePackError(
+                    f"artifact {ident} must bind two distinct period snapshots"
+                )
+            for source_id in (current_id, previous_id):
+                source = artifacts.get(source_id)
+                if source is None or source.get("artifact_type") != "YOUTUBE_ANALYTICS_SNAPSHOT":
+                    raise EvidencePackError(
+                        f"artifact {ident} references a missing or non-snapshot Analytics source"
+                    )
         refs = artifact.get("evidence_refs", [])
         if not isinstance(refs, list) or any(not isinstance(x, str) or not x.strip() for x in refs):
             raise EvidencePackError(f"artifact {ident}.evidence_refs must be non-empty strings")
