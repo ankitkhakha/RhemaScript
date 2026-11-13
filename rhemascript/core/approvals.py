@@ -179,7 +179,7 @@ class ApprovalVerifier:
                     or token.get("artifact_sha256") != artifact_binding.get("sha256")
                     or token.get("artifact_size_bytes") != artifact_binding.get("size_bytes")):
                 raise ApprovalError("approval final-artifact binding does not match verified bytes")
-        elif schema == _SCHEMA_V2:
+        elif schema in {_SCHEMA_V2, _SCHEMA_V3}:
             raise ApprovalError("artifact-bound approval requires an exact artifact expectation")
         if schema in {_SCHEMA_V2, _SCHEMA_V3}:
             if (not isinstance(token.get("artifact_id"), str) or not _ID.fullmatch(token["artifact_id"])
