@@ -313,8 +313,15 @@ class YouTubeClient:
     def __init__(self, config: YouTubeConfig, *, transport=None,
                  gateway: ExternalIntegrationGateway | None = None,
                  project_id: str = "YOUTUBE-ACCOUNT",
-                 source_version: str = "1.0"):
+                 source_version: str = "1.0",
+                 test_mode: bool = False):
         config.validate()
+        if not isinstance(test_mode, bool):
+            raise YouTubeIntegrationError("test_mode must be an explicit boolean")
+        if transport is not None and not test_mode:
+            raise YouTubeIntegrationError(
+                "injected YouTube transports are test-only; set test_mode=True in isolated tests"
+            )
         if gateway is not None and transport is not None:
             raise YouTubeIntegrationError("choose gateway or test transport, not both")
         self.config = config
