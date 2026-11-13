@@ -141,6 +141,8 @@ def persist_analytics_evidence_artifact(
                 "comparison_sha256": payload["comparison_sha256"],
                 "current_snapshot_artifact_id": current_snapshot_artifact_id,
                 "previous_snapshot_artifact_id": previous_snapshot_artifact_id,
+                "current_snapshot_sha256": payload["current_snapshot_sha256"],
+                "previous_snapshot_sha256": payload["previous_snapshot_sha256"],
             }
         else:
             raise YouTubeAnalyticsArtifactStoreError("unsupported Analytics evidence type")
