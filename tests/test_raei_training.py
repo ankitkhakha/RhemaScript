@@ -33,9 +33,9 @@ class RAEITrainingTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def make_artifact(self, unit_id="CS-FOUND", *, attempt_id="ATT-1", score=4,
-                      critical_failures=None, assessor_role="RAEI_SELF"):
+                      critical_failures=None, assessor_role="RAEI_SELF", evidence_suffix=None):
         unit = next(item for item in build_registry() if item["id"] == unit_id)
-        evidence_id = f"EV-{attempt_id}"
+        evidence_id = f"EV-{attempt_id}" + (f"-{evidence_suffix}" if evidence_suffix else "")
         payload = {
             "schema": SCHEMA,
             "curriculum_version": CURRICULUM_VERSION,
@@ -51,7 +51,7 @@ class RAEITrainingTests(unittest.TestCase):
             "assessor_note": "Assessment generated from retained task evidence.",
             "created_at_utc": "2026-11-12T12:00:00+00:00",
         }
-        relative = f"{attempt_id}.json"
+        relative = f"{attempt_id}" + (f"-{evidence_suffix}" if evidence_suffix else "") + ".json"
         (self.root / relative).write_bytes(canonical_assessment_bytes(payload))
         evidence = verify_artifact(
             self.root, relative, evidence_id=evidence_id, version="v1"
@@ -186,7 +186,7 @@ class RAEITrainingTests(unittest.TestCase):
     def test_replay_with_changed_assessment_is_rejected(self):
         first, evidence1 = self.make_artifact(attempt_id="ATT-REPLAY", score=4)
         record_attempt(self.registry, first, evidence1, evidence_root=self.root)
-        changed, evidence2 = self.make_artifact(attempt_id="ATT-REPLAY", score=3)
+        changed, evidence2 = self.make_artifact(attempt_id="ATT-REPLAY", score=3, evidence_suffix="changed")
         with self.assertRaises(ReadinessReplayError):
             record_attempt(self.registry, changed, evidence2, evidence_root=self.root)
 
