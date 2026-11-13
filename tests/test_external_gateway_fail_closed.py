@@ -674,9 +674,21 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(response_headers["Range"], "bytes=0-9")
         self.assertEqual(transport.calls[0][1], "PUT")
         self.assertEqual([event["phase"] for event in events], ["REQUESTED", "COMPLETED"])
-        self.assertNotIn("secret", repr(events))
-        self.assertNotIn("opaque", repr(events))
-        self.assertNotIn("video bytes", repr(events))
+        first_fingerprint = events[0]["request_fingerprint"]
+        second_events = []
+        gateway.audit_sink = second_events.append
+        gateway.request(
+            "IF-18", "UPLOAD_CHUNK",
+            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=different-opaque-id",
+            method="PUT", headers={"Authorization": "Bearer secret"},
+            body=b"video bytes", request_id="request-4", project_id="project-1", source_version="1.0",
+            authority=self.publish_authority("request-4", project_id="project-1", source_version="1.0"),
+        )
+        self.assertNotEqual(first_fingerprint, second_events[0]["request_fingerprint"])
+        self.assertNotIn("secret", repr(events + second_events))
+        self.assertNotIn("opaque", repr(events + second_events))
+        self.assertNotIn("different-opaque-id", repr(events + second_events))
+        self.assertNotIn("video bytes", repr(events + second_events))
 
     def test_generic_post_invocation_requires_external_write_authority(self):
         transport = NeverTransport()
