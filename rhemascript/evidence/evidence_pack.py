@@ -167,11 +167,28 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
                 raise EvidencePackError(
                     f"artifact {ident} must bind two distinct period snapshots"
                 )
-            for source_id in (current_id, previous_id):
+            current_digest = artifact.get("current_snapshot_sha256")
+            previous_digest = artifact.get("previous_snapshot_sha256")
+            for field, digest in (
+                ("current_snapshot_sha256", current_digest),
+                ("previous_snapshot_sha256", previous_digest),
+            ):
+                if (not isinstance(digest, str) or len(digest) != 64
+                        or any(char not in "0123456789abcdef" for char in digest)):
+                    raise EvidencePackError(
+                        f"artifact {ident}.{field} must be a lowercase SHA-256 digest"
+                    )
+            for source_id, expected_digest in (
+                (current_id, current_digest), (previous_id, previous_digest)
+            ):
                 source = artifacts.get(source_id)
                 if source is None or source.get("artifact_type") != "YOUTUBE_ANALYTICS_SNAPSHOT":
                     raise EvidencePackError(
                         f"artifact {ident} references a missing or non-snapshot Analytics source"
+                    )
+                if source.get("snapshot_sha256") != expected_digest:
+                    raise EvidencePackError(
+                        f"artifact {ident} source snapshot digest does not match {source_id}"
                     )
         refs = artifact.get("evidence_refs", [])
         if not isinstance(refs, list) or any(not isinstance(x, str) or not x.strip() for x in refs):
