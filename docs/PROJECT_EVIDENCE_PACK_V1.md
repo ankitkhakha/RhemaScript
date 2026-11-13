@@ -70,6 +70,7 @@ The V1 artifact catalog now accepts `YOUTUBE_ANALYTICS_SNAPSHOT` and `YOUTUBE_AN
 - A snapshot artifact must carry its internal `snapshot_sha256`.
 - A comparison artifact must carry its `comparison_sha256`, the distinct artifact IDs of its current and previous snapshot sources, and both source snapshots' exact `snapshot_sha256` values.
 - Both source IDs must resolve to artifacts of type `YOUTUBE_ANALYTICS_SNAPSHOT` in the same project and project version, and the recorded source digests must match those artifact records.
+- The Analytics artifact store requires both exact source snapshot objects and recomputes the comparison from them before persistence; an internally rehashed comparison envelope alone is not sufficient to establish derivation.
 - The provenance graph must contain explicit `DERIVED_FROM` edges from both exact snapshot artifacts to the comparison artifact.
 - The normal evidence-pack provenance graph can link each source snapshot to its derived comparison.
 - When an analytics artifact is marked VERIFIED/APPROVED/ACCEPTED or is referenced by capability evidence, the existing byte-verification path additionally requires its `local_path` and file-byte `sha256`; the internal snapshot/comparison digest and the file-byte digest are separate identities.
