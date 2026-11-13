@@ -197,3 +197,8 @@ Additional synthetic tests force the event-history insert to fail during lease a
 ### Event-history high-water anti-rollback
 
 The recovery anchor now retains both the resource-generation high-water mark and the event-history sequence high-water mark. This matters because lifecycle events such as accepted-dispatch outcome transitions can advance the event chain without advancing a resource generation. A delayed or rolled-back checkpoint with an older event sequence is therefore rejected even when its resource generation equals the previously anchored generation. A regression test deletes a later event after anchoring while leaving the generation unchanged and confirms that a new checkpoint fails closed. The anchor remains a second local SQLite file and therefore does not protect against an attacker able to rewrite both local databases; production still requires an independently administered monotonic anchor and external audit evidence.
+
+
+### Strict checkpoint shape validation
+
+Checkpoint verification now rejects boolean values masquerading as integer schema/counter fields, zero or negative anchor sequences, negative generation/event high-water marks, and malformed or uppercase SHA-256 strings. This avoids Python's `bool`-is-an-`int` behavior from admitting malformed serialized checkpoint values. A regression test covers each rejected shape. This is input-contract hardening for the synthetic model, not an independent authenticity guarantee.
