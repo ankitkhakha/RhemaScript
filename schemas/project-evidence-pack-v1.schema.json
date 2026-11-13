@@ -53,12 +53,15 @@
             "then": {
               "required": [
                 "comparison_sha256", "current_snapshot_artifact_id",
-                "previous_snapshot_artifact_id"
+                "previous_snapshot_artifact_id", "current_snapshot_sha256",
+                "previous_snapshot_sha256"
               ],
               "properties": {
                 "comparison_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                 "current_snapshot_artifact_id": {"type": "string", "minLength": 1},
-                "previous_snapshot_artifact_id": {"type": "string", "minLength": 1}
+                "previous_snapshot_artifact_id": {"type": "string", "minLength": 1},
+                "current_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "previous_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
               }
             }
           },
