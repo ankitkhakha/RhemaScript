@@ -79,7 +79,7 @@ class SQLiteEncryptedSessionUrlVault:
             or parsed.password is not None
             or port not in (None, 443)
             or parsed.fragment
-            or parsed.path != "/upload/youtube/v3/videos"
+            or not (parsed.path == "/upload/youtube/v3/videos" or parsed.path.startswith("/upload/youtube/v3/videos/"))
         ):
             raise SessionUrlVaultError("provider session URL is outside the YouTube upload allowlist")
         return url.encode("utf-8")
