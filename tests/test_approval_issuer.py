@@ -300,7 +300,7 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ApprovalIssuerError, "subject separation"):
             issuer_two.request_approval(publish)
-        self.assertEqual(signer_two.calls, [(signer_two.active_key_id(), signer_two.calls[0][1])] if signer_two.calls else [])
+        self.assertEqual(len(signer_two.calls), 1)
         self.assertEqual(len(ledger.entries), 1)
         self.assertEqual(audit_two.events[-1]["event"], "approval_denied")
 
