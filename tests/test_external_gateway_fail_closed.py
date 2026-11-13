@@ -1,6 +1,12 @@
 import unittest
 import threading
+import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from rhemascript.core.approvals import ApprovalVerifier
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
@@ -36,6 +42,89 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "payload": {},
             "source_version": "1.0",
         }
+
+
+    def publish_authority(self, request_id, project_id="RS-1", source_version="1.0", identity_overrides=None, verification_time=None):
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        now = verification_time or datetime.now(timezone.utc)
+        binding = {
+            "artifact_id": "ART-FINAL-001",
+            "artifact_version": "1",
+            "sha256": "a" * 64,
+            "size_bytes": 123456,
+        }
+        credentials = []
+        for action, actor, suffix in (
+            ("FINAL_ACCEPTANCE", "director-001", "final"),
+            ("PUBLISH", "publisher-001", "publish"),
+        ):
+            payload = {
+                "schema": "RhemaScript.ApprovalCredential.v3",
+                "approval_id": f"approval-{suffix}-{request_id}",
+                "issuer": "RhemaScript-Approval-Service",
+                "actor_id": actor,
+                "action": action,
+                "project_id": project_id,
+                "project_version": source_version,
+                "request_id": request_id,
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=10)).isoformat(),
+                "nonce": f"nonce-{suffix}-{request_id}",
+                "key_id": "key-2026-01",
+                "artifact_id": binding["artifact_id"],
+                "artifact_version": binding["artifact_version"],
+                "artifact_sha256": binding["sha256"],
+                "artifact_size_bytes": binding["size_bytes"],
+                "subject_id": "subject-" + actor,
+                "actor_role": "director" if action == "FINAL_ACCEPTANCE" else "publisher",
+                "authn_context": "mfa",
+                "authenticated_at": now.isoformat(),
+                "identity_session_id": "session-" + actor,
+                "identity_policy_version": "identity-policy-v1",
+                "identity_provider_id": "test-idp",
+            }
+            payload.update((identity_overrides or {}).get(action, {}))
+            payload["signature"] = private_key.sign(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode()
+            ).hex()
+            credentials.append(payload)
+        class SyntheticSnapshotConsumptionStore:
+            """In-memory test double; never a production consumption ledger."""
+            def __init__(self):
+                self.entries = set()
+
+            def consume_many_once(self, entries):
+                self.entries.update((item.approval_id, item.nonce) for item in entries)
+                return True
+
+            def read_consumption_state(self, approval_id, nonce):
+                return ((approval_id, nonce) in self.entries, False)
+
+        synthetic_store = SyntheticSnapshotConsumptionStore()
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=synthetic_store.consume_many_once,
+            clock=lambda: now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {
+                    "FINAL_ACCEPTANCE": ["director"],
+                    "PUBLISH": ["publisher"],
+                },
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
+        )
+        expectations = tuple({
+            "action": action, "project_id": project_id,
+            "project_version": source_version, "request_id": request_id,
+            "artifact_binding": binding,
+        } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
+        verified = verifier.verify_many_and_consume(tuple(credentials), expectations)
+        return {"verified_approvals": verified}
 
     def test_gateway_disabled_by_default_and_fails_before_transport(self):
         transport = NeverTransport()
@@ -94,6 +183,161 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_unclassified_mutating_operation_requires_external_write_authority(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"CUSTOM_MUTATION": {
+                    "method": "POST", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/custom/resource",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "signed operation authority",
+        ):
+            gateway.request(
+                "IF-18", "CUSTOM_MUTATION",
+                "https://www.googleapis.com/custom/resource",
+                method="POST", body=b"mutation", request_id="custom-write-001",
+                project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_unclassified_mutating_operation_rejects_forged_boolean_authority(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"CUSTOM_MUTATION": {
+                    "method": "POST", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/custom/resource",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "signed operation authority",
+        ):
+            gateway.request(
+                "IF-18", "CUSTOM_MUTATION",
+                "https://www.googleapis.com/custom/resource",
+                method="POST", body=b"mutation", request_id="custom-write-002",
+                project_id="RS-1", source_version="1.0",
+                authority={"external_action_authorisation": True},
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_named_generic_consequential_operations_reject_boolean_authority(self):
+        for operation, authority_key in (
+            ("GENERATE", "generation_authorisation"),
+            ("SPEND", "spending_authorisation"),
+            ("EXTERNAL_WRITE", "external_action_authorisation"),
+        ):
+            with self.subTest(operation=operation):
+                transport = NeverTransport()
+                gateway = ExternalIntegrationGateway(
+                    (ProviderBinding(
+                        interface_id="IF-18", provider_name="youtube",
+                        endpoint="https://www.googleapis.com",
+                        allowed_hosts=("www.googleapis.com",),
+                        operations={operation: {
+                            "method": "POST", "hosts": ("www.googleapis.com",),
+                            "path_prefix": "/custom/resource",
+                        }},
+                    ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+                )
+                with self.assertRaisesRegex(
+                    ExternalIntegrationError, "signed operation authority",
+                ):
+                    gateway.request(
+                        "IF-18", operation, "https://www.googleapis.com/custom/resource",
+                        method="POST", body=b"mutation", request_id=f"generic-{operation.lower()}",
+                        project_id="RS-1", source_version="1.0",
+                        authority={authority_key: True},
+                    )
+                self.assertEqual(transport.calls, [])
+
+    def test_oauth_token_exception_rejects_non_google_token_endpoint(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"OAUTH_TOKEN": {
+                    "method": "POST", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/custom/token",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "exact Google token endpoint",
+        ):
+            gateway.request(
+                "IF-18", "OAUTH_TOKEN", "https://www.googleapis.com/custom/token",
+                method="POST", body=b"grant_type=refresh_token",
+                request_id="oauth-alias-001", project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_oauth_token_exception_rejects_token_path_suffix(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://oauth2.googleapis.com",
+                allowed_hosts=("oauth2.googleapis.com",),
+                operations={"OAUTH_TOKEN": {
+                    "method": "POST", "hosts": ("oauth2.googleapis.com",),
+                    "path_prefix": "/token",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "exact Google token endpoint",
+        ):
+            gateway.request(
+                "IF-18", "OAUTH_TOKEN", "https://oauth2.googleapis.com/token/extra",
+                method="POST", body=b"grant_type=refresh_token",
+                request_id="oauth-suffix-001", project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_oauth_token_exception_rejects_query_and_fragment(self):
+        for suffix, expected_error in (
+            ("?redirect_uri=https://attacker.example", "exact Google token endpoint"),
+            ("#fragment", "outside the provider operation allowlist"),
+        ):
+            with self.subTest(suffix=suffix):
+                transport = NeverTransport()
+                gateway = ExternalIntegrationGateway(
+                    (ProviderBinding(
+                        interface_id="IF-18", provider_name="youtube",
+                        endpoint="https://oauth2.googleapis.com",
+                        allowed_hosts=("oauth2.googleapis.com",),
+                        operations={"OAUTH_TOKEN": {
+                            "method": "POST", "hosts": ("oauth2.googleapis.com",),
+                            "path_prefix": "/token",
+                        }},
+                    ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+                )
+                with self.assertRaisesRegex(
+                    ExternalIntegrationError, expected_error,
+                ):
+                    gateway.request(
+                        "IF-18", "OAUTH_TOKEN",
+                        "https://oauth2.googleapis.com/token" + suffix,
+                        method="POST", body=b"grant_type=refresh_token",
+                        request_id="oauth-extra-component", project_id="RS-1",
+                        source_version="1.0",
+                    )
+                self.assertEqual(transport.calls, [])
+
     def test_method_aware_request_rejects_path_prefix_sibling(self):
         class MethodTransport:
             def __init__(self):
@@ -149,11 +393,140 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "body": b"chunk", "request_id": "upload-1", "project_id": "RS-1",
             "source_version": "1.0",
         }
-        with self.assertRaisesRegex(ExternalIntegrationError, "explicit authority"):
+        with self.assertRaisesRegex(ExternalIntegrationError, "verifier-issued signed approvals"):
             gateway.request(
                 "IF-18", "UPLOAD_CHUNK",
                 "https://www.googleapis.com/upload/youtube/v3/videos/session",
                 **args,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_provider_write_revalidates_approvals_immediately_before_transport(self):
+        from rhemascript.core.approvals import ApprovalError
+
+        class MethodNeverTransport:
+            def __init__(self):
+                self.calls = []
+
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, headers, body))
+                return 200, b"{}", {}
+
+        transport = MethodNeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        authority = self.publish_authority("publish-key-recheck")
+        with patch(
+            "rhemascript.core.approvals.revalidate_consumed_verified_approval",
+            side_effect=ApprovalError("synthetic key revocation"),
+        ):
+            with self.assertRaisesRegex(
+                ExternalIntegrationError, "changed before transport",
+            ):
+                gateway.request(
+                    "IF-18", "UPLOAD_CHUNK",
+                    "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                    method="PUT", body=b"chunk", request_id="publish-key-recheck",
+                    project_id="RS-1", source_version="1.0", authority=authority,
+                )
+        self.assertEqual(transport.calls, [])
+
+    def test_provider_write_rejects_same_underlying_subject_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        authority = self.publish_authority(
+            "same-subject",
+            identity_overrides={
+                "FINAL_ACCEPTANCE": {"subject_id": "same-human-subject-0001"},
+                "PUBLISH": {"subject_id": "same-human-subject-0001"},
+            },
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "actor separation"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="same-subject", project_id="RS-1",
+                source_version="1.0", authority=authority,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_provider_write_rejects_shared_identity_session_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        authority = self.publish_authority(
+            "shared-session",
+            identity_overrides={
+                "FINAL_ACCEPTANCE": {"identity_session_id": "shared-session-0001"},
+                "PUBLISH": {"identity_session_id": "shared-session-0001"},
+            },
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "actor separation"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="shared-session", project_id="RS-1",
+                source_version="1.0", authority=authority,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_provider_write_rechecks_authentication_freshness_at_use_time(self):
+        from datetime import datetime, timedelta, timezone
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        verified_at = datetime.now(timezone.utc) - timedelta(minutes=6)
+        authority = self.publish_authority("stale-at-write", verification_time=verified_at)
+        with self.assertRaisesRegex(ExternalIntegrationError, "actor separation"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="stale-at-write", project_id="RS-1",
+                source_version="1.0", authority=authority,
             )
         self.assertEqual(transport.calls, [])
 
@@ -185,7 +558,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 method="PUT", headers={"Authorization": "Bearer test"},
                 body=b"chunk", request_id="upload-2", project_id="RS-1",
                 source_version="1.0",
-                authority={"publishing_authorisation": True},
+                authority=self.publish_authority("upload-2"),
             )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
@@ -218,10 +591,34 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
                     method="POST", body=b"metadata", request_id="write-1",
                     project_id="RS-1", source_version="1.0",
-                    authority={"publishing_authorisation": True},
+                    authority=self.publish_authority("write-1"),
                 )
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
         self.assertNotIn("FAILED", [event["phase"] for event in events])
+
+    def test_thumbnail_write_is_blocked_at_gateway_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18",
+            provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"THUMBNAIL_WRITE": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/thumbnails/set",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
+            gateway.request(
+                "IF-18", "THUMBNAIL_WRITE",
+                "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=video-123",
+                method="POST", body=b"thumbnail", request_id="thumb-request-1",
+                project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
 
     def test_write_completion_audit_failure_is_indeterminate(self):
         class SuccessTransport:
@@ -253,7 +650,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
                     method="POST", body=b"metadata", request_id="write-2",
                     project_id="RS-1", source_version="1.0",
-                    authority={"publishing_authorisation": True},
+                    authority=self.publish_authority("write-2"),
                 )
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
 
@@ -282,17 +679,42 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "IF-18", "UPLOAD_CHUNK",
             "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
             method="PUT", headers={"Authorization": "Bearer secret"},
-            body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
-            authority={"publishing_authorisation": True},
+            body=b"video bytes", request_id="request-3", project_id="project-1", source_version="1.0",
+            authority=self.publish_authority("request-3", project_id="project-1", source_version="1.0"),
         )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
         self.assertEqual(response_headers["Range"], "bytes=0-9")
         self.assertEqual(transport.calls[0][1], "PUT")
         self.assertEqual([event["phase"] for event in events], ["REQUESTED", "COMPLETED"])
-        self.assertNotIn("secret", repr(events))
-        self.assertNotIn("opaque", repr(events))
-        self.assertNotIn("video bytes", repr(events))
+        first_fingerprint = events[0]["request_fingerprint"]
+        second_events = []
+        gateway.audit_sink = second_events.append
+        gateway.request(
+            "IF-18", "UPLOAD_CHUNK",
+            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=different-opaque-id",
+            method="PUT", headers={"Authorization": "Bearer secret"},
+            body=b"video bytes", request_id="request-4", project_id="project-1", source_version="1.0",
+            authority=self.publish_authority("request-4", project_id="project-1", source_version="1.0"),
+        )
+        self.assertNotEqual(first_fingerprint, second_events[0]["request_fingerprint"])
+        third_events = []
+        gateway.audit_sink = third_events.append
+        gateway.request(
+            "IF-18", "UPLOAD_CHUNK",
+            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
+            method="PUT", headers={
+                "Authorization": "Bearer secret",
+                "Content-Range": "bytes 10-19/100",
+            },
+            body=b"video bytes", request_id="request-5", project_id="project-1", source_version="1.0",
+            authority=self.publish_authority("request-5", project_id="project-1", source_version="1.0"),
+        )
+        self.assertNotEqual(first_fingerprint, third_events[0]["request_fingerprint"])
+        self.assertNotIn("secret", repr(events + second_events + third_events))
+        self.assertNotIn("opaque", repr(events + second_events + third_events))
+        self.assertNotIn("different-opaque-id", repr(events + second_events + third_events))
+        self.assertNotIn("video bytes", repr(events + second_events + third_events))
 
     def test_generic_post_invocation_requires_external_write_authority(self):
         transport = NeverTransport()
@@ -300,20 +722,25 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             (self.binding(),), transport=transport,
             audit_sink=lambda event: None, enabled=True,
         )
-        with self.assertRaisesRegex(ExternalIntegrationError, "external-write authority"):
+        with self.assertRaisesRegex(ExternalIntegrationError, "legacy generic POST invocation is disabled"):
             gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
-    def test_generic_post_invocation_requires_explicit_authority_before_transport(self):
+    def test_generic_post_invocation_rejects_boolean_authority_before_transport(self):
         transport = NeverTransport()
         gateway = ExternalIntegrationGateway(
             (self.binding(),), transport=transport,
             audit_sink=lambda event: None, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            result = gateway.invoke("IF-01", self.request())
-        self.assertEqual(result["status"], "PROVIDER_CONFIRMED")
-        self.assertEqual(len(transport.calls), 1)
+            with self.assertRaisesRegex(
+                ExternalIntegrationError, "legacy generic POST invocation is disabled",
+            ):
+                gateway.invoke(
+                    "IF-01", self.request(),
+                    authority={"external_action_authorisation": True},
+                )
+        self.assertEqual(transport.calls, [])
 
     def test_generic_operation_path_rejects_traversal_before_transport(self):
         transport = NeverTransport()
@@ -328,7 +755,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             audit_sink=lambda event: None, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+            with self.assertRaisesRegex(ExternalIntegrationError, "legacy generic POST invocation is disabled"):
                 gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
@@ -345,55 +772,26 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             audit_sink=lambda event: None, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+            with self.assertRaisesRegex(ExternalIntegrationError, "legacy generic POST invocation is disabled"):
                 gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
 
-    def test_concurrent_duplicate_invocations_share_one_provider_post(self):
-        entered = threading.Event()
-        release = threading.Event()
-        class BlockingTransport:
-            def __init__(self):
-                self.calls = 0
-            def send(self, url, headers, body, timeout):
-                self.calls += 1
-                entered.set()
-                if not release.wait(3):
-                    raise RuntimeError("test transport timed out")
-                return 200, b'{"ok":true}'
-
-        transport = BlockingTransport()
+    def test_legacy_generic_invocation_fails_closed_before_transport(self):
+        transport = NeverTransport()
         gateway = ExternalIntegrationGateway(
             (self.binding(),), transport=transport,
             audit_sink=lambda event: None, enabled=True,
         )
-        results, errors = [], []
-        def invoke():
-            try:
-                results.append(gateway.invoke(
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(
+                ExternalIntegrationError, "legacy generic POST invocation is disabled",
+            ):
+                gateway.invoke(
                     "IF-01", self.request(),
                     authority={"external_action_authorisation": True},
-                ))
-            except Exception as exc:
-                errors.append(exc)
-
-        with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            first = threading.Thread(target=invoke)
-            second = threading.Thread(target=invoke)
-            first.start()
-            self.assertTrue(entered.wait(2))
-            second.start()
-            release.set()
-            first.join(3)
-            second.join(3)
-        self.assertFalse(first.is_alive())
-        self.assertFalse(second.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual(transport.calls, 1)
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0], results[1])
-
+                )
+        self.assertEqual(transport.calls, [])
 
 if __name__ == "__main__":
     unittest.main()

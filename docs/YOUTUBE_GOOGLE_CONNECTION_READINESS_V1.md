@@ -181,3 +181,29 @@ Stop and request owner review if:
 - Any Evidence Pack, gate, final-film approval, human acceptance or publishing authority check fails.
 
 Never solve a stop condition by logging secrets, bypassing the gateway, disabling audit, skipping project gates or weakening publishing authority.
+
+
+## OAuth consent testing lifecycle and reauthorization trigger — 13 November 2026
+
+### Recovered Google Cloud configuration evidence
+- The Google Auth Platform Audience screenshot dated 12 November 2026 shows **User type: External**, **Publishing status: Testing**, and one configured test user.
+- The Data Access screenshot dated 12 November 2026 shows the YouTube Data API v3 `youtube.readonly` scope as the requested sensitive scope. No upload or YouTube Analytics scope is included in this read-only grant.
+- The owner subsequently reported that the read-only OAuth flow, offline preflight and expected channel-ID verification were completed on 12 November. The credential file and refresh-token issuance timestamp are local to the owner and are not present in Git or available for inspection here; this record is therefore user-reported/documented completion, not a fresh live verification by this workspace.
+
+### Seven-day refresh-token expiry
+Google's current OAuth 2.0 documentation states that a Google Cloud project with an OAuth consent screen configured as **External** and **Testing** receives refresh tokens that expire after **7 days**, unless the requested scopes are only a subset of the basic identity scopes `userinfo.email`, `userinfo.profile` and `openid`. The YouTube `youtube.readonly` scope is not in that exception. Google also documents a limit of 100 refresh tokens per Google Account per OAuth client ID.
+
+Official references checked 13 November 2026:
+- https://developers.google.com/identity/protocols/oauth2#expiration
+- https://developers.google.com/youtube/data/guides/authentication
+
+**Operational consequence:** if the successful refresh token was issued on 12 November 2026 under the captured External/Testing configuration, expect it to expire around **19 November 2026** (exact time depends on the actual issuance timestamp). On 13 November, reauthorization is **not yet required** if the existing token still refreshes successfully. Run the read-only connection check locally before relying on it near expiry; reauthorize only when the token has expired or Google returns `invalid_grant`.
+
+### Safe failure interpretation
+The read-only connection command now classifies token-endpoint errors without storing raw response bodies:
+- `invalid_grant` → `AUTHORIZATION_REQUIRED` (exit 3): after checking that the Desktop client configuration still matches, repeat the owner-operated read-only OAuth flow.
+- `invalid_client` → `CLIENT_CONFIGURATION_ERROR` (exit 2): fix the Desktop OAuth client ID/secret configuration; repeating consent alone is not the remedy.
+- `invalid_scope`, `unauthorized_client`, `invalid_request` → `OAUTH_CONFIGURATION_ERROR` (exit 2): correct the client/scope/request configuration.
+- Other failures remain generic and are recorded without raw token endpoint descriptions.
+
+Do not repeatedly create refresh tokens. Keep the existing owner-only credential file protected. Moving the consent screen to Production may remove the seven-day Testing limitation, but the sensitive YouTube scope requires the applicable branding and Google verification work. Changing the app's publishing status or user type is a separate owner decision; no such change is performed by this integration.

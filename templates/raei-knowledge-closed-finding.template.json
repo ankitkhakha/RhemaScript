@@ -1,0 +1,65 @@
+{
+  "schema": "raei-knowledge-item-v1",
+  "knowledge_id": "RS-KNOW-REPLACE",
+  "version": "1.0",
+  "title": "Concise reusable lesson title",
+  "domain": "RhemaScript workflow/domain",
+  "source_type": "RAEI_CLOSED_FINDING",
+  "authority_level": "UNVERIFIED",
+  "source_name": "RhemaScript RAEI closed finding",
+  "source_version": "1.0",
+  "source_reference": "finding:RS-FND-REPLACE@1.0",
+  "summary": "State the bounded lesson and its evidence-backed result.",
+  "claims": [
+    "A narrowly scoped claim supported by the closed finding."
+  ],
+  "limitations": [
+    "State what the evidence does not establish."
+  ],
+  "tags": [
+    "raei",
+    "learning"
+  ],
+  "evidence_id": "EV-KNOW-REPLACE",
+  "evidence_version": "1.0",
+  "status": "PENDING_REVIEW",
+  "source_authentication_status": "NOT_CHECKED",
+  "claim_relevance_status": "NOT_ASSESSED",
+  "created_at_utc": "2026-11-13T00:00:00+00:00",
+  "supersedes": [],
+  "source_finding_id": "RS-FND-REPLACE",
+  "source_finding_version": "1.0",
+  "source_lifecycle_lineage": {
+    "plan_event_id": "FINDING_PLANNED:RS-FND-REPLACE@1.0:request",
+    "implementation_event_id": "FINDING_IMPLEMENTED:RS-FND-REPLACE@1.0:request",
+    "effectiveness_event_id": "FINDING_EFFECTIVENESS_ASSESSED:RS-FND-REPLACE@1.0:request",
+    "closure_event_id": "FINDING_CLOSED:RS-FND-REPLACE@1.0:request",
+    "plan_evidence_binding": {
+      "evidence_id": "EV-PLAN",
+      "evidence_version": "1.0",
+      "sha256": "REPLACE_WITH_SHA256",
+      "size_bytes": 0
+    },
+    "implementation_evidence_binding": {
+      "evidence_id": "EV-IMPLEMENTATION",
+      "evidence_version": "1.0",
+      "sha256": "REPLACE_WITH_SHA256",
+      "size_bytes": 0
+    },
+    "effectiveness_evidence_binding": {
+      "evidence_id": "EV-EFFECTIVENESS",
+      "evidence_version": "1.0",
+      "sha256": "REPLACE_WITH_SHA256",
+      "size_bytes": 0
+    }
+  },
+  "learning_scope": "State where the lesson applies.",
+  "applicability_conditions": [
+    "Conditions that must hold before reuse."
+  ],
+  "confidence_level": "Proposed; pending independent knowledge review.",
+  "known_counterexamples": [
+    "Known counterexamples or exceptions, if any."
+  ],
+  "review_due_utc": "2026-12-13T00:00:00+00:00"
+}

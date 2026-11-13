@@ -43,7 +43,7 @@ A mismatch or failed check is recorded as FAILED and the command exits non-zero.
 - The connection command's gateway is explicitly enabled only for this read-only operation. The owner has separately approved enabling publishing capability in RhemaScript; this read-only command does not exercise or confer project-level publishing authority. Each project remains subject to its Evidence Pack, six approved gates, final-film evidence, human director acceptance, and explicit project-level publishing authorization.
 - No upload, metadata mutation, thumbnail change, scheduling, or publication is enabled or authorized by a successful connection check.
 - No credential values are to be pasted into ChatGPT, issue comments, source files, CI logs, or audit records.
-- This command is a connection diagnostic, not deployment or OAuth consent setup. The owner-operated read-only connection and expected channel-ID match have been completed; re-run the command locally after credential rotation or a change to the authorised Google account.
+- This command is a connection diagnostic, not deployment or OAuth consent setup. The owner reported that the read-only connection and expected channel-ID match were completed on 12-Nov-2026; the local credential is not stored in Git and was not independently re-read by this workspace. Re-run locally after credential rotation, account changes, token expiry or a refresh failure. The captured External/Testing consent configuration implies a seven-day refresh-token lifetime for the YouTube read-only scope; see the OAuth lifecycle addendum in YOUTUBE_GOOGLE_CONNECTION_READINESS_V1.md.
 
 ## Repeatable validation harness
 
@@ -60,3 +60,23 @@ The harness is synthetic-only: it does not load the operator's credential file a
 ## Validation
 
 The added synthetic tests cover successful identity match, identity mismatch, missing credential file, timestamped audit output, secret/channel redaction, and the exact two-operation IF-18 allowlist. CI results must be inspected before treating the implementation as validated.
+
+
+## Reauthorization diagnostics
+
+The command safely distinguishes Google token-endpoint failures:
+- `AUTHORIZATION_REQUIRED` / exit 3 for `invalid_grant`: the stored refresh token was rejected; verify the Desktop client configuration, then repeat the owner-operated read-only consent flow if the token is expired or revoked.
+- `CLIENT_CONFIGURATION_ERROR` / exit 2 for `invalid_client`: verify the matching Desktop client ID and secret. Do not repeat consent as the first remedy.
+- `OAUTH_CONFIGURATION_ERROR` / exit 2 for `invalid_scope`, `unauthorized_client` or `invalid_request`: correct the OAuth client or scope configuration.
+- Other failures return generic `FAILED` and keep response details redacted.
+
+For the captured External/Testing consent screen and `youtube.readonly` scope, Google documents seven-day refresh-token expiry. If the successful token was issued on 12-Nov-2026, plan to verify locally before approximately 19-Nov-2026. Do not create repeated refresh tokens unnecessarily; Google limits each Google Account to 100 refresh tokens per OAuth client ID.
+
+
+## Resumable upload indeterminate-write recovery
+
+The YouTube publishing client distinguishes a rejected request from a write whose outcome cannot be known because the transport failed after sending it. For upload-session creation (POST), a transport failure or provider 5xx raises `INDETERMINATE_WRITE`; the client does not automatically create another session. The operator must reconcile the provider-side upload state before authorizing any replacement attempt. The session-creation response may have been lost, so this code does not claim it can discover an unknown session URL.
+
+For a chunk write (PUT), the client uses the already-known session URL to issue the resumable protocol's status query (`Content-Range: bytes */<total>`) after an indeterminate outcome, with at most two reconciliation attempts per upload. It resumes only from the provider-acknowledged byte offset. If the query reports no accepted bytes, it may resend only the same unacknowledged range. If the provider reports an offset behind previously acknowledged bytes, an impossible range, an unavailable session, or another indeterminate response, the operation fails closed and does not start a replacement upload. A completed response is accepted only when it contains a video ID.
+
+These safeguards prevent blind replay of an ambiguous write; they do not provide an exactly-once guarantee across all provider failures. A session-creation ambiguity remains a manual reconciliation case. Synthetic tests simulate a lost chunk response after partial provider acceptance and a lost session-creation response. They do not contact Google or prove live provider behavior.

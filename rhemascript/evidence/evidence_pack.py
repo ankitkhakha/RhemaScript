@@ -1,6 +1,7 @@
 """Validated project evidence packs. Evidence organisation only; no authority is granted."""
 from __future__ import annotations
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from rhemascript.orchestration.creative_production import CreativeProductionOrchestrator, OrchestrationResult
 from rhemascript.registry.system_registry import CAPABILITIES
@@ -24,6 +25,9 @@ class ValidatedEvidencePack:
     source_to_final_links: tuple[dict[str, str], ...]
     capability_evidence: dict[str, dict[str, Any]]
     gate_records: tuple[dict[str, Any], ...]
+    byte_verified_artifacts: tuple[Any, ...] = ()
+    source_resolution_receipts: tuple[Any, ...] = ()
+    evidence_integrity_mode: str = "STRUCTURAL_ONLY"
 
 def _required_string(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
@@ -67,7 +71,8 @@ def _validate_graph(artifacts: dict[str, dict[str, Any]], links: list[dict[str, 
         visited.add(node)
     for node in graph:
         visit(node)
-    films = [a for a in artifacts.values() if a["artifact_type"] == "EDITED_FILM"]
+    films = {ident for ident, artifact in artifacts.items()
+             if artifact["artifact_type"] == "EDITED_FILM"}
     if not films:
         return
     by_type = {}
@@ -76,20 +81,33 @@ def _validate_graph(artifacts: dict[str, dict[str, Any]], links: list[dict[str, 
     missing = [kind for kind in CHAIN_ORDER if not by_type.get(kind)]
     if missing:
         raise EvidencePackError("EDITED_FILM requires complete source-to-final chain; missing: " + ", ".join(missing))
-    def reaches(start, target):
-        pending, seen = [start], set()
+
+    # Validate one continuous, ordered path for every final film. Pairwise
+    # reachability across arbitrary artifacts is insufficient: disconnected
+    # branches must not be spliced together to fabricate a complete lineage.
+    complete_films = set()
+    for source_id in by_type["BIBLICAL_SOURCE"]:
+        pending = [(source_id, 0)]
+        visited_states = set()
         while pending:
-            current = pending.pop()
-            if current == target:
-                return True
-            if current in seen:
+            current, stage_index = pending.pop()
+            state = (current, stage_index)
+            if state in visited_states:
                 continue
-            seen.add(current)
-            pending.extend(graph[current] - seen)
-        return False
-    for first, second in zip(CHAIN_ORDER, CHAIN_ORDER[1:]):
-        if not any(reaches(a, b) for a in by_type[first] for b in by_type[second]):
-            raise EvidencePackError(f"source-to-final chain is disconnected between {first} and {second}")
+            visited_states.add(state)
+            if stage_index == len(CHAIN_ORDER) - 1 and current in films:
+                complete_films.add(current)
+            for child in graph[current]:
+                child_type = artifacts[child]["artifact_type"]
+                next_stage = stage_index + 1
+                if next_stage < len(CHAIN_ORDER) and child_type == CHAIN_ORDER[next_stage]:
+                    pending.append((child, next_stage))
+                else:
+                    pending.append((child, stage_index))
+    for film_id in sorted(films - complete_films):
+        raise EvidencePackError(
+            f"EDITED_FILM {film_id} lacks a complete ordered source-to-final chain"
+        )
 
 def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
     if not isinstance(pack, dict):
@@ -160,8 +178,62 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
         tuple(artifacts.values()), tuple(evidence.values()), tuple(links_raw), cap_evidence, tuple(gates))
 
 def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_authorisation: bool = False,
-                      run_id: str | None = None, orchestrator: CreativeProductionOrchestrator | None = None):
+                      run_id: str | None = None, orchestrator: CreativeProductionOrchestrator | None = None,
+                      evidence_root: str | Path | None = None, local_source_resolver: Any | None = None):
+    """Assess a pack; evidence_root opts into mandatory byte verification.
+
+    Without evidence_root this is legacy structural/provenance validation only.
+    Status labels in that mode do not prove that local artifact bytes were checked.
+    """
     validated = validate_evidence_pack(pack)
+    versions = []
+    receipts = []
+    if evidence_root is not None:
+        from .evidence_pack_integrity import verify_pack_artifacts
+        versions.extend(verify_pack_artifacts(validated, evidence_root))
+    if local_source_resolver is not None:
+        from .local_source_resolver import LocalSourceResolver, LocalSourceResolutionError
+        if not isinstance(local_source_resolver, LocalSourceResolver):
+            raise EvidencePackError("local_source_resolver must be an approved LocalSourceResolver")
+        for artifact in validated.artifacts:
+            reference = artifact.get("local_source_reference")
+            if reference is None:
+                continue
+            try:
+                version, receipt = local_source_resolver.resolve(
+                    reference, project_id=validated.project_id,
+                    project_version=validated.project_version,
+                )
+            except LocalSourceResolutionError as exc:
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} local source reference could not be verified"
+                ) from exc
+            if version.evidence_id != artifact["artifact_id"] or version.version != artifact["version"]:
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} does not match the resolver's source identity/version"
+                )
+            declared_digest = artifact.get("sha256")
+            if not isinstance(declared_digest, str) or declared_digest.lower() != version.sha256:
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} SHA-256 does not match resolved local source"
+                )
+            versions.append(version)
+            receipts.append(receipt)
+    if versions or receipts:
+        # One artifact ID must never acquire conflicting byte identities through
+        # overlapping verification paths (evidence_root and local resolver).
+        unique_versions = {}
+        for version in versions:
+            previous = unique_versions.get(version.evidence_id)
+            if previous is not None and previous != version:
+                raise EvidencePackError(
+                    f"artifact {version.evidence_id} has conflicting byte-verification identities"
+                )
+            unique_versions[version.evidence_id] = version
+        from dataclasses import replace
+        validated = replace(validated, byte_verified_artifacts=tuple(unique_versions.values()),
+                            source_resolution_receipts=tuple(receipts),
+                            evidence_integrity_mode="BYTE_VERIFIED")
     result = (orchestrator or CreativeProductionOrchestrator()).run(
         validated.project_record, capability_evidence=validated.capability_evidence,
         actor_role=actor_role, gate_records=list(validated.gate_records),

@@ -1,0 +1,26 @@
+{
+  "schema": "raei-finding-plan-v1",
+  "finding_id": "RS-FND-REPLACE",
+  "finding_version": "1.0",
+  "plan_objective": "State the outcome the approved plan is intended to achieve.",
+  "scope": "Define what is in scope and explicitly out of scope.",
+  "tasks": [
+    "Task 1 — include owner, dependency and expected output."
+  ],
+  "milestones": [
+    "Milestone 1 — include completion evidence."
+  ],
+  "acceptance_criteria": [
+    "Measurable criterion that will be verified after implementation."
+  ],
+  "dependencies": [
+    "List required approvals, evidence or technical dependencies."
+  ],
+  "risks": [
+    "List delivery, security, operational and rollback risks."
+  ],
+  "rollback_plan": "Describe how to reverse or contain the change if acceptance criteria fail.",
+  "evidence_id": "EV-FND-PLAN-REPLACE",
+  "evidence_version": "1.0",
+  "created_at_utc": "2026-11-13T00:00:00+00:00"
+}

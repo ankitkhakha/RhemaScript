@@ -1,7 +1,7 @@
 """Zero-cost, opt-in YouTube integration using Google's official APIs.
 
 Credentials are injected through environment variables and never persisted here.
-All consequential writes are fail-closed behind explicit publishing_authorisation.
+All consequential writes require two scoped, externally signed approvals.
 No external request is made at import time.
 """
 from __future__ import annotations
@@ -13,9 +13,12 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+import hashlib
 import json
 import os
 import re
+import stat
+import tempfile
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
@@ -38,6 +41,10 @@ REQUIRED_SCOPES = (
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
 
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
 
 class _NoRedirect(HTTPRedirectHandler):
     """Reject redirects so credentials and media never follow an untrusted hop."""
@@ -46,19 +53,72 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 
-def _authorise_project_publish(*, evidence_pack: dict[str, Any],
-                               final_film_evidence_ref: str,
-                               human_director_acceptance: bool,
-                               publishing_authorisation: bool) -> tuple[str, str]:
-    """Validate the canonical evidence pack before permitting any YouTube write."""
-    from rhemascript.evidence import validate_evidence_pack, EvidencePackError
-    from rhemascript.core.authority import (
-        authorise_action, final_acceptance_allowed, AuthorityError,
-    )
-    from rhemascript.core.gates import (
-        GateDecision, GateError, GateRecord, ProjectGateState,
-    )
+def _verified_video_stream(path: str | Path, binding: dict[str, Any]):
+    """Copy the exact approved video bytes into a private spool before any provider request."""
+    if not isinstance(binding, dict):
+        raise YouTubeIntegrationError("final-film artifact binding is required")
+    expected_digest = binding.get("sha256")
+    expected_size = binding.get("size_bytes")
+    if (not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+            or not isinstance(expected_size, int) or isinstance(expected_size, bool) or expected_size <= 0):
+        raise YouTubeIntegrationError("final-film byte binding is invalid")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
+        source_fd = os.open(path, flags)
+    except OSError:
+        raise YouTubeIntegrationError("video file is missing or cannot be opened safely") from None
+    spool = tempfile.TemporaryFile(mode="w+b")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(source_fd, "rb", closefd=True) as source:
+            before = os.fstat(source.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise YouTubeIntegrationError("video upload source must be a regular file")
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                spool.write(chunk)
+                size += len(chunk)
+            after = os.fstat(source.fileno())
+            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+            ):
+                raise YouTubeIntegrationError("video file changed while preparing the approved upload")
+        if size != expected_size or digest.hexdigest() != expected_digest:
+            raise YouTubeIntegrationError("upload bytes do not match the signed final-film artifact digest")
+        spool.seek(0)
+        return spool
+    except Exception:
+        spool.close()
+        raise
+
+
+def _authorise_project_publish(
+    *, evidence_pack: dict[str, Any], final_film_evidence_ref: str,
+    evidence_root: str,
+    approval_verifier: Any, approval_credentials: tuple[object, ...],
+    approval_request_id: str,
+    upload_file_path: str | None = None,
+) -> tuple[str, str, tuple[Any, ...], str, dict[str, Any], Any | None]:
+    """Byte-verify the final film, then consume approvals signed for its exact digest."""
+    from rhemascript.evidence import validate_evidence_pack, EvidencePackError
+    from rhemascript.evidence.evidence_pack_integrity import (
+        verify_pack_artifacts, EvidencePackIntegrityError,
+    )
+    from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
+    from rhemascript.core.gates import GateDecision, GateError, GateRecord, ProjectGateState
+
+    upload_stream = None
+    try:
+        if not isinstance(approval_verifier, ApprovalVerifier):
+            raise ApprovalError("trusted ApprovalVerifier is required")
+        if not isinstance(approval_request_id, str) or not approval_request_id.strip():
+            raise ApprovalError("exact approval_request_id is required")
+        if not isinstance(evidence_root, str) or not evidence_root.strip():
+            raise EvidencePackError("evidence_root is required for byte-verified publication")
         validated = validate_evidence_pack(evidence_pack)
         films = [
             item for item in validated.artifacts
@@ -70,9 +130,22 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             )
         ]
         if len(films) != 1:
-            raise EvidencePackError(
-                "final film must resolve to exactly one approved EDITED_FILM artifact"
-            )
+            raise EvidencePackError("final film must resolve to exactly one approved EDITED_FILM artifact")
+        film = films[0]
+        byte_verified = verify_pack_artifacts(validated, evidence_root)
+        verified_film = [
+            item for item in byte_verified
+            if item.evidence_id == film["artifact_id"] and item.version == film["version"]
+        ]
+        if len(verified_film) != 1:
+            raise EvidencePackIntegrityError("final film is not byte-verified in the supplied evidence root")
+        verified = verified_film[0]
+        artifact_binding = {
+            "artifact_id": verified.evidence_id,
+            "artifact_version": verified.version,
+            "sha256": verified.sha256,
+            "size_bytes": verified.size_bytes,
+        }
         state = ProjectGateState(validated.project_id)
         for raw in validated.gate_records:
             if not isinstance(raw, dict):
@@ -88,19 +161,25 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             raise GateError("all six project gates must be approved")
         if state.records[-1].evidence_ref != final_film_evidence_ref:
             raise GateError("final gate evidence reference does not match the approved final film")
-        if not final_acceptance_allowed(
-            human_director_acceptance=human_director_acceptance
-        ):
-            raise AuthorityError("final human acceptance is absent")
-        authorise_action("PUBLISH", {
-            "publishing_authorisation": publishing_authorisation
-        })
-        return validated.project_id, validated.project_version
-    except (EvidencePackError, AuthorityError, GateError, ValueError, TypeError) as exc:
-        raise YouTubeIntegrationError(
-            f"operation denied by RhemaScript governance: {exc}"
-        ) from None
-
+        if upload_file_path is not None:
+            upload_stream = _verified_video_stream(upload_file_path, artifact_binding)
+        expected = tuple({
+            "action": action, "project_id": validated.project_id,
+            "project_version": validated.project_version, "request_id": approval_request_id,
+            "artifact_binding": artifact_binding,
+        } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
+        approvals = approval_verifier.verify_many_and_consume(
+            approval_credentials, expected, require_distinct_actors=True,
+        )
+        return validated.project_id, validated.project_version, approvals, approval_request_id, artifact_binding, upload_stream
+    except (EvidencePackError, EvidencePackIntegrityError, ApprovalError, GateError, ValueError, TypeError, OSError) as exc:
+        if upload_stream is not None:
+            upload_stream.close()
+        raise YouTubeIntegrationError(f"operation denied by RhemaScript governance: {exc}") from None
+    except Exception:
+        if upload_stream is not None:
+            upload_stream.close()
+        raise
 
 def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
     """Require a strict RFC3339 timestamp with offset and a future instant."""
@@ -243,10 +322,11 @@ class YouTubeClient:
         self._gateway = gateway
         self._gateway_project_id = project_id
         self._gateway_source_version = source_version
-        self._gateway_authority: dict[str, bool] = {}
+        self._gateway_authority: dict[str, Any] = {}
         self._access_token: str | None = None
         self._last_upload_context: dict[str, str] | None = None
         self._verified_upload_context: dict[str, str] | None = None
+        self._gateway_request_id: str | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -278,7 +358,8 @@ class YouTubeClient:
                     raise YouTubeIntegrationError("request has no approved IF-18 operation")
                 status, raw, response_headers = self._gateway.request(
                     YOUTUBE_INTERFACE_ID, operation, url, method=method,
-                    headers=headers or {}, body=body, request_id=str(uuid.uuid4()),
+                    headers=headers or {}, body=body,
+                    request_id=self._gateway_request_id or str(uuid.uuid4()),
                     project_id=self._gateway_project_id, source_version=self._gateway_source_version,
                     authority=self._gateway_authority,
                 )
@@ -290,13 +371,35 @@ class YouTubeClient:
                 raise YouTubeIntegrationError("transport returned an invalid response contract")
             if len(raw) > 8_000_000:
                 raise YouTubeIntegrationError("YouTube response exceeds the 8 MB safety limit")
+            if (status >= 500 and method.upper() in {"POST", "PUT"}
+                    and parsed.hostname in {"www.googleapis.com", "youtube.googleapis.com"}
+                    and parsed.path.startswith("/upload/youtube/v3/videos")):
+                raise YouTubeIntegrationError(
+                    "YouTube upload write outcome is indeterminate; reconcile the existing upload session before retrying.",
+                    code="INDETERMINATE_WRITE",
+                )
             return status, raw, response_headers
         except HTTPError as exc:
             raw = exc.read(8_000_001)
             if len(raw) > 8_000_000:
                 raise YouTubeIntegrationError("YouTube response exceeds the 8 MB safety limit") from None
+            if (method.upper() in {"POST", "PUT"}
+                    and parsed.hostname in {"www.googleapis.com", "youtube.googleapis.com"}
+                    and parsed.path.startswith("/upload/youtube/v3/videos")
+                    and exc.code >= 500):
+                raise YouTubeIntegrationError(
+                    "YouTube upload write outcome is indeterminate; reconcile the existing upload session before retrying.",
+                    code="INDETERMINATE_WRITE",
+                ) from None
             return exc.code, raw, dict(exc.headers.items())
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError):
+            if (method.upper() in {"POST", "PUT"}
+                    and parsed.hostname in {"www.googleapis.com", "youtube.googleapis.com"}
+                    and parsed.path.startswith("/upload/youtube/v3/videos")):
+                raise YouTubeIntegrationError(
+                    "YouTube upload write outcome is indeterminate; reconcile the existing upload session before retrying.",
+                    code="INDETERMINATE_WRITE",
+                ) from None
             raise YouTubeIntegrationError("YouTube network request failed") from None
 
     def _token(self) -> str:
@@ -313,6 +416,30 @@ class YouTubeClient:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if status != 200:
+            code = None
+            try:
+                error_payload = json.loads(raw)
+                candidate = error_payload.get("error") if isinstance(error_payload, dict) else None
+                if candidate in {"invalid_grant", "invalid_client", "unauthorized_client",
+                                 "invalid_scope", "invalid_request"}:
+                    code = candidate
+            except (ValueError, TypeError):
+                pass
+            if code == "invalid_grant":
+                raise YouTubeIntegrationError(
+                    "Google rejected the stored refresh token (invalid_grant); reauthorization may be required after verifying the OAuth client configuration.",
+                    code=code,
+                )
+            if code == "invalid_client":
+                raise YouTubeIntegrationError(
+                    "Google rejected the OAuth client configuration (invalid_client); verify the matching Desktop client ID and secret.",
+                    code=code,
+                )
+            if code in {"unauthorized_client", "invalid_scope", "invalid_request"}:
+                raise YouTubeIntegrationError(
+                    "Google rejected the OAuth request configuration; inspect the local client and scope settings.",
+                    code=code,
+                )
             raise YouTubeIntegrationError("Google OAuth token refresh failed")
         try:
             token = json.loads(raw)["access_token"]
@@ -401,28 +528,61 @@ class YouTubeClient:
             "read_only": True,
         }
 
+    def _query_upload_status(self, session_url: str, total: int) -> tuple[int, bytes]:
+        """Reconcile a resumable session after a transport-ambiguous chunk write."""
+        headers = {
+            "Authorization": f"Bearer {self._token()}",
+            "Content-Length": "0",
+            "Content-Range": f"bytes */{total}",
+        }
+        status, raw, response_headers = self._request(
+            session_url, method="PUT", body=b"", headers=headers,
+        )
+        if status == 308:
+            acknowledged = response_headers.get("Range") or response_headers.get("range")
+            if not acknowledged:
+                return 0, b""
+            try:
+                if not acknowledged.startswith("bytes=0-"):
+                    raise ValueError
+                offset = int(acknowledged.rsplit("-", 1)[1]) + 1
+            except (ValueError, TypeError):
+                raise YouTubeIntegrationError(
+                    "upload status reconciliation returned an invalid byte range"
+                ) from None
+            if offset < 0 or offset > total:
+                raise YouTubeIntegrationError(
+                    "upload status reconciliation returned an impossible byte range"
+                )
+            return offset, b""
+        if status in (200, 201):
+            return total, raw
+        if status in (404, 410):
+            raise YouTubeIntegrationError(
+                "resumable upload session is no longer available; publication outcome requires manual reconciliation",
+                code="UPLOAD_SESSION_UNAVAILABLE",
+            )
+        raise YouTubeIntegrationError(
+            "resumable upload status could not be reconciled; do not start a replacement upload",
+            code="INDETERMINATE_WRITE",
+        )
+
     def upload_video(self, file_path: str, *, title: str, description: str,
                      evidence_pack: dict[str, Any],
                      final_film_evidence_ref: str,
-                     human_director_acceptance: bool,
+                     evidence_root: str,
+                     approval_verifier: Any,
+                     approval_credentials: tuple[object, ...],
+                     approval_request_id: str,
                      tags: list[str] | None = None, category_id: str = "22",
                      privacy_status: str = "private", publish_at: str | None = None,
-                     made_for_kids: bool = False,
-                     publishing_authorisation: bool = False) -> dict[str, Any]:
-        """Resumable upload behind all six project gates and separate authorities.
+                     made_for_kids: bool = False) -> dict[str, Any]:
+        """Resumable upload behind six gates and two scoped signed approvals.
 
-        The caller must supply ordered, approved gate records for this project,
-        final-film evidence matching the last gate, final human acceptance, and
-        separate publishing authorisation. The safe default is private.
+        The credentials must be externally issued, independently authenticated,
+        project/version/request-bound, distinct-actor approvals. The safe default is private.
         """
-        project_id, project_version = _authorise_project_publish(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            human_director_acceptance=human_director_acceptance,
-            publishing_authorisation=publishing_authorisation,
-        )
-        # Resolve the exact final-film association before any provider request.
-        # Do not upload first and discover an invalid Evidence Pack afterwards.
+        # Resolve the evidence chain before approval consumption or provider access.
         from rhemascript.evidence import validate_evidence_pack
         try:
             validated_pack = validate_evidence_pack(evidence_pack)
@@ -437,14 +597,8 @@ class YouTubeClient:
         ]
         if len(final_films) != 1:
             raise YouTubeIntegrationError(
-                "upload requires one approved final-film artifact matching the evidence reference"
+                "upload requires one approved final film artifact matching the evidence reference"
             )
-        self._gateway_project_id = project_id
-        self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
-        path = Path(file_path)
-        if not path.is_file() or path.stat().st_size == 0:
-            raise YouTubeIntegrationError("video file is missing or empty")
         if not isinstance(title, str) or not title.strip() or len(title) > 100:
             raise YouTubeIntegrationError("title must contain 1 to 100 characters")
         if not isinstance(description, str) or len(description) > 5000:
@@ -457,40 +611,62 @@ class YouTubeClient:
             _validate_publish_at(publish_at)
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
-        if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
-            raise YouTubeIntegrationError("tags must be a list of strings")
+        if tags is not None:
+            if not isinstance(tags, list) or any(not isinstance(tag, str) or not tag.strip() for tag in tags):
+                raise YouTubeIntegrationError("tags must be a list of non-empty strings")
+            if sum(len(tag) for tag in tags) > 500:
+                raise YouTubeIntegrationError("combined tag length exceeds 500 characters")
+        if (not isinstance(category_id, (str, int)) or isinstance(category_id, bool)
+                or not str(category_id).isdigit()):
+            raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
-        metadata: dict[str, Any] = {
-            "snippet": {"title": title.strip(), "description": description,
-                        "categoryId": str(category_id), "tags": tags or []},
-            "status": {"privacyStatus": privacy_status, "selfDeclaredMadeForKids": made_for_kids},
-        }
-        if publish_at:
-            metadata["status"]["publishAt"] = publish_at
-        query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
-        headers = {
-            "Authorization": f"Bearer {self._token()}",
-            "Content-Type": "application/json; charset=UTF-8",
-            "X-Upload-Content-Type": "video/*",
-            "X-Upload-Content-Length": str(path.stat().st_size),
-        }
-        status, raw, response_headers = self._authorized_request(
-            f"{UPLOAD_BASE}?{query}", method="POST",
-            body=json.dumps(metadata).encode(), headers=headers,
+        project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
+            evidence_pack=evidence_pack,
+            final_film_evidence_ref=final_film_evidence_ref,
+            evidence_root=evidence_root,
+            upload_file_path=file_path,
+            approval_verifier=approval_verifier,
+            approval_credentials=approval_credentials,
+            approval_request_id=approval_request_id,
         )
-        location = response_headers.get("Location") or response_headers.get("location")
-        if status not in (200, 201) or not location:
-            raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
-        parsed = urlparse(location)
-        if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
-                or parsed.username or parsed.password or parsed.port not in (None, 443)
-                or parsed.fragment):
-            raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
+        with verified_video_stream as video:
+            self._gateway_project_id = project_id
+            self._gateway_source_version = project_version
+            self._gateway_authority = {"verified_approvals": verified_approvals}
+            self._gateway_request_id = request_id
+            self._gateway_artifact_binding = artifact_binding
 
-        total = path.stat().st_size
-        offset = 0
-        final_raw = b""
-        with path.open("rb") as video:
+            metadata: dict[str, Any] = {
+                "snippet": {"title": title.strip(), "description": description,
+                            "categoryId": str(category_id), "tags": tags or []},
+                "status": {"privacyStatus": privacy_status, "selfDeclaredMadeForKids": made_for_kids},
+            }
+            if publish_at:
+                metadata["status"]["publishAt"] = publish_at
+            query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
+            headers = {
+                "Authorization": f"Bearer {self._token()}",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-Upload-Content-Type": "video/*",
+                "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
+            }
+            status, raw, response_headers = self._authorized_request(
+                f"{UPLOAD_BASE}?{query}", method="POST",
+                body=json.dumps(metadata).encode(), headers=headers,
+            )
+            location = response_headers.get("Location") or response_headers.get("location")
+            if status not in (200, 201) or not location:
+                raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
+            parsed = urlparse(location)
+            if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)
+                    or parsed.fragment):
+                raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
+
+            total = artifact_binding["size_bytes"]
+            offset = 0
+            final_raw = b""
+            reconciliation_attempts = 0
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
                 end = offset + len(chunk) - 1
@@ -500,9 +676,44 @@ class YouTubeClient:
                     "Content-Length": str(len(chunk)),
                     "Content-Range": f"bytes {offset}-{end}/{total}",
                 }
-                status, final_raw, chunk_response_headers = self._authorized_request(
-                    location, method="PUT", body=chunk, headers=chunk_headers,
-                )
+                try:
+                    status, final_raw, chunk_response_headers = self._authorized_request(
+                        location, method="PUT", body=chunk, headers=chunk_headers,
+                    )
+                except YouTubeIntegrationError as exc:
+                    if exc.code != "INDETERMINATE_WRITE":
+                        raise
+                    reconciliation_attempts += 1
+                    if reconciliation_attempts > 2:
+                        raise YouTubeIntegrationError(
+                            "upload exceeded the bounded status-reconciliation attempts; do not start a replacement upload",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
+                    reconciled_offset, reconciled_result = self._query_upload_status(
+                        location, total
+                    )
+                    if reconciled_result:
+                        status, final_raw = 201, reconciled_result
+                        offset = total
+                        continue
+                    if reconciled_offset < offset:
+                        raise YouTubeIntegrationError(
+                            "upload status regressed behind previously acknowledged bytes; refusing to replay",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
+                    if reconciled_offset > end + 1:
+                        raise YouTubeIntegrationError(
+                            "upload status advanced beyond the submitted chunk; refusing to continue",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
+                    if reconciled_offset == offset:
+                        # Status proves the attempted bytes were not accepted; retry
+                        # only this exact unacknowledged range on the same session.
+                        video.seek(offset)
+                        continue
+                    offset = reconciled_offset
+                    video.seek(offset)
+                    continue
                 if status in (200, 201):
                     offset = total
                 elif status == 308:
@@ -526,75 +737,35 @@ class YouTubeClient:
                     video.seek(offset)
                 else:
                     raise YouTubeIntegrationError(f"resumable upload returned HTTP {status}")
-        try:
-            result = json.loads(final_raw)
-            video_id = result["id"]
-        except (ValueError, KeyError, TypeError):
-            raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
-        if not isinstance(video_id, str) or not video_id:
-            raise YouTubeIntegrationError("upload response contained an invalid video ID")
-        self._last_upload_context = {
-            "video_id": video_id,
-            "project_id": project_id,
-            "project_version": project_version,
-            "final_film_artifact_id": final_films[0]["artifact_id"],
-        }
-        return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
-                "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
-                "upload_completed": True, "verification_required": True}
+            try:
+                result = json.loads(final_raw)
+                video_id = result["id"]
+            except (ValueError, KeyError, TypeError):
+                raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
+            if not isinstance(video_id, str) or not video_id:
+                raise YouTubeIntegrationError("upload response contained an invalid video ID")
+            self._last_upload_context = {
+                "video_id": video_id,
+                "project_id": project_id,
+                "project_version": project_version,
+                "final_film_artifact_id": final_films[0]["artifact_id"],
+            }
+            return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
+                    "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
+                    "upload_completed": True, "verification_required": True}
 
     def set_thumbnail(self, video_id: str, image_path: str, *,
                       evidence_pack: dict[str, Any],
                       final_film_evidence_ref: str,
-                      human_director_acceptance: bool,
-                      publishing_authorisation: bool = False) -> dict[str, Any]:
-        project_id, project_version = _authorise_project_publish(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            human_director_acceptance=human_director_acceptance,
-            publishing_authorisation=publishing_authorisation,
+                      evidence_root: str,
+                      approval_verifier: Any,
+                      approval_credentials: tuple[object, ...],
+                      approval_request_id: str) -> dict[str, Any]:
+        # Fail closed: existing FINAL_ACCEPTANCE/PUBLISH credentials bind the final film,
+        # not the thumbnail bytes. Do not consume those approvals or contact YouTube.
+        raise YouTubeIntegrationError(
+            "thumbnail writes are disabled until a dedicated signed thumbnail-artifact approval contract is implemented"
         )
-        evidence_project_id, evidence_project_version, evidence_film_artifact_id = _authorise_project_video(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            video_id=video_id,
-        )
-        verified_context = self._verified_upload_context
-        if (verified_context is None
-                or verified_context.get("video_id") != video_id
-                or verified_context.get("project_id") != evidence_project_id
-                or verified_context.get("project_version") != evidence_project_version
-                or verified_context.get("final_film_artifact_id") != evidence_film_artifact_id):
-            raise YouTubeIntegrationError(
-                "thumbnail write requires a matching successful YouTube read-back "
-                "from this client session; a caller-supplied verification artifact alone is insufficient"
-            )
-        self._gateway_project_id = project_id
-        self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
-        path = Path(image_path)
-        if not path.is_file():
-            raise YouTubeIntegrationError("thumbnail file does not exist")
-        suffix = path.suffix.lower()
-        mime_by_suffix = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-        mime = mime_by_suffix.get(suffix)
-        if mime is None:
-            raise YouTubeIntegrationError("thumbnail must use a PNG or JPEG file extension")
-        # YouTube custom thumbnails are limited to 2 MB. Read one byte beyond
-        # the limit so a file that grows after stat() is still rejected.
-        try:
-            with path.open("rb") as image:
-                thumbnail_bytes = image.read(2 * 1024 * 1024 + 1)
-        except OSError:
-            raise YouTubeIntegrationError("thumbnail file could not be read") from None
-        if not thumbnail_bytes or len(thumbnail_bytes) > 2 * 1024 * 1024:
-            raise YouTubeIntegrationError("thumbnail must be non-empty and no larger than 2 MB")
-        url = f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?{urlencode({'videoId': video_id})}"
-        status, raw, _ = self._authorized_request(url, method="POST", body=thumbnail_bytes,
-            headers={"Authorization": f"Bearer {self._token()}", "Content-Type": mime})
-        if status not in (200, 201):
-            raise YouTubeIntegrationError(f"thumbnail upload returned HTTP {status}")
-        return json.loads(raw)
 
     def verify_video(self, video_id: str) -> dict[str, Any]:
         """Read back one exact video ID and return only validated status fields."""
@@ -647,8 +818,18 @@ class YouTubeClient:
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
                   dimensions: str = "day", filters: str | None = None) -> dict[str, Any]:
+        if not isinstance(start_date, date) or isinstance(start_date, datetime):
+            raise YouTubeIntegrationError("start_date must be a date, not a datetime")
+        if not isinstance(end_date, date) or isinstance(end_date, datetime):
+            raise YouTubeIntegrationError("end_date must be a date, not a datetime")
         if end_date < start_date:
             raise YouTubeIntegrationError("end_date cannot precede start_date")
+        if not isinstance(metrics, str) or not metrics.strip() or len(metrics) > 500:
+            raise YouTubeIntegrationError("metrics must be a non-empty string of at most 500 characters")
+        if not isinstance(dimensions, str) or not dimensions.strip() or len(dimensions) > 200:
+            raise YouTubeIntegrationError("dimensions must be a non-empty string of at most 200 characters")
+        if filters is not None and (not isinstance(filters, str) or len(filters) > 500):
+            raise YouTubeIntegrationError("filters must be a string of at most 500 characters")
         params: dict[str, Any] = {
             "ids": "channel==MINE", "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(), "metrics": metrics, "dimensions": dimensions,

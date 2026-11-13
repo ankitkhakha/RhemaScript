@@ -10,6 +10,8 @@ RAEI is the engineering specialist capability for understanding, designing, buil
 - [RAEI Education Framework V1.0](docs/RAEI_EDUCATION_FRAMEWORK_V1.md)
 - [RAEI Competency and Evaluation Standard V1.0](docs/RAEI_COMPETENCY_AND_EVALUATION_V1.md)
 - [RAEI Activation and Operating Guide V1.0](docs/RAEI_ACTIVATION_AND_GOVERNANCE_V1.md)
+- [RAEI Continuity, Priority and Recovery Register V1.0](docs/RAEI_CONTINUITY_CHECKPOINT_AND_RECOVERY_REGISTER_V1.md)
+- [RAEI Local and Codex Operator Runbook V1.0](docs/RAEI_CODEX_OPERATOR_RUNBOOK_V1.md)
 
 Conversational activation: `ACTIVATE RAEI`. Activation does not grant permissions or start a background process. Education is competency-based; documentation does not imply model-weight retraining or achieved competence.
 

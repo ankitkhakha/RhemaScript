@@ -1,0 +1,26 @@
+{
+  "schema": "raei-finding-implementation-v1",
+  "finding_id": "RS-FND-REPLACE",
+  "finding_version": "1.0",
+  "plan_event_id": "FINDING_PLANNED:RS-FND-REPLACE@1.0:request-FINDING_PLAN-RS-FND-REPLACE",
+  "plan_evidence_binding": {
+    "evidence_id": "EV-FND-PLAN-REPLACE",
+    "evidence_version": "1.0",
+    "sha256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "size_bytes": 0
+  },
+  "implementation_summary": "Describe the bounded change actually performed; do not claim planned work as completed.",
+  "changes": [
+    "Identify each exact code/configuration/documentation change and its immutable revision."
+  ],
+  "test_results": [
+    "Identify the exact test command, environment, result and retained output evidence."
+  ],
+  "deviations": [
+    "List each deviation from the approved plan; use an explicit statement when none occurred."
+  ],
+  "rollback_reference": "Identify the reviewed rollback procedure and its evidence reference.",
+  "evidence_id": "EV-FND-IMPLEMENTATION-REPLACE",
+  "evidence_version": "1.0",
+  "created_at_utc": "2026-11-13T00:00:00+00:00"
+}
