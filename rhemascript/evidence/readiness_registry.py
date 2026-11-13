@@ -406,6 +406,10 @@ class ReadinessRunRegistry:
             sessions = [item.identity_session_id for item in approvals]
             if (any(not value for value in subjects + sessions)
                     or len(set(subjects)) != 2 or len(set(sessions)) != 2
+                    or any(item.artifact_id != binding["evidence_id"]
+                           or item.artifact_version != binding["evidence_version"]
+                           or item.artifact_sha256 != binding["sha256"]
+                           or item.artifact_size_bytes != binding["size_bytes"] for item in approvals)
                     or len({item.identity_provider_id for item in approvals}) != 1
                     or len({item.identity_policy_version for item in approvals}) != 1
                     or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
