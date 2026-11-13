@@ -332,3 +332,14 @@ A concurrency review found that integrity verification and checkpoint constructi
 The readiness registry now holds one explicit read transaction while it reads readiness rows, activity events and append-only trigger metadata for `verify()`, and while it reads both tables for checkpoint snapshot digests. The approval-consumption store likewise holds one explicit read transaction across consumed and revoked approval tables when constructing checkpoint bytes. SQLite WAL readers retain a stable snapshot while concurrent writers commit; this behavior is documented by SQLite: https://www.sqlite.org/isolation.html.
 
 Adversarial interleaving tests arrange a real second-connection commit after the first table has been read. They assert that the in-flight verification/checkpoint snapshot remains internally consistent and that the concurrent commit is visible to a subsequent read. This does not replace independent HMAC checkpoint custody, and it does not make local SQLite storage tamper-proof.
+
+
+## Readiness registry local-storage permissions — 13 November 2026
+
+A storage-boundary review found that the readiness registry rejected a symlink at the database path but did not enforce private ownership and permissions on the database file or its parent directory. The registry now fails closed unless it runs on POSIX, the database parent is a real owner-owned directory with mode 0700 or stricter, and the database is an owner-owned regular file with mode 0600 or stricter. New databases are created exclusively with no-follow semantics and owner-only permissions. These checks are repeated at each connection. Symlinked ancestor directories are rejected.
+
+Existing legacy databases remain migratable only when their existing file and parent permissions already meet the private-storage policy; migration does not silently relax permissions. Operators must secure the containing directory before opening the registry. This is an intentional security requirement and may require correcting deployment paths before upgrading.
+
+Adversarial tests cover default owner-only creation, group/world-readable database rejection, public parent rejection, symlinked database rejection and symlinked ancestor rejection. Exact code/test head `a9efb1220720e6c3b85610a0e675be6f9f096608` passed the complete contract and synthetic integration suite in GitHub Actions run #1716: https://github.com/ankitkhakha/RhemaScript/actions/runs/43420044583.
+
+POSIX permission checks protect against other local users; they do not defend against a malicious process running as the same owner, compromised administrator, or attacker able to rewrite both the database and independent checkpoint/key custody. External checkpoint retention and separate key custody remain required.
