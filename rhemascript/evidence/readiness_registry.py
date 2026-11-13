@@ -153,7 +153,7 @@ class ReadinessRunRegistry:
             raise ValueError("event_id must be a non-empty trimmed string")
         if not isinstance(event_type, str) or event_type not in _ACTIVITY_EVENT_TYPES - _INTERNAL_EVENT_TYPES:
             raise ValueError("unsupported external activity event type")
-        if event_type in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
+        if event_type in {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("governed review events require append_governed_activity_event")
         if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED"}:
             raise ValueError("authenticated finding lifecycle events require append_authenticated_finding_lifecycle_event")
@@ -1086,15 +1086,18 @@ class ReadinessRunRegistry:
                 lineage_rows = db.execute(
                     """SELECT event_id,event_type,payload_json FROM activity_events
                     WHERE project_id=? AND subject_id=? AND event_type IN
-                    ('FINDING_PLANNED','FINDING_IMPLEMENTED','FINDING_EFFECTIVENESS_ASSESSED')
+                    ('FINDING_RESEARCHED','FINDING_REPRODUCED','FINDING_PLANNED',
+                     'FINDING_IMPLEMENTED','FINDING_EFFECTIVENESS_ASSESSED')
                     ORDER BY sequence""", (project_id, subject_id),
                 ).fetchall()
                 lineage = {kind: (eid, json.loads(raw)) for eid, kind, raw in lineage_rows
                            if json.loads(raw).get("finding_version") == payload.get("finding_version")}
                 if not all(kind in lineage for kind in
-                           ("FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED")):
+                           ("FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED")):
                     db.rollback()
                     raise ValueError("closure requires plan, implementation and effectiveness evidence")
+                research_payload = lineage["FINDING_RESEARCHED"][1]
+                reproduction_payload = lineage["FINDING_REPRODUCED"][1]
                 plan_id, plan_payload = lineage["FINDING_PLANNED"]
                 implementation_id, implementation_payload = lineage["FINDING_IMPLEMENTED"]
                 effectiveness_id, effectiveness_payload = lineage["FINDING_EFFECTIVENESS_ASSESSED"]
@@ -1118,6 +1121,8 @@ class ReadinessRunRegistry:
                     for approval in approvals
                     for prior in [
                         captured.get("submitter_identity") or {},
+                        research_payload.get("authorization", {}),
+                        reproduction_payload.get("authorization", {}),
                         plan_payload.get("authorization", {}),
                         implementation_payload.get("authorization", {}),
                         effectiveness_payload.get("authorization", {}),
