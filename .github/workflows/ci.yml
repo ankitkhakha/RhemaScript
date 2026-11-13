@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   test:
+    needs: generate-lock-candidate
     name: Full contract and synthetic integration CI
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -28,11 +29,24 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - name: Install project and declared dependencies
-        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download generated hash-lock candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
+        with:
+          name: rhemascript-ci-lock-candidate
+          path: lock-candidate
+
+      - name: Verify lock digest and install locked dependencies
+        run: |
+          cd lock-candidate
+          sha256sum --check requirements-ci.lock.sha256
+          cd ..
+          python -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check --require-hashes -r lock-candidate/requirements-ci.lock
+          .venv/bin/python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e .
+          .venv/bin/python -m pip check
 
       - name: Run full local CI suite
-        run: python ci/validate_if18_read_only.py --report-file if18-validation-report.json
+        run: .venv/bin/python ci/validate_if18_read_only.py --report-file if18-validation-report.json
 
       - name: Upload redacted IF-18 validation report
         if: always()
