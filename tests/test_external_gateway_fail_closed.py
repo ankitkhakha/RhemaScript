@@ -233,6 +233,37 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_provider_write_rejects_same_underlying_subject_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        authority = self.publish_authority(
+            "same-subject",
+            identity_overrides={
+                "FINAL_ACCEPTANCE": {"subject_id": "same-human-subject-0001"},
+                "PUBLISH": {"subject_id": "same-human-subject-0001"},
+            },
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "actor separation"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="same-subject", project_id="RS-1",
+                source_version="1.0", authority=authority,
+            )
+        self.assertEqual(transport.calls, [])
+
     def test_provider_write_rejects_shared_identity_session_before_transport(self):
         transport = NeverTransport()
         binding = ProviderBinding(
