@@ -52,11 +52,15 @@ class _NoRedirect(HTTPRedirectHandler):
 
 def _authorise_project_publish(
     *, evidence_pack: dict[str, Any], final_film_evidence_ref: str,
+    evidence_root: str,
     approval_verifier: Any, approval_credentials: tuple[object, ...],
     approval_request_id: str,
-) -> tuple[str, str, tuple[Any, ...], str]:
-    """Validate all six gates and consume two distinct signed approvals."""
+) -> tuple[str, str, tuple[Any, ...], str, dict[str, Any]]:
+    """Byte-verify the final film, then consume approvals signed for its exact digest."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
+    from rhemascript.evidence.evidence_pack_integrity import (
+        verify_pack_artifacts, EvidencePackIntegrityError,
+    )
     from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
     from rhemascript.core.gates import GateDecision, GateError, GateRecord, ProjectGateState
 
@@ -65,6 +69,8 @@ def _authorise_project_publish(
             raise ApprovalError("trusted ApprovalVerifier is required")
         if not isinstance(approval_request_id, str) or not approval_request_id.strip():
             raise ApprovalError("exact approval_request_id is required")
+        if not isinstance(evidence_root, str) or not evidence_root.strip():
+            raise EvidencePackError("evidence_root is required for byte-verified publication")
         validated = validate_evidence_pack(evidence_pack)
         films = [
             item for item in validated.artifacts
@@ -77,6 +83,21 @@ def _authorise_project_publish(
         ]
         if len(films) != 1:
             raise EvidencePackError("final film must resolve to exactly one approved EDITED_FILM artifact")
+        film = films[0]
+        byte_verified = verify_pack_artifacts(validated, evidence_root)
+        verified_film = [
+            item for item in byte_verified
+            if item.evidence_id == film["artifact_id"] and item.version == film["version"]
+        ]
+        if len(verified_film) != 1:
+            raise EvidencePackIntegrityError("final film is not byte-verified in the supplied evidence root")
+        verified = verified_film[0]
+        artifact_binding = {
+            "artifact_id": verified.evidence_id,
+            "artifact_version": verified.version,
+            "sha256": verified.sha256,
+            "size_bytes": verified.size_bytes,
+        }
         state = ProjectGateState(validated.project_id)
         for raw in validated.gate_records:
             if not isinstance(raw, dict):
@@ -95,12 +116,13 @@ def _authorise_project_publish(
         expected = tuple({
             "action": action, "project_id": validated.project_id,
             "project_version": validated.project_version, "request_id": approval_request_id,
+            "artifact_binding": artifact_binding,
         } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
         approvals = approval_verifier.verify_many_and_consume(
             approval_credentials, expected, require_distinct_actors=True,
         )
-        return validated.project_id, validated.project_version, approvals, approval_request_id
-    except (EvidencePackError, ApprovalError, GateError, ValueError, TypeError) as exc:
+        return validated.project_id, validated.project_version, approvals, approval_request_id, artifact_binding
+    except (EvidencePackError, EvidencePackIntegrityError, ApprovalError, GateError, ValueError, TypeError) as exc:
         raise YouTubeIntegrationError(f"operation denied by RhemaScript governance: {exc}") from None
 
 def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
@@ -431,6 +453,7 @@ class YouTubeClient:
     def upload_video(self, file_path: str, *, title: str, description: str,
                      evidence_pack: dict[str, Any],
                      final_film_evidence_ref: str,
+                     evidence_root: str,
                      approval_verifier: Any,
                      approval_credentials: tuple[object, ...],
                      approval_request_id: str,
@@ -442,9 +465,10 @@ class YouTubeClient:
         The credentials must be externally issued, independently authenticated,
         project/version/request-bound, distinct-actor approvals. The safe default is private.
         """
-        project_id, project_version, verified_approvals, request_id = _authorise_project_publish(
+        project_id, project_version, verified_approvals, request_id, artifact_binding = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
+            evidence_root=evidence_root,
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
@@ -471,6 +495,7 @@ class YouTubeClient:
         self._gateway_source_version = project_version
         self._gateway_authority = {"verified_approvals": verified_approvals}
         self._gateway_request_id = request_id
+        self._gateway_artifact_binding = artifact_binding
         path = Path(file_path)
         if not path.is_file() or path.stat().st_size == 0:
             raise YouTubeIntegrationError("video file is missing or empty")
@@ -581,12 +606,14 @@ class YouTubeClient:
     def set_thumbnail(self, video_id: str, image_path: str, *,
                       evidence_pack: dict[str, Any],
                       final_film_evidence_ref: str,
+                      evidence_root: str,
                       approval_verifier: Any,
                       approval_credentials: tuple[object, ...],
                       approval_request_id: str) -> dict[str, Any]:
-        project_id, project_version, verified_approvals, request_id = _authorise_project_publish(
+        project_id, project_version, verified_approvals, request_id, artifact_binding = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
+            evidence_root=evidence_root,
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
