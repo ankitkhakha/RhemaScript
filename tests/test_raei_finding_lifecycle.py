@@ -612,7 +612,19 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self.assertTrue(self.registry.verify())
 
     def test_consumed_governed_approvals_cannot_authorize_a_second_event(self):
-        evidence = self.finding_evidence
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        self._inherit_closed_knowledge()
+        knowledge_id = "RS-KNOW-CLOSED-FINDING-001"
+        evidence = verify_artifact(
+            self.evidence_root, "inherited-knowledge.json",
+            evidence_id="EV-KNOW-CLOSED-FINDING-001", version="1.0",
+        )
         request_id = "request-knowledge-approval-reuse-001"
         actions = ("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM")
         credentials = (
@@ -644,7 +656,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             credentials, expectations, require_distinct_actors=True,
         )
         first_payload = {
-            "knowledge_id": "RS-KNW-APPROVAL-REUSE-001",
+            "knowledge_id": knowledge_id,
             "knowledge_version": "1.0",
             "decision": "APPROVED",
             "rationale": "First governed knowledge review.",
@@ -656,18 +668,18 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             },
         }
         self.registry.append_governed_activity_event(
-            "KNOWLEDGE_REVIEWED:RS-KNW-APPROVAL-REUSE-001@1.0",
+            f"KNOWLEDGE_REVIEWED:{knowledge_id}@1.0",
             "KNOWLEDGE_REVIEWED", first_payload,
             project_id=self.project_id, project_version=self.project_version,
-            subject_id=first_payload["knowledge_id"], request_id=request_id,
+            subject_id=knowledge_id, request_id=request_id,
             approvals=approvals, expected_actions=actions,
         )
         second_payload = dict(first_payload)
-        second_payload["knowledge_id"] = "RS-KNW-APPROVAL-REUSE-002"
+        second_payload["knowledge_id"] = "RS-KNOW-APPROVAL-REUSE-002"
         second_payload["rationale"] = "Attempt to reuse the same consumed approvals."
         with self.assertRaisesRegex(Exception, "already authorized another event"):
             self.registry.append_governed_activity_event(
-                "KNOWLEDGE_REVIEWED:RS-KNW-APPROVAL-REUSE-002@1.0",
+                "KNOWLEDGE_REVIEWED:RS-KNOW-APPROVAL-REUSE-002@1.0",
                 "KNOWLEDGE_REVIEWED", second_payload,
                 project_id=self.project_id, project_version=self.project_version,
                 subject_id=second_payload["knowledge_id"], request_id=request_id,
@@ -678,7 +690,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             if event["event_type"] == "KNOWLEDGE_REVIEWED"
         ]
         self.assertEqual(len(reviews), 1)
-        self.assertEqual(reviews[0]["subject_id"], first_payload["knowledge_id"])
+        self.assertEqual(reviews[0]["subject_id"], knowledge_id)
         self.assertTrue(self.registry.verify())
 
     def test_reopening_rejects_project_version_different_from_prior_closure(self):
