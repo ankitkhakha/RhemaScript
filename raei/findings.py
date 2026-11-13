@@ -565,27 +565,31 @@ def list_findings(
                 resumed_finding = finding_by_version.get((item["finding_id"], resumed_version))
                 if (reopen_payload.get("closure_event_id") != closure["event_id"]
                         or reopen_payload.get("reopen_decision") != "REOPENED"
-                        or not isinstance(resumed_version, str) or not resumed_version.strip()
-                        or not isinstance(resumed_finding, dict)
-                        or resumed_finding.get("supersedes") != [f"{item['finding_id']}@{item['version']}"]
-                        or resumed_finding.get("identity_authentication_status") != "VERIFIED"):
-                    raise RAEIFindingError("reopening does not bind exactly one authenticated resumed finding version")
-                resumed_identity = resumed_finding.get("submitter_identity", {})
-                resumed_authorization = resumed_finding.get("submitter_authorization", {})
-                prior_subjects = reopen_auth.get("subject_ids", [])
-                prior_sessions = reopen_auth.get("identity_session_ids", [])
-                if (not isinstance(resumed_identity, dict)
-                        or not isinstance(resumed_authorization, dict)
-                        or resumed_identity.get("subject_id") in prior_subjects
-                        or resumed_identity.get("identity_session_id") in prior_sessions
-                        or resumed_identity.get("identity_provider_id") not in reopen_auth.get("identity_provider_ids", [])
-                        or resumed_identity.get("identity_policy_version") not in reopen_auth.get("identity_policy_versions", [])
-                        or resumed_authorization.get("project_version") != closure_auth.get("project_version")
-                        or resumed_authorization.get("project_version") != reopen_auth.get("project_version")):
-                    raise RAEIFindingError("resumed finding submitter does not preserve reopening identity and project-version independence")
+                        or not isinstance(resumed_version, str) or not resumed_version.strip()):
+                    raise RAEIFindingError("reopening does not bind the exact prior closure and authorized new version")
                 item["status"] = "REOPENED"
-                item["reopened_as_version"] = reopen_payload.get("new_finding_version")
+                item["reopened_as_version"] = resumed_version
                 item["reopening_event_id"] = reopening["event_id"]
+                if resumed_finding is None:
+                    item["resumption_status"] = "AWAITING_AUTHENTICATED_SUBMISSION"
+                else:
+                    if (resumed_finding.get("supersedes") != [f"{item['finding_id']}@{item['version']}"]
+                            or resumed_finding.get("identity_authentication_status") != "VERIFIED"):
+                        raise RAEIFindingError("reopening does not bind exactly one authenticated resumed finding version")
+                    resumed_identity = resumed_finding.get("submitter_identity", {})
+                    resumed_authorization = resumed_finding.get("submitter_authorization", {})
+                    prior_subjects = reopen_auth.get("subject_ids", [])
+                    prior_sessions = reopen_auth.get("identity_session_ids", [])
+                    if (not isinstance(resumed_identity, dict)
+                            or not isinstance(resumed_authorization, dict)
+                            or resumed_identity.get("subject_id") in prior_subjects
+                            or resumed_identity.get("identity_session_id") in prior_sessions
+                            or resumed_identity.get("identity_provider_id") not in reopen_auth.get("identity_provider_ids", [])
+                            or resumed_identity.get("identity_policy_version") not in reopen_auth.get("identity_policy_versions", [])
+                            or resumed_authorization.get("project_version") != closure_auth.get("project_version")
+                            or resumed_authorization.get("project_version") != reopen_auth.get("project_version")):
+                        raise RAEIFindingError("resumed finding submitter does not preserve reopening identity and project-version independence")
+                    item["resumption_status"] = "AUTHENTICATED_VERSION_SUBMITTED"
         elif effectiveness:
             item["status"] = effectiveness["payload"]["outcome"]
             item["effectiveness_event_id"] = effectiveness["event_id"]
