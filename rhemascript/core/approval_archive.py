@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 import stat
 
@@ -20,6 +21,7 @@ from rhemascript.core.approval_store import ApprovalStoreError, SQLiteApprovalCo
 
 
 ARCHIVE_SCHEMA = "RhemaScript.ApprovalCheckpointArchive.v1"
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 
 
 def _canonical(value: object) -> bytes:
@@ -125,15 +127,27 @@ def verify_checkpoint_archive(
     """
     _validate_key(key)
     path = Path(archive_path).expanduser()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        info = path.lstat()
+        fd = os.open(path, flags)
     except OSError:
-        raise ApprovalStoreError("checkpoint archive is missing or inaccessible") from None
-    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077):
-        raise ApprovalStoreError("checkpoint archive must be an owner-owned private regular file")
+        raise ApprovalStoreError("checkpoint archive is missing, inaccessible or a symbolic link") from None
     try:
-        envelope = json.loads(path.read_text(encoding="utf-8"))
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077
+                or info.st_size <= 0 or info.st_size > MAX_ARCHIVE_BYTES):
+            raise ApprovalStoreError("checkpoint archive must be a bounded, owner-owned private regular file")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(MAX_ARCHIVE_BYTES + 1)
+        if len(raw) > MAX_ARCHIVE_BYTES:
+            raise ApprovalStoreError("checkpoint archive exceeds the permitted size")
+    except OSError:
+        raise ApprovalStoreError("checkpoint archive could not be read safely") from None
+    finally:
+        os.close(fd)
+    try:
+        envelope = json.loads(raw.decode("utf-8"))
         expected = {"schema", "created_at", "snapshot_sha256", "snapshot_b64", "hmac_sha256"}
         if not isinstance(envelope, dict) or set(envelope) != expected:
             raise ValueError
@@ -141,6 +155,15 @@ def verify_checkpoint_archive(
             "schema", "created_at", "snapshot_sha256", "snapshot_b64"
         )}
         if envelope["schema"] != ARCHIVE_SCHEMA or not isinstance(envelope["created_at"], str):
+            raise ValueError
+        created_at = datetime.fromisoformat(envelope["created_at"])
+        if created_at.tzinfo is None or created_at.utcoffset() is None:
+            raise ValueError
+        if (not isinstance(envelope["snapshot_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", envelope["snapshot_sha256"])
+                or not isinstance(envelope["hmac_sha256"], str)
+                or not re.fullmatch(r"[0-9a-f]{64}", envelope["hmac_sha256"])
+                or not isinstance(envelope["snapshot_b64"], str)):
             raise ValueError
         snapshot = base64.b64decode(envelope["snapshot_b64"], validate=True)
         digest = hashlib.sha256(snapshot).hexdigest()
