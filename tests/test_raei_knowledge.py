@@ -232,6 +232,50 @@ class RAEIKnowledgeTests(unittest.TestCase):
         record_knowledge(self.registry, second, evidence2)
         self.assertEqual([x["version"] for x in list_knowledge(self.registry)], ["1.0", "2.0"])
 
+    def test_supersedes_rejects_different_knowledge_id(self):
+        first, evidence1 = self.make_item()
+        record_knowledge(self.registry, first, evidence1)
+        second, evidence2 = self.make_item(knowledge_id="RS-KNOW-002", version="2.0")
+        second["supersedes"] = ["RS-KNOW-001@1.0"]
+        evidence2 = self.reverify(second, evidence2)
+        with self.assertRaisesRegex(RAEIKnowledgeError, "same knowledge_id"):
+            record_knowledge(self.registry, second, evidence2)
+
+    def test_supersedes_requires_strictly_older_version(self):
+        first, evidence1 = self.make_item()
+        record_knowledge(self.registry, first, evidence1)
+        for version in ("1.0", "0.9"):
+            second, evidence2 = self.make_item(version="2.0")
+            second["supersedes"] = [f"RS-KNOW-001@{version}"]
+            evidence2 = self.reverify(second, evidence2)
+            if version == "1.0":
+                with self.assertRaisesRegex(RAEIKnowledgeError, "strictly older"):
+                    record_knowledge(self.registry, second, evidence2)
+            else:
+                # The referenced version must exist before chronology can be evaluated.
+                with self.assertRaisesRegex(RAEIKnowledgeError, "does not exist"):
+                    record_knowledge(self.registry, second, evidence2)
+
+    def test_supersedes_rejects_duplicate_targets(self):
+        payload, evidence = self.make_item()
+        changed = {**payload, "supersedes": ["RS-KNOW-001@1.0", "RS-KNOW-001@1.0"]}
+        changed_evidence = self.reverify(changed, evidence)
+        with self.assertRaisesRegex(RAEIKnowledgeError, "must be unique"):
+            record_knowledge(self.registry, changed, changed_evidence)
+
+    def test_supersedes_rejects_competing_successors(self):
+        first, evidence1 = self.make_item()
+        record_knowledge(self.registry, first, evidence1)
+        second, evidence2 = self.make_item(version="2.0")
+        second["supersedes"] = ["RS-KNOW-001@1.0"]
+        evidence2 = self.reverify(second, evidence2)
+        record_knowledge(self.registry, second, evidence2)
+        third, evidence3 = self.make_item(version="3.0")
+        third["supersedes"] = ["RS-KNOW-001@1.0"]
+        evidence3 = self.reverify(third, evidence3)
+        with self.assertRaisesRegex(RAEIKnowledgeError, "already has a successor"):
+            record_knowledge(self.registry, third, evidence3)
+
     def test_rewritten_approved_status_is_rejected_on_read(self):
         payload, evidence = self.make_item()
         record_knowledge(self.registry, payload, evidence)
