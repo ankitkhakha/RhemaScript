@@ -1117,6 +1117,7 @@ class ReadinessRunRegistry:
             "issuer": approvals[0].issuer,
             "actor_ids": actors,
             "approval_ids": [item.approval_id for item in approvals],
+            "approval_nonces": [item.nonce for item in approvals],
             "actions": [item.action for item in approvals],
             "subject_ids": [item.subject_id for item in approvals],
             "identity_session_ids": [item.identity_session_id for item in approvals],
@@ -1154,14 +1155,17 @@ class ReadinessRunRegistry:
                 )"""
             ).fetchall()
             requested_approval_ids = {item.approval_id for item in approvals}
+            requested_approval_nonces = {item.nonce for item in approvals}
             for prior_row in prior_governed:
                 prior_payload = json.loads(prior_row[0])
                 prior_authorization = prior_payload.get("authorization", {})
                 prior_ids = prior_authorization.get("approval_ids", [])
-                if requested_approval_ids.intersection(prior_ids):
+                prior_nonces = prior_authorization.get("approval_nonces", [])
+                if (requested_approval_ids.intersection(prior_ids)
+                        or requested_approval_nonces.intersection(prior_nonces)):
                     db.rollback()
                     raise ReadinessReplayError(
-                        "governed approval has already authorized another event"
+                        "governed approval ID or nonce has already authorized another event"
                     )
             if event_type == "FINDING_DISPOSITIONED":
                 captured = db.execute(
