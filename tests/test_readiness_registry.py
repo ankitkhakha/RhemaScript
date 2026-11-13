@@ -384,6 +384,32 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ReadinessRunRegistry(alias)
 
+    def test_database_is_owner_only(self):
+        import os
+        self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
+
+    def test_rejects_group_or_world_readable_database(self):
+        import os
+        os.chmod(self.path, 0o644)
+        with self.assertRaisesRegex(ValueError, "permissions or file type are unsafe"):
+            self.registry._connect()
+
+    def test_rejects_public_database_parent(self):
+        import os
+        public_parent = Path(self.tmp.name) / "public-parent"
+        public_parent.mkdir()
+        os.chmod(public_parent, 0o755)
+        with self.assertRaisesRegex(ValueError, "owner-owned and private"):
+            ReadinessRunRegistry(public_parent / "readiness.sqlite3")
+
+    def test_rejects_symlinked_database_ancestor(self):
+        real_parent = Path(self.tmp.name) / "real-parent"
+        real_parent.mkdir()
+        alias_parent = Path(self.tmp.name) / "alias-parent"
+        alias_parent.symlink_to(real_parent, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlinked directories"):
+            ReadinessRunRegistry(alias_parent / "readiness.sqlite3")
+
 
 if __name__ == "__main__":
     unittest.main()
