@@ -18,6 +18,8 @@ import weakref
 from typing import Callable, Mapping, Sequence
 from types import MappingProxyType
 
+from rhemascript.core.verification_keys import VerificationKeyRecord, VerificationKeyRegistry
+
 
 class ApprovalError(PermissionError):
     """An approval credential is missing, invalid, expired, revoked, or replayed."""
@@ -101,7 +103,10 @@ class ApprovalVerifier:
         self,
         *,
         issuer: str,
-        verification_keys: Mapping[str, bytes],
+        verification_keys: Mapping[str, bytes] | None = None,
+        key_registry: VerificationKeyRegistry | None = None,
+        key_registry_environment: str | None = None,
+        key_registry_max_age: timedelta = timedelta(seconds=30),
         consume_many_once: Callable[[tuple[VerifiedApproval, ...]], bool],
         clock: Callable[[], datetime] | None = None,
         max_lifetime: timedelta = timedelta(minutes=10),
@@ -110,12 +115,26 @@ class ApprovalVerifier:
     ) -> None:
         if not isinstance(issuer, str) or not _ID.fullmatch(issuer):
             raise ValueError("trusted issuer is required")
-        if not verification_keys:
-            raise ValueError("at least one verification key is required")
-        if any(not isinstance(k, str) or not _ID.fullmatch(k)
-               or not isinstance(v, bytes) or len(v) != 32
-               for k, v in verification_keys.items()):
-            raise ValueError("Ed25519 verification keys require non-empty IDs and exactly 32 public-key bytes")
+        if (verification_keys is None) == (key_registry is None):
+            raise ValueError("configure exactly one static verification-key map or live key registry")
+        if verification_keys is not None:
+            if not verification_keys or any(
+                not isinstance(k, str) or not _ID.fullmatch(k)
+                or not isinstance(v, bytes) or len(v) != 32
+                for k, v in verification_keys.items()
+            ):
+                raise ValueError("Ed25519 verification keys require non-empty IDs and exactly 32 public-key bytes")
+        if key_registry is not None:
+            if not isinstance(key_registry, VerificationKeyRegistry):
+                raise ValueError("key_registry does not implement the verification-key contract")
+            if not isinstance(key_registry_environment, str) or not _ID.fullmatch(key_registry_environment):
+                raise ValueError("a trusted key-registry environment is required")
+            if (not isinstance(key_registry_max_age, timedelta)
+                    or key_registry_max_age <= timedelta(0)
+                    or key_registry_max_age > timedelta(minutes=5)):
+                raise ValueError("key-registry freshness limit must be positive and no greater than five minutes")
+        elif key_registry_environment is not None:
+            raise ValueError("key-registry environment cannot be set without a registry")
         if not callable(consume_many_once):
             raise ValueError("an atomic consume_many_once callback is required")
         if (not isinstance(max_lifetime, timedelta)
@@ -125,7 +144,10 @@ class ApprovalVerifier:
                 or clock_skew < timedelta(0) or clock_skew > timedelta(minutes=2)):
             raise ValueError("clock_skew must be between zero and two minutes")
         self.issuer = issuer
-        self._keys = dict(verification_keys)
+        self._keys = dict(verification_keys or {})
+        self._key_registry = key_registry
+        self._key_registry_environment = key_registry_environment
+        self._key_registry_max_age = key_registry_max_age
         self._consume_many_once = consume_many_once
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_lifetime = max_lifetime
@@ -182,6 +204,40 @@ class ApprovalVerifier:
             raise ApprovalError(f"approval {field} must include a timezone")
         return parsed.astimezone(timezone.utc)
 
+    def _resolve_verification_key(self, key_id: str, *, historical: bool = False):
+        if self._key_registry is None:
+            public_key = self._keys.get(key_id)
+            if public_key is None:
+                raise ApprovalError("approval signing key is not trusted")
+            return public_key, None
+        try:
+            record = self._key_registry.resolve_key(
+                key_id, issuer=self.issuer, environment=self._key_registry_environment,
+            )
+        except Exception:
+            raise ApprovalError("trusted verification-key registry is unavailable") from None
+        if (type(record) is not VerificationKeyRecord
+                or record.key_id != key_id or record.issuer != self.issuer
+                or record.environment != self._key_registry_environment):
+            raise ApprovalError("verification-key registry returned a mismatched key record")
+        now = self._clock()
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ApprovalError("verifier clock must return a timezone-aware datetime")
+        now = now.astimezone(timezone.utc)
+        resolved_at = record.resolved_at.astimezone(timezone.utc)
+        if (resolved_at > now + self._clock_skew
+                or now - resolved_at > self._key_registry_max_age):
+            raise ApprovalError("verification-key registry response is stale or future-dated")
+        if historical:
+            return record.public_key, record
+        if record.status != "ACTIVE":
+            raise ApprovalError("verification key is not active for new authorization")
+        if (now < record.valid_from.astimezone(timezone.utc)
+                or (record.valid_until is not None
+                    and now >= record.valid_until.astimezone(timezone.utc))):
+            raise ApprovalError("verification key is outside its active validity interval")
+        return record.public_key, record
+
     def _verify_one(
         self,
         credential: object,
@@ -232,10 +288,9 @@ class ApprovalVerifier:
             raise ApprovalError("approval action or project scope does not match")
         if token["project_version"] != project_version or token["request_id"] != request_id:
             raise ApprovalError("approval version or request scope does not match")
-        public_key = self._keys.get(token["key_id"])
+        public_key, key_record = self._resolve_verification_key(token["key_id"])
         signature = token.get("signature")
-        if (public_key is None or not isinstance(signature, str)
-                or not _SIGNATURE_HEX.fullmatch(signature)):
+        if (not isinstance(signature, str) or not _SIGNATURE_HEX.fullmatch(signature)):
             raise ApprovalError("approval signature is invalid")
         try:
             Ed25519PublicKey.from_public_bytes(public_key).verify(
@@ -249,6 +304,12 @@ class ApprovalVerifier:
             raise ApprovalError("verifier clock must return a timezone-aware datetime")
         now = now.astimezone(timezone.utc)
         issued_at = self._timestamp(token["issued_at"], "issued_at")
+        if key_record is not None and (
+            issued_at < key_record.valid_from.astimezone(timezone.utc)
+            or (key_record.valid_until is not None
+                and issued_at >= key_record.valid_until.astimezone(timezone.utc))
+        ):
+            raise ApprovalError("credential was issued outside the signing key validity interval")
         identity = {}
         authenticated_at = None
         identity_max_age = None
@@ -357,12 +418,12 @@ class ApprovalVerifier:
         signature = record.get("signature")
         key_id = record.get("key_id")
         if (not isinstance(signature, str) or not _SIGNATURE_HEX.fullmatch(signature)
-                or not isinstance(key_id, str) or key_id not in self._keys
-                or record.get("issuer") != self.issuer):
+                or not isinstance(key_id, str) or record.get("issuer") != self.issuer):
             raise ApprovalError("persisted approval signature or trusted issuer is invalid")
+        public_key, key_record = self._resolve_verification_key(key_id, historical=True)
         signed_payload = {**payload, "signature": signature}
         try:
-            Ed25519PublicKey.from_public_bytes(self._keys[key_id]).verify(
+            Ed25519PublicKey.from_public_bytes(public_key).verify(
                 bytes.fromhex(signature), self._canonical(signed_payload)
             )
         except (InvalidSignature, ValueError, TypeError):
@@ -373,9 +434,20 @@ class ApprovalVerifier:
         if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
             raise ApprovalError("verifier clock must return a timezone-aware datetime")
         expired = expires_at <= now.astimezone(timezone.utc)
+        issued_with_valid_key = key_record is None or (
+            issued_at >= key_record.valid_from.astimezone(timezone.utc)
+            and (key_record.valid_until is None
+                 or issued_at < key_record.valid_until.astimezone(timezone.utc))
+            and (key_record.revoked_at is None
+                 or issued_at < key_record.revoked_at.astimezone(timezone.utc))
+        )
         return {
             "signature_valid": True,
-            "issuer_trusted": True,
+            "issuer_trusted": issued_with_valid_key,
+            "key_status_at_verification": key_record.status if key_record is not None else "STATIC_TRUSTED",
+            "key_registry_revision": key_record.registry_revision if key_record is not None else None,
+            "key_revoked_at": key_record.revoked_at.isoformat() if key_record is not None and key_record.revoked_at else None,
+            "key_trusted_at_issuance": issued_with_valid_key,
             "credential_schema": schema,
             "approval_id": record["approval_id"],
             "actor_id": record["actor_id"],
