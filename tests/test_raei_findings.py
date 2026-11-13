@@ -4,10 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from raei.findings import (
-    FINDING_SCHEMA if False else RAEIFindingError,
-)
-from raei.findings import capture_finding, list_findings, SCHEMA
+from raei.findings import RAEIFindingError, capture_finding, list_findings, SCHEMA
 from rhemascript.evidence.artifact_verification import verify_artifact
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry, ReadinessReplayError
 
@@ -50,7 +47,7 @@ class RAEIFindingTests(unittest.TestCase):
             "expected_behavior": "The clip should be portrait 9:16.",
             "observed_behavior": "The returned clip was landscape 16:9.",
             "impact": "The generation attempt and its limited credits were wasted.",
-            "reproduction_steps": reproduction_steps or ["Select portrait 9:16 before each clip request."],
+            "reproduction_steps": ["Select portrait 9:16 before each clip request."] if reproduction_steps is None else reproduction_steps,
             "supporting_evidence": support,
             "evidence_id": f"EV-FND-OBS-{finding_id}",
             "evidence_version": "1.0",
