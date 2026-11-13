@@ -319,7 +319,7 @@ class ApprovalVerifierTests(unittest.TestCase):
                 self.verifier.verify_many_and_consume((token,), (self.v2_expectation(),))
         self.assertEqual(self.used, set())
 
-    def test_rejects_v2_credential_without_exact_artifact_expectation(self):
+    def test_rejects_v3_credential_without_exact_artifact_expectation(self):
         binding = self.artifact_binding()
         token = self.credential(
             schema="RhemaScript.ApprovalCredential.v3",
@@ -329,7 +329,11 @@ class ApprovalVerifierTests(unittest.TestCase):
             artifact_size_bytes=binding["size_bytes"],
         )
         with self.assertRaisesRegex(ApprovalError, "exact artifact expectation"):
-            self.verify(token)
+            self.verifier.verify_many_and_consume(
+                (token,),
+                ({"action": "PUBLISH", "project_id": "RS-PWW-001",
+                  "project_version": "3.2", "request_id": "publish-request-0001"},),
+            )
 
     def test_rejects_legacy_v1_credential_when_artifact_binding_is_required(self):
         with self.assertRaisesRegex(ApprovalError, "schema v2 or v3"):
