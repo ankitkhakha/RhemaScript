@@ -1,17 +1,23 @@
 import unittest
 import threading
 import json
+import hashlib
+import os
+import tempfile
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
+from rhemascript.core.approval_store import SQLitePublishSessionRegistry
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
     ExternalIntegrationGateway,
     ProviderBinding,
+    _publish_approval_fingerprint,
 )
 
 
@@ -112,6 +118,38 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
         verified = verifier.verify_many_and_consume(tuple(credentials), expectations)
         return {"verified_approvals": verified}
+
+    def make_registry(self, authority, request_id, session_url=None):
+        temporary = tempfile.TemporaryDirectory()
+        os.chmod(temporary.name, 0o700)
+        registry = SQLitePublishSessionRegistry(Path(temporary.name) / "publish.sqlite3")
+        approvals = authority["verified_approvals"]
+        first = approvals[0]
+        identity = {
+            "project_id": first.project_id,
+            "project_version": first.project_version,
+            "request_id": request_id,
+            "approval_fingerprint": _publish_approval_fingerprint(approvals),
+            "artifact_id": first.artifact_id,
+            "artifact_version": first.artifact_version,
+            "artifact_sha256": first.artifact_sha256,
+            "artifact_size_bytes": first.artifact_size_bytes,
+        }
+        if session_url is not None:
+            owner = "registry-setup"
+            self.assertTrue(registry.reserve_publish_session(
+                **identity, owner_id=owner, lease_seconds=60,
+            ))
+            self.assertTrue(registry.bind_publish_session(
+                **identity,
+                session_url_sha256=hashlib.sha256(session_url.encode()).hexdigest(),
+                owner_id=owner,
+            ))
+            self.assertTrue(registry.finalize_publish_session_operation(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=request_id, owner_id=owner,
+            ))
+        return temporary, registry
 
     def test_gateway_disabled_by_default_and_fails_before_transport(self):
         transport = NeverTransport()
@@ -328,7 +366,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 self.calls = []
             def send_request(self, url, method, headers, body, timeout):
                 self.calls.append((url, method, headers, body))
-                return 308, b"", {"Range": "bytes=0-127"}
+                return 308, b"", {"Range": "bytes=0-4"}
 
         transport = MethodTransport()
         binding = ProviderBinding(
@@ -340,21 +378,26 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "path_prefix": "/upload/youtube/v3/videos",
             }},
         )
+        authority = self.publish_authority("upload-2")
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=session-opaque"
+        temporary, registry = self.make_registry(authority, "upload-2", session_url=session_url)
+        self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
-            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+            (binding,), transport=transport, audit_sink=lambda event: None,
+            publish_session_registry=registry, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             status, body, response_headers = gateway.request(
-                "IF-18", "UPLOAD_CHUNK",
-                "https://www.googleapis.com/upload/youtube/v3/videos/session",
-                method="PUT", headers={"Authorization": "Bearer test"},
+                "IF-18", "UPLOAD_CHUNK", session_url,
+                method="PUT",
+                headers={"Authorization": "Bearer test", "Content-Range": "bytes 0-4/123456",
+                         "Content-Length": "5"},
                 body=b"chunk", request_id="upload-2", project_id="RS-1",
-                source_version="1.0",
-                authority=self.publish_authority("upload-2"),
+                source_version="1.0", authority=authority,
             )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
-        self.assertEqual(response_headers["Range"], "bytes=0-127")
+        self.assertEqual(response_headers["Range"], "bytes=0-4")
         self.assertEqual(transport.calls[0][1], "PUT")
 
     def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
@@ -372,9 +415,12 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "path_prefix": "/upload/youtube/v3/videos",
             }},
         )
+        authority = self.publish_authority("write-1")
+        temporary, registry = self.make_registry(authority, "write-1")
+        self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=AmbiguousTransport(),
-            audit_sink=events.append, enabled=True,
+            audit_sink=events.append, publish_session_registry=registry, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
@@ -382,10 +428,11 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "IF-18", "UPLOAD_SESSION",
                     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
                     method="POST", body=b"metadata", request_id="write-1",
-                    project_id="RS-1", source_version="1.0",
-                    authority=self.publish_authority("write-1"),
+                    project_id="RS-1", source_version="1.0", authority=authority,
                 )
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
+        state = registry.get_publish_session(project_id="RS-1", project_version="1.0", request_id="write-1")
+        self.assertEqual(state["state"], "INDETERMINATE")
         self.assertNotIn("FAILED", [event["phase"] for event in events])
 
     def test_thumbnail_write_is_blocked_at_gateway_before_transport(self):
@@ -415,7 +462,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
     def test_write_completion_audit_failure_is_indeterminate(self):
         class SuccessTransport:
             def send_request(self, url, method, headers, body, timeout):
-                return 200, b'{"session":"created"}', {"Location": "https://www.googleapis.com/session/opaque"}
+                return 200, b'{"session":"created"}', {"Location": "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=opaque"}
 
         events = []
         def audit(event):
@@ -432,8 +479,12 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "path_prefix": "/upload/youtube/v3/videos",
             }},
         )
+        authority = self.publish_authority("write-2")
+        temporary, registry = self.make_registry(authority, "write-2")
+        self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
-            (binding,), transport=SuccessTransport(), audit_sink=audit, enabled=True,
+            (binding,), transport=SuccessTransport(), audit_sink=audit,
+            publish_session_registry=registry, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
@@ -441,10 +492,12 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "IF-18", "UPLOAD_SESSION",
                     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
                     method="POST", body=b"metadata", request_id="write-2",
-                    project_id="RS-1", source_version="1.0",
-                    authority=self.publish_authority("write-2"),
+                    project_id="RS-1", source_version="1.0", authority=authority,
                 )
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
+        state = registry.get_publish_session(project_id="RS-1", project_version="1.0", request_id="write-2")
+        self.assertEqual(state["state"], "INDETERMINATE")
+        self.assertIsNotNone(state["session_url_sha256"])
 
     def test_method_aware_request_audits_and_preserves_response_headers(self):
         class MethodTransport:
