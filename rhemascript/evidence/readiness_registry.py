@@ -159,6 +159,10 @@ class ReadinessRunRegistry:
                 raise ValueError(f"{name} must be null or a non-empty string")
         if not isinstance(payload, dict):
             raise TypeError("activity event payload must be an object")
+        if (event_type == "FINDING_CAPTURED"
+                and (payload.get("identity_authentication_status") == "VERIFIED"
+                     or "submitter_identity" in payload or "submitter_authorization" in payload)):
+            raise ValueError("authenticated finding capture requires append_authenticated_finding_capture_event")
         normalised = self._normalise(payload)
         encoded = self._canonical(normalised)
         if not self.verify():
@@ -177,6 +181,94 @@ class ReadinessRunRegistry:
                 db.commit()
                 return False
             self._append_event_tx(db, event_id, event_type, normalised, project_id, subject_id)
+            db.commit()
+        return True
+
+    def append_authenticated_finding_capture_event(
+        self, event_id: str, payload: dict[str, Any], *,
+        project_id: str, project_version: str, request_id: str, approval: Any,
+    ) -> bool:
+        """Append a finding capture bound to one consumed, verifier-issued V3 submitter approval."""
+        from datetime import datetime, timezone
+        from rhemascript.core.approvals import is_verified_approval
+
+        if (not isinstance(event_id, str) or not event_id.strip() or event_id != event_id.strip()
+                or not isinstance(project_id, str) or not project_id.strip()
+                or not isinstance(project_version, str) or not project_version.strip()
+                or not isinstance(request_id, str) or not request_id.strip()):
+            raise ValueError("authenticated finding capture scope must be non-empty and trimmed")
+        if not is_verified_approval(approval):
+            raise ValueError("authenticated finding capture requires a verifier-issued approval")
+        if (approval.credential_schema != "RhemaScript.ApprovalCredential.v3"
+                or approval.action != "FINDING_SUBMIT"
+                or approval.project_id != project_id
+                or approval.project_version != project_version
+                or approval.request_id != request_id
+                or approval.expires_at <= datetime.now(timezone.utc)):
+            raise ValueError("submitter approval schema, action, scope or expiry is invalid")
+        if not isinstance(payload, dict) or "submitter_identity" in payload or "submitter_authorization" in payload:
+            raise ValueError("finding capture payload must not contain caller-supplied identity claims")
+        finding_id = payload.get("finding_id")
+        version = payload.get("version")
+        primary = payload.get("observation_evidence")
+        if (not isinstance(finding_id, str) or not finding_id.strip()
+                or not isinstance(version, str) or not version.strip()
+                or payload.get("project_id") != project_id
+                or payload.get("identity_authentication_status") != "UNVERIFIED"
+                or not isinstance(primary, dict)
+                or not {"evidence_id", "version", "sha256", "size_bytes"}.issubset(primary)):
+            raise ValueError("finding capture payload is incomplete or already asserts authenticated identity")
+        if (approval.artifact_id != primary.get("evidence_id")
+                or approval.artifact_version != primary.get("version")
+                or approval.artifact_sha256 != primary.get("sha256")
+                or approval.artifact_size_bytes != primary.get("size_bytes")
+                or not approval.subject_id or not approval.actor_id
+                or not approval.actor_role or not approval.authn_context
+                or not approval.identity_session_id or not approval.identity_policy_version
+                or not approval.identity_provider_id or approval.authenticated_at is None):
+            raise ValueError("submitter approval is not bound to the exact observation evidence or identity claims")
+        enriched = dict(payload)
+        enriched["identity_authentication_status"] = "VERIFIED"
+        enriched["submitter_identity"] = {
+            "actor_id": approval.actor_id,
+            "subject_id": approval.subject_id,
+            "actor_role": approval.actor_role,
+            "authn_context": approval.authn_context,
+            "authenticated_at": approval.authenticated_at.isoformat(),
+            "identity_session_id": approval.identity_session_id,
+            "identity_policy_version": approval.identity_policy_version,
+            "identity_provider_id": approval.identity_provider_id,
+        }
+        enriched["submitter_authorization"] = {
+            "issuer": approval.issuer,
+            "approval_id": approval.approval_id,
+            "action": approval.action,
+            "project_id": approval.project_id,
+            "project_version": approval.project_version,
+            "request_id": approval.request_id,
+            "artifact_sha256": approval.artifact_sha256,
+            "artifact_size_bytes": approval.artifact_size_bytes,
+            "signature_sha256": hashlib.sha256((approval.signature or "").encode("ascii")).hexdigest(),
+        }
+        normalised = self._normalise(enriched)
+        encoded = self._canonical(normalised)
+        if not self.verify():
+            raise ValueError("cannot append to an invalid activity history")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT event_type,project_id,subject_id,payload_json FROM activity_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if row:
+                if row != ("FINDING_CAPTURED", project_id, finding_id, encoded):
+                    db.rollback()
+                    raise ReadinessReplayError("event_id already exists with different authenticated finding data")
+                db.commit()
+                return False
+            self._append_event_tx(
+                db, event_id, "FINDING_CAPTURED", normalised, project_id, finding_id,
+            )
             db.commit()
         return True
 
