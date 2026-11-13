@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+import hashlib
 import os
 from pathlib import Path
 import tempfile
@@ -17,7 +18,10 @@ from rhemascript.integrations.youtube_analytics_artifact_store import (
 )
 from rhemascript.evidence.artifact_verification import verify_artifact
 from rhemascript.evidence import validate_evidence_pack
-from rhemascript.evidence.evidence_pack_integrity import verify_pack_artifacts
+from rhemascript.evidence.evidence_pack_integrity import (
+    EvidencePackIntegrityError,
+    verify_pack_artifacts,
+)
 
 
 def make_snapshot(start, end, views):
@@ -168,6 +172,88 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             self.assertEqual(record["previous_snapshot_artifact_id"], "YT-PREVIOUS")
             self.assertEqual(record["current_snapshot_sha256"], comparison["current_snapshot_sha256"])
             self.assertEqual(record["previous_snapshot_sha256"], comparison["previous_snapshot_sha256"])
+
+    def test_pack_integrity_rejects_forged_comparison_even_when_file_hashes_match(self):
+        previous = make_snapshot("2026-10-01", "2026-10-01", 10)
+        current = make_snapshot("2026-10-02", "2026-10-02", 15)
+        with tempfile.TemporaryDirectory() as directory:
+            previous_record = persist_analytics_evidence_artifact(
+                previous, evidence_root=directory, relative_path="previous.json",
+                artifact_id="YT-PREV", project_id="PROJECT-1", project_version="3",
+            )
+            current_record = persist_analytics_evidence_artifact(
+                current, evidence_root=directory, relative_path="current.json",
+                artifact_id="YT-CURRENT", project_id="PROJECT-1", project_version="3",
+            )
+            forged = compare_analytics_periods(current, previous)
+            forged["metrics"]["views"]["current_value"] = "99"
+            forged["metrics"]["views"]["absolute_change"] = "89"
+            forged["metrics"]["views"]["percentage_change"] = "890"
+            forged["comparison_sha256"] = _canonical_digest({
+                key: value for key, value in forged.items() if key != "comparison_sha256"
+            })
+
+            envelope = {
+                "evidence_id": "YT-COMP-FORGED",
+                "evidence_version": "1",
+                "artifact_type": "YOUTUBE_ANALYTICS_COMPARISON",
+                "project_id": "PROJECT-1",
+                "project_version": "3",
+                "payload": forged,
+            }
+            raw = json.dumps(
+                envelope, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            ).encode("utf-8")
+            (Path(directory) / "forged.json").write_bytes(raw)
+            forged_record = {
+                "artifact_id": "YT-COMP-FORGED",
+                "project_id": "PROJECT-1",
+                "project_version": "3",
+                "artifact_type": "YOUTUBE_ANALYTICS_COMPARISON",
+                "version": "1",
+                "status": "DRAFT",
+                "local_path": "forged.json",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "comparison_sha256": forged["comparison_sha256"],
+                "current_snapshot_artifact_id": "YT-CURRENT",
+                "previous_snapshot_artifact_id": "YT-PREV",
+                "current_snapshot_sha256": current["snapshot_sha256"],
+                "previous_snapshot_sha256": previous["snapshot_sha256"],
+            }
+            manifest = {
+                "manifest_id": "MANIFEST-FORGED",
+                "schema_version": "1.0",
+                "project_record": {
+                    "record_id": "PROJECT-RECORD-1",
+                    "record_type": "RHEMASCRIPT_PROJECT",
+                    "schema_version": "1.0",
+                    "project_id": "PROJECT-1",
+                    "status": "DRAFT",
+                    "classification": "OPERATIONAL",
+                    "version": "3",
+                },
+                "artifacts": [previous_record, current_record, forged_record],
+                "evidence_records": [{
+                    "evidence_id": "EVIDENCE-FORGED",
+                    "capability_id": "CAP-01",
+                    "payload": {},
+                    "evidence_refs": [],
+                    "artifact_refs": ["YT-COMP-FORGED"],
+                }],
+                "source_to_final_links": [
+                    {"from_artifact_id": "YT-PREV", "to_artifact_id": "YT-COMP-FORGED",
+                     "relationship": "DERIVED_FROM"},
+                    {"from_artifact_id": "YT-CURRENT", "to_artifact_id": "YT-COMP-FORGED",
+                     "relationship": "DERIVED_FROM"},
+                ],
+            }
+            validated = validate_evidence_pack(manifest)
+            with self.assertRaisesRegex(
+                EvidencePackIntegrityError, "does not derive from its exact source snapshots"
+            ):
+                verify_pack_artifacts(validated, directory)
+
 
     def test_comparison_persistence_requires_both_exact_source_snapshots(self):
         previous = make_snapshot("2026-10-01", "2026-10-01", 10)
