@@ -350,6 +350,31 @@ class SQLiteApprovalConsumptionStore:
         finally:
             db.close()
 
+    def read_consumption_state(self, approval_id: str, nonce: str) -> tuple[bool, bool]:
+        """Read consumed and revoked state from one consistent SQLite snapshot."""
+        if (not isinstance(approval_id, str) or not approval_id.strip()
+                or not isinstance(nonce, str) or not nonce.strip()):
+            raise ValueError("approval ID and nonce are required")
+        db = self._connect()
+        try:
+            db.execute("BEGIN")
+            consumed = db.execute(
+                "SELECT 1 FROM consumed_approvals WHERE approval_id=? OR nonce=?",
+                (approval_id, nonce),
+            ).fetchone() is not None
+            revoked = db.execute(
+                "SELECT 1 FROM revoked_approvals WHERE approval_id=? OR nonce=?",
+                (approval_id, nonce),
+            ).fetchone() is not None
+            db.execute("COMMIT")
+            return consumed, revoked
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise ApprovalStoreError("approval consumption/revocation snapshot could not be read") from None
+        finally:
+            db.close()
+
     def _snapshot_bytes(self) -> bytes:
         db = self._connect()
         try:
