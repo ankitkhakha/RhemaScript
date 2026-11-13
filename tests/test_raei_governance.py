@@ -74,7 +74,42 @@ class RAEIGovernanceTests(unittest.TestCase):
             self.credential(second_action, actors[1], "approve-0001"),
         )
 
+    def capture_finding(self, finding_id, version="1.0"):
+        evidence_ref = {
+            "evidence_id": self.evidence.evidence_id,
+            "relative_path": self.evidence.relative_path,
+            "version": self.evidence.version,
+            "sha256": self.evidence.sha256,
+            "size_bytes": self.evidence.size_bytes,
+            "description": "Finding source evidence",
+        }
+        self.registry.append_activity_event(
+            f"FINDING:{finding_id}@{version}", "FINDING_CAPTURED",
+            {"finding_id": finding_id, "version": version,
+             "evidence_refs": [evidence_ref]},
+            project_id="RS-PWW-001", subject_id=finding_id,
+        )
+
+    def register_pending_knowledge(self, knowledge_id, version="0.1"):
+        self.registry.record(
+            f"KNOWLEDGE:{knowledge_id}:{version}",
+            {
+                "record_type": "RAEI_KNOWLEDGE_ITEM_V1",
+                "knowledge_payload": {
+                    "knowledge_id": knowledge_id, "version": version,
+                    "status": "PENDING_REVIEW",
+                },
+                "evidence_binding": {
+                    "evidence_id": self.evidence.evidence_id,
+                    "evidence_version": self.evidence.version,
+                    "evidence_sha256": self.evidence.sha256,
+                },
+            },
+            (self.evidence,), (),
+        )
+
     def test_finding_disposition_requires_two_distinct_signed_actors(self):
+        self.capture_finding("RS-FND-001")
         result = record_finding_disposition(
             self.registry, self.verifier,
             self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM"),
@@ -94,6 +129,7 @@ class RAEIGovernanceTests(unittest.TestCase):
                          ["reviewer-001", "approver-001"])
 
     def test_knowledge_review_requires_two_distinct_signed_actors(self):
+        self.register_pending_knowledge("BWSF-01")
         result = record_knowledge_review(
             self.registry, self.verifier,
             self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"),
@@ -119,6 +155,7 @@ class RAEIGovernanceTests(unittest.TestCase):
             )
 
     def test_same_actor_cannot_supply_both_reviews(self):
+        self.capture_finding("RS-FND-002")
         with self.assertRaisesRegex(RAEIGovernanceError, "distinct authenticated actors"):
             record_finding_disposition(
                 self.registry, self.verifier,
@@ -135,6 +172,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         self.assertEqual(self.used, set())
 
     def test_wrong_project_scope_is_rejected_without_event(self):
+        self.capture_finding("RS-FND-003")
         credentials = (
             self.credential("FINDING_DISPOSITION_REVIEW", "reviewer-001", "review-0002"),
             self.credential("FINDING_DISPOSITION_CONFIRM", "approver-001", "approve-0002"),
@@ -152,6 +190,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         self.assertEqual(list_governed_reviews(self.registry), [])
 
     def test_unverified_evidence_object_is_rejected(self):
+        self.register_pending_knowledge("BWSF-02")
         with self.assertRaises(RAEIGovernanceError):
             record_knowledge_review(
                 self.registry, self.verifier,
@@ -166,6 +205,7 @@ class RAEIGovernanceTests(unittest.TestCase):
 
 
     def test_changed_evidence_bytes_are_rejected_before_approval_consumption(self):
+        self.register_pending_knowledge("BWSF-03")
         (self.evidence_root / "review.txt").write_bytes(b"tampered evidence")
         with self.assertRaisesRegex(RAEIGovernanceError, "could not be reverified|bytes changed"):
             record_knowledge_review(
