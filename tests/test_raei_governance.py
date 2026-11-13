@@ -380,7 +380,7 @@ class RAEIGovernanceTests(unittest.TestCase):
             self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"),
             knowledge_id="BWSF-01", knowledge_version="0.1",
             project_id="RS-PWW-001", project_version="3.2",
-            request_id="review-request-direct-tamper", decision="APPROVED",
+            request_id="review-request-0001", decision="APPROVED",
             rationale="Sources and claims independently reviewed.",
             evidence_root=str(self.evidence_root), evidence=self.evidence,
         )
