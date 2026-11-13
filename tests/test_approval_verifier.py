@@ -95,6 +95,42 @@ class ApprovalVerifierTests(unittest.TestCase):
                 "artifact_binding": {"artifact_id": "ART-FINAL-001", "artifact_version": "7",
                                      "sha256": "a" * 64, "size_bytes": 987654}}
 
+    def test_high_risk_approval_fails_closed_without_identity_policy(self):
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": self.key},
+            consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "policy is not configured"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+
+    def test_identity_policy_is_immutable_after_verifier_construction(self):
+        roles = ["publisher"]
+        contexts = ["mfa"]
+        policy = {
+            "provider_id": "test-idp",
+            "allowed_roles_by_action": {"PUBLISH": roles},
+            "allowed_authn_contexts": contexts,
+            "max_authentication_age_seconds": 300,
+        }
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": self.key},
+            consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": policy},
+        )
+        roles[:] = ["administrator"]
+        contexts[:] = ["password-only"]
+        result = verifier.verify_many_and_consume(
+            (self.credential(),), (self.expectations("PUBLISH"),),
+        )[0]
+        self.assertEqual(result.actor_role, "publisher")
+        self.assertEqual(result.authn_context, "mfa")
+
     def test_accepts_valid_signed_scoped_approval_once(self):
         result = self.verify(self.credential())
         self.assertEqual(result.actor_id, "director-0001")
