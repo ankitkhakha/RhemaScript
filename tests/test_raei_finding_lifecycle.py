@@ -1365,5 +1365,33 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
 
 
+    def test_consumed_approval_id_is_single_use_across_all_activity_event_types(self):
+        approval_id = "approval-single-use-boundary-001"
+        with self.registry._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.registry._append_event_tx(
+                db, "TEST-AUTHORIZATION-REPLAY-001", "FINDING_RESEARCHED",
+                {"authorization": {"approval_id": approval_id}},
+                self.project_id, self.finding_id,
+            )
+            with self.assertRaisesRegex(Exception, "already authorized another authenticated event"):
+                self.registry._assert_approval_ids_unused(db, (approval_id,))
+            with self.assertRaisesRegex(Exception, "already authorized another authenticated event"):
+                self.registry._assert_approval_ids_unused(db, (approval_id, "approval-unused-002"))
+            db.rollback()
+
+    def test_governed_approval_replay_detects_earlier_lifecycle_event(self):
+        approval_id = "approval-lifecycle-before-governed-001"
+        with self.registry._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.registry._append_event_tx(
+                db, "TEST-LIFECYCLE-AUTHORIZATION-001", "FINDING_IMPLEMENTED",
+                {"authorization": {"approval_id": approval_id}},
+                self.project_id, self.finding_id,
+            )
+            with self.assertRaisesRegex(Exception, "already authorized another authenticated event"):
+                self.registry._assert_approval_ids_unused(db, (approval_id,))
+            db.rollback()
+
 if __name__ == "__main__":
     unittest.main()
