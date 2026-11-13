@@ -159,6 +159,26 @@ class SQLiteLeaseStateModel:
             if not hmac.compare_digest(calculated, stored_hash):
                 return False
             previous_hash = stored_hash
+        # When a checkpoint exists, its event-history prefix is the retained
+        # local reference point. This detects truncation or rewriting of any
+        # event that was included in the latest checkpoint.
+        anchor = self._anchor_connect()
+        try:
+            anchored = anchor.execute(
+                "SELECT checkpoint_json FROM recovery_anchor WHERE singleton=1"
+            ).fetchone()
+            if anchored is not None and anchored[0] is not None:
+                checkpoint = json.loads(anchored[0])
+                anchored_events = checkpoint.get("state", {}).get("event_history")
+                if not isinstance(anchored_events, list) or len(rows) < len(anchored_events):
+                    return False
+                current_prefix = [list(row) for row in rows[:len(anchored_events)]]
+                if current_prefix != anchored_events:
+                    return False
+        except (sqlite3.Error, ValueError, TypeError, AttributeError):
+            return False
+        finally:
+            anchor.close()
         return True
 
     def read_event_history(self) -> list[dict[str, object]]:
