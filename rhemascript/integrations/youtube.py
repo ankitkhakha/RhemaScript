@@ -691,6 +691,7 @@ class YouTubeClient:
         self._gateway_source_version = project_version
         self._gateway_authority = {"verified_approvals": verified_approvals}
         self._gateway_request_id = request_id
+        self._gateway_artifact_binding = artifact_binding
         path = Path(image_path)
         if not path.is_file():
             raise YouTubeIntegrationError("thumbnail file does not exist")
