@@ -50,11 +50,16 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
             ["2026-10-09", 30, 6.0, 3],
         ])
         result = compare_analytics_periods(current, previous)
-        self.assertEqual(result["metrics"]["views"]["current_total"], "45")
-        self.assertEqual(result["metrics"]["views"]["previous_total"], "30")
+        self.assertEqual(result["metrics"]["views"]["current_value"], "45")
+        self.assertEqual(result["metrics"]["views"]["previous_value"], "30")
         self.assertEqual(result["metrics"]["views"]["absolute_change"], "15")
         self.assertEqual(result["metrics"]["views"]["percentage_change"], "50")
         self.assertEqual(result["metrics"]["views"]["status"], "COMPARABLE")
+        self.assertEqual(result["metrics"]["views"]["aggregation"], "SUM")
+        self.assertEqual(result["metrics"]["averageViewDuration"]["aggregation"], "WEIGHTED_AVERAGE_SECONDS")
+        self.assertEqual(result["metrics"]["averageViewDuration"]["current_value"], "12")
+        self.assertEqual(result["metrics"]["averageViewDuration"]["previous_value"], "14")
+        self.assertEqual(result["metrics"]["averageViewDuration"]["absolute_change"], "-2")
         self.assertEqual(result["current_snapshot_sha256"], current["snapshot_sha256"])
         self.assertEqual(result["previous_snapshot_sha256"], previous["snapshot_sha256"])
         self.assertTrue(verify_analytics_period_comparison(result))
@@ -72,7 +77,7 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1]])
         result = compare_analytics_periods(current, previous)
         self.assertEqual(result["previous_period"]["data_status"], "NO_DATA")
-        self.assertIsNone(result["metrics"]["views"]["previous_total"])
+        self.assertIsNone(result["metrics"]["views"]["previous_value"])
         self.assertEqual(result["metrics"]["views"]["status"], "INSUFFICIENT_DATA")
         self.assertIsNone(result["metrics"]["views"]["absolute_change"])
 
@@ -104,7 +109,7 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1]])
         result = compare_analytics_periods(current, previous)
         altered = deepcopy(result)
-        altered["metrics"]["views"]["current_total"] = "999"
+        altered["metrics"]["views"]["current_value"] = "999"
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "digest does not match"):
             verify_analytics_period_comparison(altered)
 
