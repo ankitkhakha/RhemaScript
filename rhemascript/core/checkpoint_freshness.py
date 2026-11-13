@@ -115,6 +115,7 @@ def advance_checkpoint_anchor(
 
 def verify_checkpoint_against_anchor(
     archive_path: str, *, key: bytes, anchor: MonotonicCheckpointAnchor,
+    now: datetime | None = None,
 ) -> CheckpointAnchorRecord:
     """Require a cryptographically verified archive to match the latest anchor."""
     if not isinstance(anchor, MonotonicCheckpointAnchor):
@@ -135,10 +136,14 @@ def verify_checkpoint_against_anchor(
     if (latest.generation != archive_result["generation"]
             or latest.snapshot_sha256 != archive_result["snapshot_sha256"]):
         raise ValueError("checkpoint archive is stale or differs from the latest independent anchor")
-    now = datetime.now(timezone.utc)
+    current_time = now or datetime.now(timezone.utc)
+    if (not isinstance(current_time, datetime) or current_time.tzinfo is None
+            or current_time.utcoffset() is None):
+        raise ValueError("anchor verification clock must be timezone-aware")
+    current_time = current_time.astimezone(timezone.utc)
     resolved_at = latest.resolved_at.astimezone(timezone.utc)
-    if resolved_at > now + timedelta(seconds=30):
+    if resolved_at > current_time + timedelta(seconds=30):
         raise ValueError("independent checkpoint anchor response is future-dated")
-    if now - resolved_at > timedelta(seconds=30):
+    if current_time - resolved_at > timedelta(seconds=30):
         raise ValueError("independent checkpoint anchor response is stale")
     return latest
