@@ -699,9 +699,9 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         )
         self.assertNotEqual(first_fingerprint, third_events[0]["request_fingerprint"])
         self.assertNotIn("secret", repr(events + second_events + third_events))
-        self.assertNotIn("opaque", repr(events + second_events))
-        self.assertNotIn("different-opaque-id", repr(events + second_events))
-        self.assertNotIn("video bytes", repr(events + second_events))
+        self.assertNotIn("opaque", repr(events + second_events + third_events))
+        self.assertNotIn("different-opaque-id", repr(events + second_events + third_events))
+        self.assertNotIn("video bytes", repr(events + second_events + third_events))
 
     def test_generic_post_invocation_requires_external_write_authority(self):
         transport = NeverTransport()
