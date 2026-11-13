@@ -492,6 +492,36 @@ class ApprovalVerifierTests(unittest.TestCase):
         self.assertTrue(is_verified_approval(captured[0]))
         self.assertFalse(is_consumed_verified_approval(captured[0]))
 
+    def test_legacy_bound_store_without_snapshot_fails_closed_at_write_boundary(self):
+        class LegacyStore:
+            def consume_many_once(inner, entries):
+                return True
+
+            def is_consumed(inner, approval_id, nonce):
+                return True
+
+            def is_revoked(inner, approval_id, nonce):
+                return False
+
+        store = LegacyStore()
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": self.key},
+            consume_many_once=store.consume_many_once,
+            clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {"PUBLISH": ["publisher"]},
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
+        )
+        approval = verifier.verify_many_and_consume(
+            (self.credential(),), (self.expectations("PUBLISH"),),
+        )[0]
+        with self.assertRaisesRegex(ApprovalError, "consistent consumption/revocation snapshot"):
+            verifier.revalidate_consumed_approval(approval)
+
     def test_successfully_consumed_approval_has_consumed_capability(self):
         verified = self.verify(self.credential())
         self.assertTrue(is_verified_approval(verified))
