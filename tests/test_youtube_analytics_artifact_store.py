@@ -161,6 +161,8 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             self.assertEqual(record["comparison_sha256"], comparison["comparison_sha256"])
             self.assertEqual(record["current_snapshot_artifact_id"], "YT-CURRENT")
             self.assertEqual(record["previous_snapshot_artifact_id"], "YT-PREVIOUS")
+            self.assertEqual(record["current_snapshot_sha256"], comparison["current_snapshot_sha256"])
+            self.assertEqual(record["previous_snapshot_sha256"], comparison["previous_snapshot_sha256"])
 
 
 if __name__ == "__main__":
