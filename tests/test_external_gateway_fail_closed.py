@@ -1,6 +1,12 @@
 import unittest
 import threading
+import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from rhemascript.core.approvals import ApprovalVerifier
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
@@ -36,6 +42,59 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "payload": {},
             "source_version": "1.0",
         }
+
+
+    def publish_authority(self, request_id, project_id="RS-1", source_version="1.0"):
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        now = datetime.now(timezone.utc)
+        binding = {
+            "artifact_id": "ART-FINAL-001",
+            "artifact_version": "1",
+            "sha256": "a" * 64,
+            "size_bytes": 123456,
+        }
+        credentials = []
+        for action, actor, suffix in (
+            ("FINAL_ACCEPTANCE", "director-001", "final"),
+            ("PUBLISH", "publisher-001", "publish"),
+        ):
+            payload = {
+                "schema": "RhemaScript.ApprovalCredential.v2",
+                "approval_id": f"approval-{suffix}-{request_id}",
+                "issuer": "RhemaScript-Approval-Service",
+                "actor_id": actor,
+                "action": action,
+                "project_id": project_id,
+                "project_version": source_version,
+                "request_id": request_id,
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "nonce": f"nonce-{suffix}-{request_id}",
+                "key_id": "key-2026-01",
+                "artifact_id": binding["artifact_id"],
+                "artifact_version": binding["artifact_version"],
+                "artifact_sha256": binding["sha256"],
+                "artifact_size_bytes": binding["size_bytes"],
+            }
+            payload["signature"] = private_key.sign(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode()
+            ).hex()
+            credentials.append(payload)
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=lambda entries: True,
+            clock=lambda: now,
+        )
+        expectations = tuple({
+            "action": action, "project_id": project_id,
+            "project_version": source_version, "request_id": request_id,
+            "artifact_binding": binding,
+        } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
+        verified = verifier.verify_many_and_consume(tuple(credentials), expectations)
+        return {"verified_approvals": verified}
 
     def test_gateway_disabled_by_default_and_fails_before_transport(self):
         transport = NeverTransport()
@@ -149,7 +208,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "body": b"chunk", "request_id": "upload-1", "project_id": "RS-1",
             "source_version": "1.0",
         }
-        with self.assertRaisesRegex(ExternalIntegrationError, "explicit authority"):
+        with self.assertRaisesRegex(ExternalIntegrationError, "verifier-issued signed approvals"):
             gateway.request(
                 "IF-18", "UPLOAD_CHUNK",
                 "https://www.googleapis.com/upload/youtube/v3/videos/session",
@@ -185,7 +244,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 method="PUT", headers={"Authorization": "Bearer test"},
                 body=b"chunk", request_id="upload-2", project_id="RS-1",
                 source_version="1.0",
-                authority={"publishing_authorisation": True},
+                authority=self.publish_authority("upload-2"),
             )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
@@ -218,7 +277,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
                     method="POST", body=b"metadata", request_id="write-1",
                     project_id="RS-1", source_version="1.0",
-                    authority={"publishing_authorisation": True},
+                    authority=self.publish_authority("write-1"),
                 )
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
         self.assertNotIn("FAILED", [event["phase"] for event in events])
@@ -253,7 +312,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
                     method="POST", body=b"metadata", request_id="write-2",
                     project_id="RS-1", source_version="1.0",
-                    authority={"publishing_authorisation": True},
+                    authority=self.publish_authority("write-2"),
                 )
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
 
@@ -282,8 +341,8 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "IF-18", "UPLOAD_CHUNK",
             "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
             method="PUT", headers={"Authorization": "Bearer secret"},
-            body=b"video bytes", request_id="r1", project_id="p1", source_version="1",
-            authority={"publishing_authorisation": True},
+            body=b"video bytes", request_id="request-3", project_id="project-1", source_version="1.0",
+            authority=self.publish_authority("request-3", project_id="project-1", source_version="1.0"),
         )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
