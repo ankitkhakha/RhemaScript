@@ -306,8 +306,16 @@ def record_finding_reopening(
         raise RAEIGovernanceError("two signed reopening approvals are required")
     if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 4000:
         raise RAEIGovernanceError("reopening rationale must be non-empty and at most 4000 characters")
-    if not isinstance(new_finding_version, str) or not new_finding_version.strip() or new_finding_version == finding_version:
-        raise RAEIGovernanceError("reopening requires a distinct new finding version")
+    import re
+    version_pattern = re.compile(r"^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$")
+    if (not isinstance(finding_version, str) or not version_pattern.fullmatch(finding_version)
+            or not isinstance(new_finding_version, str) or not version_pattern.fullmatch(new_finding_version)):
+        raise RAEIGovernanceError("reopening versions must use numeric major.minor[.patch] format")
+    old_parts = tuple(int(part) for part in finding_version.split("."))
+    new_parts = tuple(int(part) for part in new_finding_version.split("."))
+    width = max(len(old_parts), len(new_parts))
+    if old_parts + (0,) * (width - len(old_parts)) >= new_parts + (0,) * (width - len(new_parts)):
+        raise RAEIGovernanceError("new finding version must be numerically greater than the closed version")
     if not is_verified_evidence_version(evidence):
         raise RAEIGovernanceError("reopening requires a verified evidence artifact")
     try:
