@@ -91,3 +91,12 @@ A concurrency review found that integrity verification and checkpoint constructi
 The readiness registry now holds one explicit read transaction while it reads readiness rows, activity events and append-only trigger metadata for `verify()`, and while it reads both tables for checkpoint snapshot digests. The approval-consumption store likewise holds one explicit read transaction across consumed and revoked approval tables when constructing checkpoint bytes. SQLite WAL readers retain a stable snapshot while concurrent writers commit; this behavior is documented by SQLite: https://www.sqlite.org/isolation.html.
 
 Adversarial interleaving tests arrange a real second-connection commit after the first table has been read. They assert that the in-flight verification/checkpoint snapshot remains internally consistent and that the concurrent commit is visible to a subsequent read. This does not replace independent HMAC checkpoint custody, and it does not make local SQLite storage tamper-proof.
+
+
+## Anti-rollback and freshness boundary
+
+The archive's authenticated `created_at` value is a signed timestamp, not a monotonic sequence or an independently trusted freshness proof. `verify_checkpoint_archive` proves that the supplied archive is internally authentic; with `current_store`, it reports whether that archive matches the current database snapshot. It cannot determine whether a newer valid archive exists elsewhere, and it cannot detect a coordinated rollback in which an older database snapshot and its matching older archive are both replayed.
+
+The readiness-registry HMAC checkpoint has the same fundamental limitation: verification is relative to the exact checkpoint object and key supplied by the caller. A valid old checkpoint remains valid for the old state it describes.
+
+Before production recovery is approved, an independent anti-rollback anchor is required. It must retain at least a monotonically increasing checkpoint generation and the corresponding snapshot digest in a separately administered append-only or hardware-backed system. Recovery must compare the candidate archive against that latest trusted anchor before any restore is considered. No such monotonic anchor is implemented or claimed by this repository.
