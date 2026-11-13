@@ -96,6 +96,8 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
                 "comparison_sha256": "c" * 64,
                 "current_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
                 "previous_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+                "current_snapshot_sha256": "b" * 64,
+                "previous_snapshot_sha256": "a" * 64,
             },
         ])
         manifest["source_to_final_links"] = [
@@ -113,6 +115,50 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
             {link["from_artifact_id"] for link in validated.source_to_final_links},
             {"ANALYTICS-SNAPSHOT-PREV", "ANALYTICS-SNAPSHOT-CURRENT"},
         )
+
+    def test_analytics_comparison_rejects_source_snapshot_digest_substitution(self):
+        manifest = make_pack()
+        manifest["artifacts"].extend([
+            {
+                "artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                "version": "1",
+                "status": "DRAFT",
+                "snapshot_sha256": "a" * 64,
+            },
+            {
+                "artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                "version": "1",
+                "status": "DRAFT",
+                "snapshot_sha256": "b" * 64,
+            },
+            {
+                "artifact_id": "ANALYTICS-COMPARISON-1",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_COMPARISON",
+                "version": "1",
+                "status": "DRAFT",
+                "comparison_sha256": "c" * 64,
+                "current_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+                "previous_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+                "current_snapshot_sha256": "d" * 64,
+                "previous_snapshot_sha256": "a" * 64,
+            },
+        ])
+        manifest["source_to_final_links"] = [
+            {"from_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+             "to_artifact_id": "ANALYTICS-COMPARISON-1", "relationship": "DERIVED_FROM"},
+            {"from_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+             "to_artifact_id": "ANALYTICS-COMPARISON-1", "relationship": "DERIVED_FROM"},
+        ]
+        with self.assertRaisesRegex(EvidencePackError, "digest does not match"):
+            validate_evidence_pack(manifest)
 
     def test_analytics_comparison_requires_both_derived_from_links(self):
         manifest = make_pack()
@@ -145,6 +191,8 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
                 "comparison_sha256": "c" * 64,
                 "current_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
                 "previous_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+                "current_snapshot_sha256": "b" * 64,
+                "previous_snapshot_sha256": "a" * 64,
             },
         ])
         manifest["source_to_final_links"] = [
@@ -166,6 +214,8 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
             "comparison_sha256": "c" * 64,
             "current_snapshot_artifact_id": "NOT-A-SNAPSHOT",
             "previous_snapshot_artifact_id": "ALSO-NOT-A-SNAPSHOT",
+            "current_snapshot_sha256": "b" * 64,
+            "previous_snapshot_sha256": "a" * 64,
         })
         with self.assertRaisesRegex(EvidencePackError, "missing or non-snapshot"):
             validate_evidence_pack(manifest)
