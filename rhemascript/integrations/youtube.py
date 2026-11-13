@@ -371,6 +371,13 @@ class YouTubeClient:
                 raise YouTubeIntegrationError("transport returned an invalid response contract")
             if len(raw) > 8_000_000:
                 raise YouTubeIntegrationError("YouTube response exceeds the 8 MB safety limit")
+            if (status >= 500 and method.upper() in {"POST", "PUT"}
+                    and parsed.hostname in {"www.googleapis.com", "youtube.googleapis.com"}
+                    and parsed.path.startswith("/upload/youtube/v3/videos")):
+                raise YouTubeIntegrationError(
+                    "YouTube upload write outcome is indeterminate; reconcile the existing upload session before retrying.",
+                    code="INDETERMINATE_WRITE",
+                )
             return status, raw, response_headers
         except HTTPError as exc:
             raw = exc.read(8_000_001)
