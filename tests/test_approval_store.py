@@ -293,6 +293,23 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         )
         audit = auditor.verify_persisted_record(persisted)
         self.assertTrue(audit["signature_valid"])
+
+        # During key rotation, retain the old public key for historical audit.
+        next_private_key = Ed25519PrivateKey.generate()
+        next_public_key = next_private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        rotation_auditor = ApprovalVerifier(
+            issuer="trusted-approval-issuer",
+            verification_keys={"key-2026-01": public_key, "key-2026-02": next_public_key},
+            consume_many_once=lambda entries: True,
+        )
+        self.assertTrue(rotation_auditor.verify_persisted_record(persisted)["signature_valid"])
+        retired_key_auditor = ApprovalVerifier(
+            issuer="trusted-approval-issuer",
+            verification_keys={"key-2026-02": next_public_key},
+            consume_many_once=lambda entries: True,
+        )
+        with self.assertRaisesRegex(ApprovalError, "trusted issuer is invalid"):
+            retired_key_auditor.verify_persisted_record(persisted)
         self.assertEqual(audit["credential_schema"], "RhemaScript.ApprovalCredential.v3")
         self.assertEqual(audit["artifact_sha256"], "a" * 64)
         self.assertEqual(audit["subject_id"], "subject-director-0001")
