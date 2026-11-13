@@ -1,7 +1,11 @@
+import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from pathlib import Path
 
+from rhemascript.core.approval_archive import export_checkpoint_archive
+from rhemascript.core.approval_store import SQLiteApprovalConsumptionStore
 from rhemascript.core.checkpoint_freshness import (
     CheckpointAnchorRecord, advance_checkpoint_anchor,
     verify_checkpoint_against_anchor,
@@ -29,60 +33,79 @@ class FakeAnchor:
 
 class CheckpointFreshnessTests(unittest.TestCase):
     def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.db_dir = root / "database"
+        self.archive_dir = root / "archive"
+        self.db_dir.mkdir(mode=0o700)
+        self.archive_dir.mkdir(mode=0o700)
+        os.chmod(self.db_dir, 0o700)
+        os.chmod(self.archive_dir, 0o700)
+        self.store = SQLiteApprovalConsumptionStore(self.db_dir / "approvals.sqlite3")
+        self.key = b"independent-anchor-archive-key-32bytes"
         self.anchor = FakeAnchor()
-        self.archive = {
-            "archive_valid": True,
-            "generation": 1,
-            "snapshot_sha256": "a" * 64,
-        }
+
+    def make_archive(self, generation, name):
+        return export_checkpoint_archive(
+            self.store, self.archive_dir / name, key=self.key, generation=generation,
+        )
 
     def test_advance_registers_exact_generation_and_digest_and_reads_back(self):
+        archive = self.make_archive(1, "checkpoint-0001.json")
         record = advance_checkpoint_anchor(
-            self.archive, self.anchor, expected_generation=0,
+            str(archive), key=self.key, anchor=self.anchor, expected_generation=0,
             recorded_at=self.anchor.now,
         )
         self.assertEqual(record.generation, 1)
-        self.assertEqual(record.snapshot_sha256, "a" * 64)
-        self.assertEqual(verify_checkpoint_against_anchor(self.archive, self.anchor), record)
+        self.assertTrue(verify_checkpoint_against_anchor(
+            str(archive), key=self.key, anchor=self.anchor,
+        ) == record)
 
     def test_stale_archive_is_rejected_after_anchor_advances(self):
+        old_archive = self.make_archive(1, "checkpoint-0001.json")
         advance_checkpoint_anchor(
-            self.archive, self.anchor, expected_generation=0,
+            str(old_archive), key=self.key, anchor=self.anchor, expected_generation=0,
             recorded_at=self.anchor.now,
         )
-        newer = {**self.archive, "generation": 2, "snapshot_sha256": "b" * 64}
+        newer_archive = self.make_archive(2, "checkpoint-0002.json")
         advance_checkpoint_anchor(
-            newer, self.anchor, expected_generation=1,
+            str(newer_archive), key=self.key, anchor=self.anchor, expected_generation=1,
             recorded_at=self.anchor.now,
         )
         with self.assertRaisesRegex(ValueError, "stale or differs"):
-            verify_checkpoint_against_anchor(self.archive, self.anchor)
+            verify_checkpoint_against_anchor(
+                str(old_archive), key=self.key, anchor=self.anchor,
+            )
 
     def test_generation_conflict_does_not_overwrite_latest_anchor(self):
+        first_archive = self.make_archive(1, "checkpoint-0001.json")
         advance_checkpoint_anchor(
-            self.archive, self.anchor, expected_generation=0,
+            str(first_archive), key=self.key, anchor=self.anchor, expected_generation=0,
             recorded_at=self.anchor.now,
         )
+        second_archive = self.make_archive(2, "checkpoint-0002.json")
         with self.assertRaisesRegex(ValueError, "generation changed"):
             advance_checkpoint_anchor(
-                {**self.archive, "generation": 2, "snapshot_sha256": "b" * 64},
-                self.anchor, expected_generation=0, recorded_at=self.anchor.now,
+                str(second_archive), key=self.key, anchor=self.anchor,
+                expected_generation=0, recorded_at=self.anchor.now,
             )
         self.assertEqual(self.anchor.record.generation, 1)
-        self.assertEqual(self.anchor.record.snapshot_sha256, "a" * 64)
 
-    def test_missing_or_invalid_archive_cannot_advance_anchor(self):
-        with self.assertRaisesRegex(ValueError, "valid generation-bound"):
+    def test_wrong_archive_key_cannot_advance_anchor(self):
+        archive = self.make_archive(1, "checkpoint-0001.json")
+        with self.assertRaisesRegex(ValueError, "cryptographic verification"):
             advance_checkpoint_anchor(
-                {"archive_valid": False, "generation": 1, "snapshot_sha256": "a" * 64},
-                self.anchor, expected_generation=0, recorded_at=self.anchor.now,
+                str(archive), key=b"wrong-archive-key-32-bytes-long!!",
+                anchor=self.anchor, expected_generation=0, recorded_at=self.anchor.now,
             )
         self.assertIsNone(self.anchor.record)
 
     def test_nonconsecutive_generation_is_rejected(self):
+        archive = self.make_archive(3, "checkpoint-0003.json")
         with self.assertRaisesRegex(ValueError, "exactly one"):
             advance_checkpoint_anchor(
-                {**self.archive, "generation": 3}, self.anchor,
+                str(archive), key=self.key, anchor=self.anchor,
                 expected_generation=0, recorded_at=self.anchor.now,
             )
 
