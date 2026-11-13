@@ -70,3 +70,8 @@ The model serializes lease issuance, approval revocation, and dispatch-acceptanc
 **Security boundary:** this model is a synthetic executable contract, not the independently administered coordinator required for production. It has no authenticated caller identity, dual-approval signature verification, HSM/KMS lease signing, independent durable audit, cross-region linearizability, provider-side fencing or remote dispatch integration. In particular, a local SQLite acceptance decision cannot atomically serialize a remote provider's acceptance with approval revocation. The model must not be used to enable production writes or described as closing the distributed read-to-dispatch race.
 
 The tests exercise revocation after issuance, revocation before acquisition, stale-generation replay, changed fingerprints, expiry at acceptance, duplicate dispatch, overlapping approval sets and concurrent duplicate acceptance. Passing these tests validates only the local state-machine model.
+
+
+## Acquisition expiry race hardening — 13 November 2026
+
+The synthetic model rechecks lease expiry after acquiring SQLite's serialized write lock, not only before attempting the lock. This prevents a lease that expires while queued behind another writer from being issued using a stale pre-lock timestamp. The adversarial test holds the writer lock until the requested lease expires and verifies acquisition fails closed. This is a local model invariant only; production coordinators must apply the same rule using their authoritative time source and serialized transaction boundary.
