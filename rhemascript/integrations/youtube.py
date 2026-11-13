@@ -1,7 +1,7 @@
 """Zero-cost, opt-in YouTube integration using Google's official APIs.
 
 Credentials are injected through environment variables and never persisted here.
-All consequential writes are fail-closed behind explicit publishing_authorisation.
+All consequential writes require two scoped, externally signed approvals.
 No external request is made at import time.
 """
 from __future__ import annotations
@@ -244,7 +244,7 @@ class YouTubeClient:
         self._gateway = gateway
         self._gateway_project_id = project_id
         self._gateway_source_version = source_version
-        self._gateway_authority: dict[str, bool] = {}
+        self._gateway_authority: dict[str, Any] = {}
         self._access_token: str | None = None
         self._last_upload_context: dict[str, str] | None = None
         self._verified_upload_context: dict[str, str] | None = None
@@ -436,13 +436,11 @@ class YouTubeClient:
                      approval_request_id: str,
                      tags: list[str] | None = None, category_id: str = "22",
                      privacy_status: str = "private", publish_at: str | None = None,
-                     made_for_kids: bool = False,
-                     ) -> dict[str, Any]:
-        """Resumable upload behind all six project gates and separate authorities.
+                     made_for_kids: bool = False) -> dict[str, Any]:
+        """Resumable upload behind six gates and two scoped signed approvals.
 
-        The caller must supply ordered, approved gate records for this project,
-        final-film evidence matching the last gate and two scoped signed approvals.
-        The safe default is private.
+        The credentials must be externally issued, independently authenticated,
+        project/version/request-bound, distinct-actor approvals. The safe default is private.
         """
         project_id, project_version, verified_approvals, request_id = _authorise_project_publish(
             evidence_pack=evidence_pack,
