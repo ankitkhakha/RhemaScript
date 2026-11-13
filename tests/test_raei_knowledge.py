@@ -29,7 +29,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def make_item(self, *, knowledge_id="RS-KNOW-001", version="1.0", source_type="OFFICIAL_DOC"):
+    def make_item(self, *, knowledge_id="RS-KNOW-001", version="1.0", source_type="OFFICIAL_DOC", evidence_suffix=None):
         authority = {
             "BIBLE": "SCRIPTURE",
             "OFFICIAL_DOC": "OFFICIAL_PRIMARY",
@@ -54,7 +54,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
             "claims": ["Editable installs must include declared runtime dependencies."],
             "limitations": ["Applies to the documented packaging version."],
             "tags": ["python", "packaging", "build"],
-            "evidence_id": f"EV-{knowledge_id}-{version}",
+            "evidence_id": f"EV-{knowledge_id}-{version}" + (f"-{evidence_suffix}" if evidence_suffix else ""),
             "evidence_version": version,
             "status": "PENDING_REVIEW",
             "source_authentication_status": "NOT_CHECKED",
@@ -81,7 +81,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
                 "regression_test_refs": ["tests/test_raei_training.py::test_replay_with_changed_assessment_is_rejected"],
                 "affected_unit_ids": ["SECURE-CODE", "AI-EVALUATION"],
             })
-        relative = f"{knowledge_id}-{version}.json"
+        relative = f"{knowledge_id}-{version}" + (f"-{evidence_suffix}" if evidence_suffix else "") + ".json"
         (self.root / relative).write_bytes(canonical_knowledge_bytes(payload))
         evidence = verify_artifact(
             self.root, relative, evidence_id=payload["evidence_id"], version=version
@@ -245,7 +245,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
         first, evidence1 = self.make_item(version="2.0")
         record_knowledge(self.registry, first, evidence1, evidence_root=self.root)
         for candidate_version in ("2.0", "1.0"):
-            candidate, evidence = self.make_item(version=candidate_version)
+            candidate, evidence = self.make_item(version=candidate_version, evidence_suffix="candidate")
             candidate["supersedes"] = ["RS-KNOW-001@2.0"]
             evidence = self.reverify(candidate, evidence)
             with self.assertRaisesRegex(RAEIKnowledgeError, "strictly older"):
@@ -308,7 +308,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
     def test_record_knowledge_rechecks_bytes_after_initial_verification(self):
         payload, evidence = self.make_item()
         (self.root / evidence.relative_path).write_bytes(b"tampered after verification")
-        with self.assertRaisesRegex(RAEIKnowledgeError, "could not be reverified"):
+        with self.assertRaisesRegex(RAEIKnowledgeError, "bytes changed after verification"):
             record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
 
 
