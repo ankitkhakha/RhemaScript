@@ -173,7 +173,7 @@ class ApprovalVerifier:
             if schema not in {_SCHEMA_V2, _SCHEMA_V3} or set(artifact_binding) != {
                 "artifact_id", "artifact_version", "sha256", "size_bytes"
             }:
-                raise ApprovalError("approval must bind the exact final artifact using credential schema v2")
+                raise ApprovalError("approval must bind the exact final artifact using credential schema v2 or v3")
             if (token.get("artifact_id") != artifact_binding.get("artifact_id")
                     or token.get("artifact_version") != artifact_binding.get("artifact_version")
                     or token.get("artifact_sha256") != artifact_binding.get("sha256")
