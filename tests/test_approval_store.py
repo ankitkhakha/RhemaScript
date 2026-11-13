@@ -217,7 +217,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
 
 
-    def test_v2_artifact_bound_approval_is_consumed_and_persisted_exactly(self):
+    def test_v3_identity_and_artifact_claims_are_persisted_and_reverified_after_restart(self):
         private_key = Ed25519PrivateKey.generate()
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         now = datetime.now(timezone.utc)
@@ -293,11 +293,28 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         )
         audit = auditor.verify_persisted_record(persisted)
         self.assertTrue(audit["signature_valid"])
+        self.assertEqual(audit["credential_schema"], "RhemaScript.ApprovalCredential.v3")
         self.assertEqual(audit["artifact_sha256"], "a" * 64)
-        tampered = dict(persisted)
-        tampered["artifact_sha256"] = "b" * 64
-        with self.assertRaisesRegex(ApprovalError, "persisted approval signature is invalid"):
-            auditor.verify_persisted_record(tampered)
+        self.assertEqual(audit["subject_id"], "subject-director-0001")
+        self.assertEqual(audit["actor_role"], "publisher")
+        self.assertEqual(audit["authn_context"], "mfa")
+        self.assertEqual(audit["identity_session_id"], "session-director-0001")
+        self.assertEqual(audit["identity_policy_version"], "identity-policy-v1")
+        self.assertEqual(audit["identity_provider_id"], "test-idp")
+        for field, value in (
+            ("artifact_sha256", "b" * 64),
+            ("subject_id", "subject-attacker-0001"),
+            ("actor_role", "administrator"),
+            ("authn_context", "password-only"),
+            ("identity_session_id", "attacker-session-0001"),
+            ("identity_policy_version", "identity-policy-v2"),
+            ("identity_provider_id", "untrusted-idp"),
+        ):
+            tampered = dict(persisted)
+            tampered[field] = value
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ApprovalError, "persisted approval signature is invalid"):
+                    auditor.verify_persisted_record(tampered)
 
 if __name__ == "__main__":
     unittest.main()
