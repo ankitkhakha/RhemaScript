@@ -295,6 +295,33 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_oauth_token_exception_rejects_query_and_fragment(self):
+        for suffix in ("?redirect_uri=https://attacker.example", "#fragment"):
+            with self.subTest(suffix=suffix):
+                transport = NeverTransport()
+                gateway = ExternalIntegrationGateway(
+                    (ProviderBinding(
+                        interface_id="IF-18", provider_name="youtube",
+                        endpoint="https://oauth2.googleapis.com",
+                        allowed_hosts=("oauth2.googleapis.com",),
+                        operations={"OAUTH_TOKEN": {
+                            "method": "POST", "hosts": ("oauth2.googleapis.com",),
+                            "path_prefix": "/token",
+                        }},
+                    ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+                )
+                with self.assertRaisesRegex(
+                    ExternalIntegrationError, "exact Google token endpoint",
+                ):
+                    gateway.request(
+                        "IF-18", "OAUTH_TOKEN",
+                        "https://oauth2.googleapis.com/token" + suffix,
+                        method="POST", body=b"grant_type=refresh_token",
+                        request_id="oauth-extra-component", project_id="RS-1",
+                        source_version="1.0",
+                    )
+                self.assertEqual(transport.calls, [])
+
     def test_method_aware_request_rejects_path_prefix_sibling(self):
         class MethodTransport:
             def __init__(self):
