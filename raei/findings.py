@@ -294,11 +294,37 @@ def list_findings(
             item.get("payload", {})
         for item in reviews
     }
+    lifecycle_events = [
+        event for event in registry.list_activity_events()
+        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED"}
+    ]
+    latest_research = {}
+    latest_reproduction = {}
+    for event in lifecycle_events:
+        key = (event.get("subject_id"), event.get("payload", {}).get("finding_version"))
+        if event["event_type"] == "FINDING_RESEARCHED":
+            latest_research[key] = event
+        else:
+            latest_reproduction[key] = event
     for item in results:
-        disposition = latest_by_version.get((item["finding_id"], item["version"]))
-        item["status"] = disposition.get("disposition") if disposition else "SUBMITTED"
+        key = (item["finding_id"], item["version"])
+        disposition = latest_by_version.get(key)
+        research = latest_research.get(key)
+        reproduction = latest_reproduction.get(key)
         if disposition:
+            item["status"] = disposition.get("disposition")
             item["disposition_event_id"] = disposition.get("event_id")
             item["disposition_rationale"] = disposition.get("rationale")
             item["disposition_evidence_binding"] = disposition.get("evidence_binding")
+        elif reproduction:
+            item["status"] = reproduction["payload"].get("outcome", "REPRODUCED")
+            item["reproduction_event_id"] = reproduction["event_id"]
+            item["reproduction_evidence_binding"] = reproduction["payload"].get("evidence_binding")
+            item["reproduction_outcome"] = reproduction["payload"].get("outcome")
+        elif research:
+            item["status"] = "RESEARCHED"
+            item["research_event_id"] = research["event_id"]
+            item["research_evidence_binding"] = research["payload"].get("evidence_binding")
+        else:
+            item["status"] = "SUBMITTED"
     return results
