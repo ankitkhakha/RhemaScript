@@ -1115,7 +1115,7 @@ class ReadinessRunRegistry:
                        or item.artifact_sha256 != binding["sha256"]
                        or item.artifact_size_bytes != binding["size_bytes"] for item in approvals)
                 or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
-            raise ValueError("governed transition requires two distinct V3 authenticated subjects and sessions in one trusted identity domain, bound to exact evidence")
+            raise ValueError("governed transition requires distinct authenticated subjects and sessions; both credentials must carry V3 identity assurance in one trusted identity domain and bind the exact evidence")
         enriched = dict(payload)
         enriched["authorization"] = {
             "issuer": approvals[0].issuer,
