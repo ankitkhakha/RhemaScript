@@ -211,3 +211,31 @@ This is automated process-restart coverage, not a claim that a human operator ha
 ### Next bounded task
 
 Continue the dependency/security review and inspect every assessment and evidence persistence path for consistency with the authoritative readiness/event registry. Resolve or explicitly disposition the standalone assessment registry's integrity boundary before treating P1 evidence/history assurance as closed.
+
+
+## 11. Assessment persistence and dependency reproducibility review — 13 November 2026
+
+### AssessmentRegistry disposition
+
+Repository-tree inspection at candidate `781bd27d6fc7357ee98f4d1c7c91a95ea8f00426` found `AssessmentRegistry` referenced only by its implementation module and its dedicated unit tests. No application/runtime module imports it.
+
+Its `verify()` method compares table columns with a duplicate JSON representation stored in the same SQLite database. This can detect accidental mismatch, but a party able to rewrite the database can rewrite both representations consistently. It has no independently retained checkpoint or external trust anchor. Therefore it cannot establish authenticity or detect a coordinated database rewrite.
+
+**Disposition:** explicitly classify this class as an experimental local helper, not an authoritative lifecycle ledger. Do not route production RAEI decisions, governed assessments, approvals or closure through it. The authoritative history remains `ReadinessRunRegistry` activity events, with independently retained HMAC checkpoints. No second ledger is being introduced. Reconsider integration only through a separately scoped design and adversarial review.
+
+### Dependency reproducibility
+
+At this checkpoint:
+
+- `pyproject.toml` declares Python `>=3.11` and `cryptography>=42.0.0,<48.0.0`.
+- CI executes Python 3.12.
+- The repository tree contains no `uv.lock`, `poetry.lock`, `Pipfile.lock`, hash-locked requirements file or constraints file.
+- CI installs the project using `pip install -e .`, so the cryptography version and transitive dependency resolution are not locked to exact hashes.
+
+**Finding:** CI success demonstrates the resolved dependency set used by that run, not reproducible dependency resolution across future runs. Do not invent a lock or pin an unobserved version. Next action is to capture the exact resolved versions from a successful CI run, select a lock-generation approach compatible with the repository's zero-cost/manual-first constraints, then test a clean install from the resulting lock before claiming reproducibility.
+
+### CI workflow hardening status
+
+The CI workflow now pins the three external GitHub Actions to immutable commit SHAs, disables persisted checkout credentials, limits repository permissions to read-only contents, and pins the runner image to Ubuntu 24.04. Exact-head CI #1580 passed on `781bd27d6fc7357ee98f4d1c7c91a95ea8f00426`.
+
+This does not lock Python package dependencies and does not constitute production security certification.
