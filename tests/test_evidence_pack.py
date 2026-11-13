@@ -34,6 +34,60 @@ class EvidencePackTests(unittest.TestCase):
             p["source_to_final_links"].append({"from_artifact_id":previous,"to_artifact_id":ident,"relationship":"derived_from"}); previous=ident
         validate_evidence_pack(p); p["source_to_final_links"].pop()
         with self.assertRaisesRegex(EvidencePackError,"disconnected"): validate_evidence_pack(p)
+    def test_each_edited_film_requires_its_own_complete_source_to_final_chain(self):
+        p = pack()
+        previous = "SRC-1"
+        for i, kind in enumerate(("APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD",
+                                  "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM"), 1):
+            ident = f"CHAIN-{i}"
+            p["artifacts"].append({
+                "artifact_id": ident, "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"], "artifact_type": kind,
+                "version": "1", "status": "APPROVED" if kind.startswith("APPROVED_") else "VERIFIED",
+            })
+            p["source_to_final_links"].append({
+                "from_artifact_id": previous, "to_artifact_id": ident, "relationship": "derived_from",
+            })
+            previous = ident
+        p["artifacts"].append({
+            "artifact_id": "ORPHAN-FILM", "project_id": PROJECT["project_id"],
+            "project_version": PROJECT["version"], "artifact_type": "EDITED_FILM",
+            "version": "1", "status": "VERIFIED",
+        })
+        with self.assertRaisesRegex(EvidencePackError, "ORPHAN-FILM.*complete ordered source-to-final chain"):
+            validate_evidence_pack(p)
+
+    def test_pairwise_chain_segments_cannot_be_spliced_from_disconnected_branches(self):
+        p = pack()
+        nodes = [
+            ("SCRIPT-FROM-SOURCE", "APPROVED_SCRIPT"),
+            ("SCRIPT-DETACHED", "APPROVED_SCRIPT"),
+            ("NARRATION-FROM-DETACHED", "APPROVED_NARRATION"),
+            ("NARRATION-DETACHED", "APPROVED_NARRATION"),
+            ("STORYBOARD", "STORYBOARD"),
+            ("PLAN", "AUDIO_VISUAL_PLAN"),
+            ("PROMPT", "PROMPT"),
+            ("ASSET", "ASSET"),
+            ("FILM", "EDITED_FILM"),
+        ]
+        for ident, kind in nodes:
+            p["artifacts"].append({
+                "artifact_id": ident, "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"], "artifact_type": kind,
+                "version": "1", "status": "APPROVED" if kind.startswith("APPROVED_") else "VERIFIED",
+            })
+        p["source_to_final_links"].extend([
+            {"from_artifact_id": "SRC-1", "to_artifact_id": "SCRIPT-FROM-SOURCE", "relationship": "derived_from"},
+            {"from_artifact_id": "SCRIPT-DETACHED", "to_artifact_id": "NARRATION-FROM-DETACHED", "relationship": "derived_from"},
+            {"from_artifact_id": "NARRATION-DETACHED", "to_artifact_id": "STORYBOARD", "relationship": "derived_from"},
+            {"from_artifact_id": "STORYBOARD", "to_artifact_id": "PLAN", "relationship": "derived_from"},
+            {"from_artifact_id": "PLAN", "to_artifact_id": "PROMPT", "relationship": "derived_from"},
+            {"from_artifact_id": "PROMPT", "to_artifact_id": "ASSET", "relationship": "derived_from"},
+            {"from_artifact_id": "ASSET", "to_artifact_id": "FILM", "relationship": "derived_from"},
+        ])
+        with self.assertRaisesRegex(EvidencePackError, "FILM.*complete ordered source-to-final chain"):
+            validate_evidence_pack(p)
+
     def test_script_approval_not_inferred(self):
         p=pack(); p["artifacts"].append({"artifact_id":"S","project_id":PROJECT["project_id"],"project_version":"1.0","artifact_type":"APPROVED_SCRIPT","version":"1","status":"DRAFT"})
         with self.assertRaisesRegex(EvidencePackError,"approval status"): validate_evidence_pack(p)
