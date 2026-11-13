@@ -270,6 +270,75 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("event_id already exists with different authenticated finding data")
                 db.commit()
                 return False
+            supersedes = normalised.get("supersedes", [])
+            if supersedes:
+                if (not isinstance(supersedes, list) or len(supersedes) != 1
+                        or not isinstance(supersedes[0], str)
+                        or not supersedes[0].startswith(f"{finding_id}@")):
+                    db.rollback()
+                    raise ValueError("authenticated resumed capture must supersede exactly one prior version of the same finding")
+                prior_version = supersedes[0].rsplit("@", 1)[-1]
+                prior_rows = db.execute(
+                    """SELECT event_id,event_type,payload_json FROM activity_events
+                    WHERE project_id=? AND subject_id=?
+                    AND event_type IN ('FINDING_CLOSED','FINDING_REOPENED') ORDER BY sequence""",
+                    (project_id, finding_id),
+                ).fetchall()
+                prior_closures = [
+                    (eid, json.loads(raw)) for eid, kind, raw in prior_rows
+                    if kind == "FINDING_CLOSED"
+                    and json.loads(raw).get("finding_version") == prior_version
+                ]
+                prior_reopenings = [
+                    (eid, json.loads(raw)) for eid, kind, raw in prior_rows
+                    if kind == "FINDING_REOPENED"
+                    and json.loads(raw).get("finding_version") == prior_version
+                ]
+                if len(prior_closures) != 1 or len(prior_reopenings) != 1:
+                    db.rollback()
+                    raise ValueError("resumed capture requires exactly one prior closure and reopening in this project")
+                closure_id, closure_payload = prior_closures[0]
+                reopen_id, reopen_payload = prior_reopenings[0]
+                closure_auth = closure_payload.get("authorization", {})
+                reopen_auth = reopen_payload.get("authorization", {})
+                if (reopen_payload.get("closure_event_id") != closure_id
+                        or reopen_payload.get("new_finding_version") != version
+                        or reopen_payload.get("reopen_decision") != "REOPENED"
+                        or reopen_auth.get("project_version") != project_version
+                        or closure_auth.get("project_version") != project_version
+                        or approval.project_version != project_version):
+                    db.rollback()
+                    raise ValueError("resumed capture does not match the exact prior closure and reopening project scope")
+                prior_capture_count = db.execute(
+                    """SELECT COUNT(*) FROM activity_events
+                    WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?""",
+                    (project_id, finding_id),
+                ).fetchone()[0]
+                if prior_capture_count < 1:
+                    db.rollback()
+                    raise ValueError("resumed capture requires the original finding capture")
+                fork_rows = db.execute(
+                    """SELECT payload_json FROM activity_events
+                    WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?""",
+                    (project_id, finding_id),
+                ).fetchall()
+                if any(
+                    version == json.loads(raw).get("version")
+                    or supersedes[0] in json.loads(raw).get("supersedes", [])
+                    for (raw,) in fork_rows
+                ):
+                    db.rollback()
+                    raise ValueError("resumed finding version or supersession edge already exists")
+            elif any(
+                json.loads(raw).get("version") == version
+                for (raw,) in db.execute(
+                    """SELECT payload_json FROM activity_events
+                    WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?""",
+                    (project_id, finding_id),
+                ).fetchall()
+            ):
+                db.rollback()
+                raise ValueError("finding version already has a captured submission")
             self._append_event_tx(
                 db, event_id, "FINDING_CAPTURED", normalised, project_id, finding_id,
             )
