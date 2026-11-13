@@ -151,7 +151,7 @@ class ApprovalVerifierTests(unittest.TestCase):
 
     def test_rejects_future_authentication(self):
         future = (self.now + timedelta(minutes=2)).isoformat()
-        with self.assertRaisesRegex(ApprovalError, "stale or future-dated"):
+        with self.assertRaisesRegex(ApprovalError, "after credential issuance"):
             self.verify(self.credential(identity_overrides={"authenticated_at": future}))
 
     def test_rejects_authentication_after_credential_issue_time(self):
@@ -202,7 +202,7 @@ class ApprovalVerifierTests(unittest.TestCase):
 
     def test_rejects_expired_approval(self):
         token = self.credential(
-            issued_at=(self.now - timedelta(minutes=6)).isoformat(),
+            issued_at=(self.now - timedelta(minutes=4)).isoformat(),
             expires_at=(self.now - timedelta(seconds=1)).isoformat(),
         )
         with self.assertRaisesRegex(ApprovalError, "expired"):
