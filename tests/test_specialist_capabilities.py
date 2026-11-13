@@ -37,6 +37,43 @@ class SpecialistCapabilityTests(unittest.TestCase):
         result=assess_specialist("CAP-03",{"script_elements":[{"element_id":"S1"}],"source_mapping":[]})
         self.assertEqual(result["unmapped_elements"],["S1"])
 
+    def test_script_mapping_requires_interpretation_classification(self):
+        result = assess_specialist("CAP-03", {
+            "script_elements": [{"element_id": "S1"}],
+            "source_mapping": [{
+                "element_id": "S1",
+                "source_reference": "Exodus 31:1-11",
+            }],
+        })
+        self.assertEqual(result["unclassified_mapping_indexes"], [0])
+        self.assertEqual(result["integrity_status"], "GAPS_FOUND")
+
+    def test_script_mapping_distinguishes_text_from_modern_application(self):
+        result = assess_specialist("CAP-03", {
+            "script_elements": [
+                {"element_id": "BIBLICAL-CLAIM"},
+                {"element_id": "SYSTEM-APPLICATION"},
+            ],
+            "source_mapping": [
+                {
+                    "element_id": "BIBLICAL-CLAIM",
+                    "source_reference": "Exodus 31:1-11",
+                    "interpretation_class": "EXPLICIT_TEXT",
+                },
+                {
+                    "element_id": "SYSTEM-APPLICATION",
+                    "source_reference": "Exodus 31:1-11",
+                    "interpretation_class": "MODERN_APPLICATION",
+                },
+            ],
+        })
+        self.assertEqual(result["integrity_status"], "MAPPING_COMPLETE")
+        self.assertEqual(
+            [item["interpretation_class"] for item in result["mapping_classifications"]],
+            ["EXPLICIT_TEXT", "MODERN_APPLICATION"],
+        )
+        self.assertIn("do not establish interpretive correctness", result["note"])
+
     def test_performance_never_claims_causation(self):
         result=assess_specialist("CAP-15",{"performance_observations":[{"production_version":"v2","views":100}],
         "linked_production_version":"v2"})
