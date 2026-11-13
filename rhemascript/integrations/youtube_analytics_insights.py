@@ -97,6 +97,10 @@ def _metric_values(snapshot: dict[str, Any]) -> dict[str, tuple[Decimal | None, 
                     raise YouTubeAnalyticsInsightError(
                         f"metric {name} in row {row_number} is not finite"
                     )
+                if number < 0:
+                    raise YouTubeAnalyticsInsightError(
+                        f"metric {name} in row {row_number} is negative"
+                    )
             continue
         total = Decimal(0)
         for row_number, row in enumerate(rows):
@@ -114,6 +118,10 @@ def _metric_values(snapshot: dict[str, Any]) -> dict[str, tuple[Decimal | None, 
             if not number.is_finite():
                 raise YouTubeAnalyticsInsightError(
                     f"metric {name} in row {row_number} is not finite"
+                )
+            if number < 0:
+                raise YouTubeAnalyticsInsightError(
+                    f"metric {name} in row {row_number} is negative"
                 )
             if dtype == "INTEGER" and number != number.to_integral_value():
                 raise YouTubeAnalyticsInsightError(
