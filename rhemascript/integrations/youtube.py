@@ -670,17 +670,25 @@ class YouTubeClient:
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
+            publish_session_registry=getattr(self._gateway, "publish_session_registry", None),
         )
         with verified_video_stream as video:
-            if self._gateway is not None:
-                from rhemascript.core.approval_store import SQLitePublishSessionRegistry
-                if not isinstance(
-                    getattr(self._gateway, "publish_session_registry", None),
-                    SQLitePublishSessionRegistry,
-                ):
-                    raise YouTubeIntegrationError(
-                        "durable SQLite publish-session registry is required before provider upload"
-                    )
+            from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+            from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
+            if not isinstance(
+                getattr(self._gateway, "publish_session_registry", None),
+                SQLitePublishSessionRegistry,
+            ):
+                raise YouTubeIntegrationError(
+                    "durable SQLite publish-session registry is required before provider upload"
+                )
+            if not isinstance(
+                getattr(self._gateway, "session_url_vault", None),
+                SQLiteEncryptedSessionUrlVault,
+            ):
+                raise YouTubeIntegrationError(
+                    "encrypted SQLite session URL vault is required before provider upload"
+                )
             self._gateway_project_id = project_id
             self._gateway_source_version = project_version
             self._gateway_authority = {"verified_approvals": verified_approvals}
@@ -701,23 +709,52 @@ class YouTubeClient:
                 "X-Upload-Content-Type": "video/*",
                 "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
             }
-            status, raw, response_headers = self._authorized_request(
-                f"{UPLOAD_BASE}?{query}", method="POST",
-                body=json.dumps(metadata).encode(), headers=headers,
-            )
-            location = response_headers.get("Location") or response_headers.get("location")
-            if status not in (200, 201) or not location:
-                raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
-            parsed = urlparse(location)
-            if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
-                    or parsed.username or parsed.password or parsed.port not in (None, 443)
-                    or parsed.fragment):
-                raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
-
             total = artifact_binding["size_bytes"]
-            offset = 0
+            registry = self._gateway.publish_session_registry
+            existing_session = registry.get_publish_session(
+                project_id=project_id, project_version=project_version, request_id=request_id,
+            )
             final_raw = b""
+            offset = 0
             reconciliation_attempts = 0
+            if existing_session is not None:
+                location = self._gateway.recover_publish_session_url(
+                    project_id=project_id,
+                    project_version=project_version,
+                    request_id=request_id,
+                    verified_approvals=verified_approvals,
+                    artifact_binding={
+                        "artifact_id": artifact_binding["artifact_id"],
+                        "artifact_version": artifact_binding["artifact_version"],
+                        "artifact_sha256": artifact_binding["sha256"],
+                        "artifact_size_bytes": artifact_binding["size_bytes"],
+                    },
+                )
+                reconciled_offset, reconciled_result = self._query_upload_status(location, total)
+                if reconciled_result:
+                    final_raw = reconciled_result
+                    offset = total
+                else:
+                    if reconciled_offset >= total:
+                        raise YouTubeIntegrationError(
+                            "provider reports all bytes acknowledged without a completed video resource; refusing replay",
+                            code="INDETERMINATE_WRITE",
+                        )
+                    offset = reconciled_offset
+                    video.seek(offset)
+            else:
+                status, raw, response_headers = self._authorized_request(
+                    f"{UPLOAD_BASE}?{query}", method="POST",
+                    body=json.dumps(metadata).encode(), headers=headers,
+                )
+                location = response_headers.get("Location") or response_headers.get("location")
+                if status not in (200, 201) or not location:
+                    raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
+                parsed = urlparse(location)
+                if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
+                        or parsed.username or parsed.password or parsed.port not in (None, 443)
+                        or parsed.fragment or parsed.path != "/upload/youtube/v3/videos"):
+                    raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
                 end = offset + len(chunk) - 1
