@@ -18,7 +18,7 @@ from rhemascript.evidence.artifact_verification import (
 )
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 
-from .curriculum import CURRICULUM_VERSION, build_registry
+from .curriculum import CURRICULUM_VERSION, SUPPORTED_CURRICULUM_VERSIONS, build_registry
 from .knowledge import search_knowledge
 
 SCHEMA = "raei-training-assessment-v1"
@@ -102,7 +102,7 @@ def get_progress(registry: ReadinessRunRegistry) -> dict[str, dict[str, Any]]:
         if unit_id not in units:
             raise RAEITrainingError("stored learning record references an unknown curriculum unit")
         if (stored.get("run_id") != report.get("attempt_id")
-                or report.get("curriculum_version") != CURRICULUM_VERSION
+                or report.get("curriculum_version") not in SUPPORTED_CURRICULUM_VERSIONS
                 or report.get("learner_id") != "RAEI"
                 or report.get("assessor_id") != "RAEI"
                 or report.get("assessor_role") != "RAEI_SELF"):
