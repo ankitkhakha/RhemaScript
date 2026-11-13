@@ -105,6 +105,14 @@ class YouTubeAnalyticsEvidenceTests(unittest.TestCase):
         altered["row_count"] = 0
         with self.assertRaisesRegex(YouTubeAnalyticsEvidenceError, "row metadata"):
             verify_analytics_evidence_snapshot(altered)
+        altered = self.build()
+        altered["row_count"] = True
+        with self.assertRaisesRegex(YouTubeAnalyticsEvidenceError, "row metadata"):
+            verify_analytics_evidence_snapshot(altered)
+        altered = self.build()
+        altered["no_data"] = 0
+        with self.assertRaisesRegex(YouTubeAnalyticsEvidenceError, "row metadata"):
+            verify_analytics_evidence_snapshot(altered)
 
     def test_non_finite_json_values_are_rejected(self):
         report = deepcopy(REPORT)
