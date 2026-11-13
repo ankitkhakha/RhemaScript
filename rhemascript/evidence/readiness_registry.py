@@ -1701,6 +1701,10 @@ class ReadinessRunRegistry:
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
                 raise ValueError("backup destination parent must contain only real directories")
         resolved_parent = absolute_parent.resolve(strict=True)
+        parent_info = resolved_parent.stat()
+        if (parent_info.st_uid != os.getuid()
+                or stat.S_IMODE(parent_info.st_mode) & 0o077):
+            raise ValueError("backup destination parent must be owner-owned and private (0700 or stricter)")
         target = resolved_parent / requested.name
         if target.exists() or target.is_symlink():
             raise ValueError("backup destination must not already exist")
