@@ -26,7 +26,11 @@ def snapshot(start, end, rows, *, metrics="views,estimatedMinutesWatched,subscri
     }
     if filters is not None:
         params["filters"] = filters
-    report = {"kind": "youtubeAnalytics#resultTable", "columnHeaders": deepcopy(HEADERS)}
+    requested_metrics = set(metrics.split(","))
+    selected_headers = [header for header in HEADERS
+                        if header["columnType"] == "DIMENSION"
+                        or header["name"] in requested_metrics]
+    report = {"kind": "youtubeAnalytics#resultTable", "columnHeaders": selected_headers}
     if rows is not None:
         report["rows"] = deepcopy(rows)
     return build_analytics_evidence_snapshot(
@@ -74,7 +78,7 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
 
     def test_rejects_different_channel_or_metric_scope(self):
         current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 5, 1.0, 1]])
-        previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5, 1.0, 1]],
+        previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5]],
                             metrics="views")
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "identical channel"):
             compare_analytics_periods(current, previous)
