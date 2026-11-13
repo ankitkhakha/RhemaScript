@@ -106,7 +106,7 @@ Until these are approved, keep the architecture vendor-neutral and use synthetic
 
 - **Gate A — Architecture review:** confirm trust boundaries, interfaces and threat model. No provider selected.
 - **Gate B — Owner policy approval:** obtain explicit decisions in Section 8. Stop if any are missing.
-- **Gate C — Synthetic issuer prototype:** implement adapters against deterministic fakes only; no production credentials or external connections.
+- **Gate C — Synthetic issuer prototype:** implement adapters against deterministic fakes only; no production credentials or external connections. This remains the next code-only workstream after current V3 and archive hardening.
 - **Gate D — Independent security review:** review protocol validation, subject mapping, key custody, audit and failure behavior.
 - **Gate E — Staging integration:** requires separate explicit approval and staging-only credentials.
 - **Gate F — Production readiness:** requires signed owner authorization, operational runbooks, monitoring, key lifecycle evidence and rollback/recovery proof.
@@ -114,6 +114,6 @@ Until these are approved, keep the architecture vendor-neutral and use synthetic
 
 ## 10. Current status
 
-V3 credential verification, policy checks, durable identity-claim persistence, signature re-verification, provider-gateway subject separation, session separation and provider-write authentication-freshness rechecks are candidate code on PR #62. These do not authenticate a real human. The production issuer, IdP adapter, authoritative directory adapter, production policy and HSM/KMS integration are not implemented or connected. Synthetic CI success is necessary but not production certification.
+V3 credential verification, policy checks, durable identity-claim persistence, signature re-verification, provider-gateway subject separation, session separation and provider-write authentication-freshness rechecks are candidate code on PR #62. Approval checkpoint archive verification now opens the archive with no-follow semantics, validates the opened file descriptor, enforces a 64 MiB size ceiling and validates authenticated timestamp/digest formats before accepting the envelope. Synthetic tests cover symbolic links, oversized files and malformed timestamps. Persisted V3 identity claims are tested for signature and checkpoint tampering, and historical signature audit is tested with an overlapping key-rotation set. These do not authenticate a real human. The production issuer, IdP adapter, authoritative directory adapter, production policy and HSM/KMS integration are not implemented or connected. Exact-head CI run #1308 passed on candidate code head `cee994644b96c8f7bf1c32b397def99c9d9e2870` (full contract and synthetic integration suite). Synthetic CI success is necessary but not production certification.
 
 No identity provider, directory, cloud, signing service, external endpoint or production role matrix has been selected. No external identity connection, deployment, merge or live provider write is authorized by this architecture work.
