@@ -121,6 +121,98 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.checkpoint(b"short")
 
+    def test_readiness_record_also_appends_exact_evidence_event(self):
+        self.registry.record("RUN-1", self.report, self.evidence)
+        events = self.registry.list_activity_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "READINESS_RUN_RECORDED")
+        self.assertEqual(events[0]["payload"]["run_id"], "RUN-1")
+        self.assertEqual(events[0]["payload"]["evidence_refs"][0]["evidence_id"], "ART-1")
+        self.assertTrue(self.registry.verify())
+
+    def test_activity_event_is_hash_chained_and_idempotent(self):
+        payload = {"finding_id": "RS-FND-001", "status": "SUBMITTED"}
+        self.assertTrue(self.registry.append_activity_event(
+            "FINDING:RS-FND-001@1.0", "FINDING_CAPTURED", payload,
+            project_id="RS-PROJECT-1", subject_id="RS-FND-001",
+        ))
+        self.assertFalse(self.registry.append_activity_event(
+            "FINDING:RS-FND-001@1.0", "FINDING_CAPTURED", payload,
+            project_id="RS-PROJECT-1", subject_id="RS-FND-001",
+        ))
+        events = self.registry.list_activity_events()
+        self.assertEqual(events[0]["sequence"], 1)
+        self.assertEqual(events[0]["previous_hash"], "GENESIS")
+        self.assertEqual(events[0]["payload"], payload)
+        self.assertTrue(self.registry.verify())
+
+    def test_activity_event_replay_with_changed_payload_is_rejected(self):
+        self.registry.append_activity_event(
+            "FINDING:RS-FND-002@1.0", "FINDING_CAPTURED",
+            {"finding_id": "RS-FND-002", "status": "SUBMITTED"},
+        )
+        with self.assertRaises(ReadinessReplayError):
+            self.registry.append_activity_event(
+                "FINDING:RS-FND-002@1.0", "FINDING_CAPTURED",
+                {"finding_id": "RS-FND-002", "status": "APPROVED"},
+            )
+
+    def test_activity_event_tampering_breaks_hash_chain(self):
+        self.registry.append_activity_event(
+            "FINDING:RS-FND-003@1.0", "FINDING_CAPTURED",
+            {"finding_id": "RS-FND-003", "status": "SUBMITTED"},
+        )
+        with self.registry._connect() as db:
+            db.execute("DROP TRIGGER activity_events_no_update")
+            db.execute(
+                "UPDATE activity_events SET payload_json=? WHERE event_id=?",
+                ('{"finding_id":"RS-FND-003","status":"ALTERED"}', "FINDING:RS-FND-003@1.0"),
+            )
+        self.assertFalse(self.registry.verify())
+
+    def test_external_checkpoint_detects_activity_history_truncation(self):
+        key = b"activity-checkpoint-key-material-32bytes"
+        self.registry.append_activity_event(
+            "FINDING:RS-FND-004@1.0", "FINDING_CAPTURED",
+            {"finding_id": "RS-FND-004", "status": "SUBMITTED"},
+        )
+        checkpoint = self.registry.checkpoint(key)
+        with self.registry._connect() as db:
+            db.execute("DROP TRIGGER activity_events_no_delete")
+            db.execute("DELETE FROM activity_events WHERE event_id=?",
+                       ("FINDING:RS-FND-004@1.0",))
+        self.assertTrue(self.registry.verify())
+        self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
+
+    def test_legacy_readiness_records_are_imported_into_event_chain(self):
+        import hashlib
+        import json
+        import sqlite3
+        legacy_path = Path(self.tmp.name) / "legacy.sqlite3"
+        payload = {
+            "run_id": "LEGACY-RUN",
+            "report": {"overall_status": "LEGACY"},
+            "byte_verified_evidence": [],
+            "source_resolution_receipts": [],
+            "assessment_is_approval": False,
+            "assessment_is_execution_authorisation": False,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        with sqlite3.connect(legacy_path) as db:
+            db.execute("""CREATE TABLE readiness_runs (
+                run_id TEXT PRIMARY KEY, payload_sha256 TEXT NOT NULL,
+                payload_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+            db.execute("INSERT INTO readiness_runs(run_id,payload_sha256,payload_json) VALUES(?,?,?)",
+                       ("LEGACY-RUN", digest, encoded))
+        migrated = ReadinessRunRegistry(legacy_path)
+        events = migrated.list_activity_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "LEGACY_READINESS_RECORD_IMPORTED")
+        self.assertEqual(events[0]["payload"]["run_id"], "LEGACY-RUN")
+        self.assertTrue(migrated.verify())
+
     def test_backup_restores_and_matches_external_checkpoint(self):
         key = b"backup-checkpoint-secret-material-32bytes"
         self.registry.record("RUN-1", self.report, self.evidence)
