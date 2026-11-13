@@ -17,9 +17,9 @@ SCHEMA = "raei-knowledge-item-v1"
 RECORD_TYPE = "RAEI_KNOWLEDGE_ITEM_V1"
 _ID = re.compile(r"^[A-Z0-9][A-Z0-9._:-]{2,127}$")
 _VERSION = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
-SOURCE_TYPES = {"BIBLE", "OFFICIAL_DOC", "INTERNAL_SPEC", "CODE", "SECONDARY", "LESSON_FROM_FAILURE"}
+SOURCE_TYPES = {"BIBLE", "OFFICIAL_DOC", "INTERNAL_SPEC", "CODE", "SECONDARY", "LESSON_FROM_FAILURE", "RAEI_CLOSED_FINDING"}
 AUTHORITY_LEVELS = {"SCRIPTURE", "OFFICIAL_PRIMARY", "INTERNAL_APPROVED", "SECONDARY", "UNVERIFIED"}
-SOURCE_AUTHORITY = {"BIBLE": "SCRIPTURE", "OFFICIAL_DOC": "OFFICIAL_PRIMARY", "INTERNAL_SPEC": "UNVERIFIED", "CODE": "UNVERIFIED", "SECONDARY": "SECONDARY", "LESSON_FROM_FAILURE": "UNVERIFIED"}
+SOURCE_AUTHORITY = {"BIBLE": "SCRIPTURE", "OFFICIAL_DOC": "OFFICIAL_PRIMARY", "INTERNAL_SPEC": "UNVERIFIED", "CODE": "UNVERIFIED", "SECONDARY": "SECONDARY", "LESSON_FROM_FAILURE": "UNVERIFIED", "RAEI_CLOSED_FINDING": "UNVERIFIED"}
 
 
 class RAEIKnowledgeError(ValueError):
@@ -209,6 +209,87 @@ def record_knowledge(
     }
     registry.record(run_id, report, (evidence,), ())
     return report
+
+
+
+def inherit_closed_finding_as_knowledge(
+    registry: ReadinessRunRegistry,
+    payload: dict[str, Any],
+    evidence: EvidenceVersion,
+) -> dict[str, Any]:
+    """Register a proposed knowledge item only from a closed, effective finding lineage.
+
+    The inherited item remains PENDING_REVIEW, source authentication NOT_CHECKED,
+    claim relevance NOT_ASSESSED and authority UNVERIFIED.
+    """
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
+        raise RAEIKnowledgeError("closed-finding inheritance requires a valid registry")
+    if not isinstance(payload, dict) or payload.get("source_type") != "RAEI_CLOSED_FINDING":
+        raise RAEIKnowledgeError("inheritance requires source_type RAEI_CLOSED_FINDING")
+    finding_id = payload.get("source_finding_id")
+    finding_version = payload.get("source_finding_version")
+    lineage = payload.get("source_lifecycle_lineage")
+    if (not isinstance(finding_id, str) or not finding_id.strip()
+            or not isinstance(finding_version, str) or not finding_version.strip()
+            or not isinstance(lineage, dict)
+            or set(lineage) != {
+                "plan_event_id", "implementation_event_id", "effectiveness_event_id",
+                "closure_event_id", "plan_evidence_binding",
+                "implementation_evidence_binding", "effectiveness_evidence_binding",
+            }):
+        raise RAEIKnowledgeError("inherited knowledge must carry complete source finding lineage")
+    events = {
+        event["event_id"]: event for event in registry.list_activity_events()
+        if event.get("project_id") is not None
+    }
+    plan = events.get(lineage["plan_event_id"])
+    implementation = events.get(lineage["implementation_event_id"])
+    effectiveness = events.get(lineage["effectiveness_event_id"])
+    closure = events.get(lineage["closure_event_id"])
+    expected = (
+        (plan, "FINDING_PLANNED"),
+        (implementation, "FINDING_IMPLEMENTED"),
+        (effectiveness, "FINDING_EFFECTIVENESS_ASSESSED"),
+        (closure, "FINDING_CLOSED"),
+    )
+    if any(event is None or event.get("event_type") != kind for event, kind in expected):
+        raise RAEIKnowledgeError("inherited knowledge references missing or wrong lifecycle events")
+    for event, _ in expected:
+        event_payload = event.get("payload", {})
+        if (event.get("subject_id") != finding_id
+                or event_payload.get("finding_id") != finding_id
+                or event_payload.get("finding_version") != finding_version):
+            raise RAEIKnowledgeError("inherited knowledge source events do not match the exact finding version")
+    if (effectiveness["payload"].get("outcome") != "EFFECTIVE"
+            or closure["payload"].get("closure_decision") != "CLOSED"
+            or closure["payload"].get("evidence_binding") != effectiveness["payload"].get("evidence_binding")
+            or closure["payload"].get("lifecycle_lineage") != {
+                "plan_event_id": plan["event_id"],
+                "implementation_event_id": implementation["event_id"],
+                "effectiveness_event_id": effectiveness["event_id"],
+            }):
+        raise RAEIKnowledgeError("knowledge inheritance requires a closed finding with effective, exact evidence lineage")
+    expected_lineage = {
+        "plan_event_id": plan["event_id"],
+        "implementation_event_id": implementation["event_id"],
+        "effectiveness_event_id": effectiveness["event_id"],
+        "closure_event_id": closure["event_id"],
+        "plan_evidence_binding": plan["payload"].get("evidence_binding"),
+        "implementation_evidence_binding": implementation["payload"].get("evidence_binding"),
+        "effectiveness_evidence_binding": effectiveness["payload"].get("evidence_binding"),
+    }
+    if lineage != expected_lineage:
+        raise RAEIKnowledgeError("inherited knowledge lineage differs from the verified closed finding history")
+    if (payload.get("authority_level") != "UNVERIFIED"
+            or payload.get("source_authentication_status") != "NOT_CHECKED"
+            or payload.get("claim_relevance_status") != "NOT_ASSESSED"
+            or payload.get("status") != "PENDING_REVIEW"):
+        raise RAEIKnowledgeError("inherited knowledge cannot self-promote authority, source authentication or review status")
+    for field in ("learning_scope", "confidence_level", "review_due_utc"):
+        _required_text(payload, field)
+    _string_list(payload, "applicability_conditions", required=True)
+    _string_list(payload, "known_counterexamples")
+    return record_knowledge(registry, payload, evidence)
 
 
 def search_knowledge(
