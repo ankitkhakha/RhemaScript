@@ -415,5 +415,35 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
             )
 
 
+
+    def test_synthetic_issuer_can_issue_all_governed_review_action_credentials(self):
+        actions = (
+            "FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM",
+            "FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM",
+            "FINDING_REOPEN_REVIEW", "FINDING_REOPEN_CONFIRM",
+            "KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM",
+        )
+        for index, action in enumerate(actions):
+            with self.subTest(action=action):
+                issuer, signer, ledger, audit, _ = self.make_trusted_issuer()
+                scope = ApprovalScope(
+                    action=action,
+                    project_id="RS-PWW-001",
+                    project_version="3.2",
+                    request_id=f"governed-review-request-{index:03d}",
+                    artifact_id="EV-REVIEW-001",
+                    artifact_version="1.0",
+                    artifact_sha256="c" * 64,
+                    artifact_size_bytes=3456,
+                )
+                credential = issuer.request_approval(scope)
+                self.assertEqual(credential["action"], action)
+                self.assertEqual(credential["schema"], "RhemaScript.ApprovalCredential.v3")
+                self.assertEqual(credential["artifact_sha256"], "c" * 64)
+                self.assertEqual(len(ledger.entries), 1)
+                self.assertEqual(audit.events[-1]["event"], "approval_issued")
+                self.assertEqual(signer.calls[0][0], credential["key_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
