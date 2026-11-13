@@ -2,7 +2,10 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 
 from rhemascript.core.authorization_lease_model import (
@@ -74,7 +77,7 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
 
     def test_duplicate_dispatch_nonce_cannot_create_second_lease(self):
         self.acquire()
-        with self.assertRaises(Exception):
+        with self.assertRaises(sqlite3.IntegrityError):
             self.acquire()
 
     def test_overlapping_approval_leases_are_serialized_and_old_fence_rejected(self):
@@ -91,6 +94,36 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         self.assertTrue(self.model.accept_dispatch(
             second, request_fingerprint="c" * 64,
         ))
+
+
+    def test_expiry_is_rechecked_after_waiting_for_acquisition_lock(self):
+        lock = sqlite3.connect(self.model.path, isolation_level=None)
+        lock.execute("BEGIN IMMEDIATE")
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=0.25)
+        outcome = []
+
+        def acquire():
+            try:
+                outcome.append(self.model.acquire(
+                    resource_id="youtube:channel-1:publish",
+                    approval_ids=("approval-director", "approval-publisher"),
+                    dispatch_nonce="dispatch-lock-expiry",
+                    request_fingerprint="d" * 64,
+                    expires_at=expiry,
+                ))
+            except Exception as exc:
+                outcome.append(exc)
+
+        worker = threading.Thread(target=acquire)
+        worker.start()
+        time.sleep(0.4)
+        lock.execute("ROLLBACK")
+        lock.close()
+        worker.join(timeout=3)
+        self.assertFalse(worker.is_alive(), "acquisition worker did not finish")
+        self.assertEqual(len(outcome), 1)
+        self.assertIsInstance(outcome[0], LeaseStateError)
+        self.assertIn("expired while waiting", str(outcome[0]))
 
     def test_concurrent_acceptance_has_at_most_one_winner(self):
         lease = self.acquire()
