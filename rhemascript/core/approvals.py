@@ -233,7 +233,9 @@ class ApprovalVerifier:
             raise ApprovalError("verification-key registry response is stale or future-dated")
         if historical:
             return record.public_key, record
-        if record.status != "ACTIVE":
+        if (record.status != "ACTIVE"
+                or (record.revoked_at is not None
+                    and now >= record.revoked_at.astimezone(timezone.utc))):
             raise ApprovalError("verification key is not active for new authorization")
         if (now < record.valid_from.astimezone(timezone.utc)
                 or (record.valid_until is not None
