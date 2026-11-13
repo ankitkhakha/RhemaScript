@@ -12,7 +12,6 @@ from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport, ExternalIntegrationError
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError, youtube_provider_binding,
-    youtube_provider_binding,
 )
 
 
