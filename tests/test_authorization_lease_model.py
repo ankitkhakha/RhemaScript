@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
+import json
 import tempfile
 import threading
 import time
@@ -131,7 +132,11 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         lease = self.acquire(nonce="dispatch-checkpoint-response-lost")
         created = self.model.create_recovery_checkpoint()
         recovered = self.model.get_latest_recovery_checkpoint()
-        self.assertEqual(recovered, created)
+        # SQLite fetches rows as tuples; durable JSON restores them as arrays.
+        self.assertEqual(
+            json.loads(json.dumps(recovered, sort_keys=True)),
+            json.loads(json.dumps(created, sort_keys=True)),
+        )
         self.assertTrue(self.model.verify_recovery_checkpoint(recovered))
         self.assertEqual(recovered["sha256"], created["sha256"])
 
