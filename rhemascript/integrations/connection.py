@@ -171,7 +171,11 @@ def run_connection_check(credential_file: str | Path,
             expected_channel_id=expected_channel_id,
             actual_channel_id=None,
             matched=False,
-            error_type=type(exc).__name__,
+            error_type=(
+                exc.code if isinstance(exc, YouTubeIntegrationError)
+                and exc.code in {"invalid_grant", "invalid_client", "unauthorized_client", "invalid_scope", "invalid_request"}
+                else type(exc).__name__
+            ),
         )
         if isinstance(exc, YouTubeIntegrationError):
             raise
@@ -195,6 +199,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = run_connection_check(
             args.credential_file, args.expected_channel_id, args.audit_file
         )
+    except YouTubeIntegrationError as exc:
+        code = exc.code
+        if code == "invalid_grant":
+            status = "AUTHORIZATION_REQUIRED"
+            details = "Google rejected the stored refresh token. Verify the OAuth client configuration, then repeat the owner-operated read-only OAuth flow. No credential values are displayed."
+            exit_code = 3
+        elif code == "invalid_client":
+            status = "CLIENT_CONFIGURATION_ERROR"
+            details = "Google rejected the OAuth client configuration. Verify the matching Desktop client ID and secret; repeating consent alone may not fix this."
+            exit_code = 2
+        elif code in {"unauthorized_client", "invalid_scope", "invalid_request"}:
+            status = "OAUTH_CONFIGURATION_ERROR"
+            details = "Google rejected the OAuth request configuration. Review the local client and read-only scope settings."
+            exit_code = 2
+        else:
+            status = "FAILED"
+            details = "See redacted local audit record; no credential values are displayed."
+            exit_code = 2
+        print(json.dumps({
+            "status": status,
+            "interface_id": "IF-18",
+            "read_only": True,
+            "publishing_enabled": False,
+            "details": details,
+        }, sort_keys=True))
+        return exit_code
     except (Exception, KeyboardInterrupt):
         print(json.dumps({
             "status": "FAILED",
