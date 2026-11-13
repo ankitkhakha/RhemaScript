@@ -3,7 +3,9 @@ import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
+import hashlib
 import json
+import shutil
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -108,7 +110,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
     def config(self):
         return YouTubeConfig("client-id", "client-secret", "refresh-token")
 
-    def publish_context(self, *, authorised=True):
+    def publish_context(self, *, authorised=True, final_film_bytes=b'video'):
         gates = (
             "PROJECT_CREATIVE_DIRECTION", "SCRIPT_BIBLICAL_ACCURACY",
             "VISUAL_DEVELOPMENT", "PRODUCTION_PLAN_PROMPT",
@@ -123,17 +125,29 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION",
             "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM",
         )
+        evidence_root = tempfile.mkdtemp(prefix="rhemascript-final-film-test-")
+        self.addCleanup(shutil.rmtree, evidence_root, ignore_errors=True)
         artifacts = []
         links = []
         previous = None
+        final_artifact_bytes = None
         for index, kind in enumerate(kinds):
             ident = f"ART-{index + 1}"
-            artifacts.append({
+            artifact_bytes = final_film_bytes if kind == "EDITED_FILM" else f"synthetic:{ident}".encode()
+            local_path = f"{ident}.bin"
+            with open(os.path.join(evidence_root, local_path), "wb") as artifact_file:
+                artifact_file.write(artifact_bytes)
+            artifact = {
                 "artifact_id": ident, "project_id": "RS-TEST-001",
                 "project_version": "1.0", "artifact_type": kind,
                 "version": "1", "status": "APPROVED",
                 "evidence_refs": ["evidence:FINAL_FILM"] if kind == "EDITED_FILM" else [],
-            })
+                "local_path": local_path,
+                "sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+            }
+            artifacts.append(artifact)
+            if kind == "EDITED_FILM":
+                final_artifact_bytes = artifact_bytes
             if previous is not None:
                 links.append({"from_artifact_id": previous, "to_artifact_id": ident,
                               "relationship": "derived_from"})
@@ -173,10 +187,17 @@ class YouTubeIntegrationTests(unittest.TestCase):
             clock=lambda: now,
         )
         request_id = "publish-request-001"
+        final_artifact = next(item for item in artifacts if item["artifact_type"] == "EDITED_FILM")
+        artifact_binding = {
+            "artifact_id": final_artifact["artifact_id"],
+            "artifact_version": final_artifact["version"],
+            "sha256": final_artifact["sha256"],
+            "size_bytes": len(final_artifact_bytes),
+        }
 
         def signed_credential(action, actor, suffix):
             payload = {
-                "schema": "RhemaScript.ApprovalCredential.v1",
+                "schema": "RhemaScript.ApprovalCredential.v2",
                 "approval_id": f"approval-{suffix}",
                 "issuer": "RhemaScript-Approval-Service",
                 "actor_id": actor,
@@ -188,6 +209,10 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 "expires_at": (now + timedelta(minutes=5)).isoformat(),
                 "nonce": f"nonce-{suffix}",
                 "key_id": "key-2026-01",
+                "artifact_id": artifact_binding["artifact_id"],
+                "artifact_version": artifact_binding["artifact_version"],
+                "artifact_sha256": artifact_binding["sha256"],
+                "artifact_size_bytes": artifact_binding["size_bytes"],
             }
             payload["signature"] = private_key.sign(
                 json.dumps(payload, sort_keys=True, separators=(",", ":"),
@@ -199,6 +224,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         return {
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
+            "evidence_root": evidence_root,
             "approval_verifier": approval_verifier,
             "approval_credentials": (
                 signed_credential("FINAL_ACCEPTANCE", "director-001", "final-001"),
@@ -322,7 +348,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.upload_video(
                     video.name, title="Approved", description="Test",
-                    **self.publish_context(),
+                    **self.publish_context(final_film_bytes=b"approved-video-bytes"),
                 )
                 verified = client.verify_video(result["video_id"])
 
@@ -660,7 +686,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             video.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 result = client.upload_video(video.name, title="Test", description="Test",
-                                             **self.publish_context())
+                                             **self.publish_context(final_film_bytes=payload))
 
         self.assertEqual(result["video_id"], "video-123")
         self.assertEqual(len(put_requests), 3)
@@ -688,11 +714,11 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
                 with self.assertRaisesRegex(YouTubeIntegrationError, "impossible byte range"):
                     client.upload_video(video.name, title="Test", description="Test",
-                                        **self.publish_context())
+                                        **self.publish_context(final_film_bytes=b"x" * chunk_size))
 
     def test_upload_requires_existing_nonempty_file(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
-        with self.assertRaisesRegex(YouTubeIntegrationError, "missing or empty"):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "missing or cannot be opened safely"):
             client.upload_video("/definitely/not/a/real/video.mp4", title="Approved",
                 description="Test", **self.publish_context())
 
