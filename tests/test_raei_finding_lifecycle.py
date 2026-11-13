@@ -733,7 +733,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "observation-cross-project.json",
             {
                 "schema": FINDING_SCHEMA,
-                "finding_id": self.finding_id,
+                "finding_id": "RS-FND-CROSS-PROJECT-002",
                 "version": "1.1",
                 "project_id": "RS-PWW-OTHER",
                 "title": "Cross-project resumed finding attempt",
@@ -747,7 +747,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 "evidence_id": "EV-FND-CROSS-PROJECT",
                 "evidence_version": "1.0",
                 "created_at_utc": self.now.isoformat(),
-                "supersedes": [f"{self.finding_id}@1.0"],
+                "supersedes": ["RS-FND-CROSS-PROJECT-002@1.0"],
             },
             "EV-FND-CROSS-PROJECT",
         )
@@ -778,7 +778,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             },),
         )[0]
         payload = {
-            "finding_id": self.finding_id,
+            "finding_id": "RS-FND-CROSS-PROJECT-002",
             "version": "1.1",
             "project_id": "RS-PWW-OTHER",
             "identity_authentication_status": "UNVERIFIED",
@@ -788,12 +788,12 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 "sha256": evidence.sha256,
                 "size_bytes": evidence.size_bytes,
             },
-            "supersedes": [f"{self.finding_id}@1.0"],
+            "supersedes": ["RS-FND-CROSS-PROJECT-002@1.0"],
         }
         before = len(self.registry.list_activity_events())
         with self.assertRaisesRegex(ValueError, "exactly one prior closure and reopening in this project"):
             self.registry.append_authenticated_finding_capture_event(
-                f"FINDING:{self.finding_id}@1.1", payload,
+                "FINDING:RS-FND-CROSS-PROJECT-002@1.1", payload,
                 project_id="RS-PWW-OTHER", project_version=self.project_version,
                 request_id=request_id, approval=verified,
             )
