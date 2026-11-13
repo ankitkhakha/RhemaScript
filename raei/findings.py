@@ -139,6 +139,40 @@ def capture_finding(
     supersedes = _string_list(payload.get("supersedes", []), "supersedes")
     if any(not _SUPERSEDES.fullmatch(item) for item in supersedes):
         raise RAEIFindingError("supersedes entries must use RS-FND-ID@version format")
+
+    reopening_context = None
+    if supersedes:
+        if supersedes != [f"{finding_id}@{supersedes[0].rsplit('@', 1)[1]}"]:
+            raise RAEIFindingError("a resumed finding version must supersede exactly one prior version of the same finding")
+        previous_version = supersedes[0].rsplit("@", 1)[1]
+        def version_tuple(value):
+            return tuple(int(part) for part in value.split("."))
+        old_parts, new_parts = version_tuple(previous_version), version_tuple(version)
+        width = max(len(old_parts), len(new_parts))
+        if old_parts + (0,) * (width - len(old_parts)) >= new_parts + (0,) * (width - len(new_parts)):
+            raise RAEIFindingError("resumed finding version must be greater than the closed version it supersedes")
+        history = [
+            event for event in registry.list_activity_events()
+            if event.get("project_id") == project_id and event.get("subject_id") == finding_id
+            and event.get("payload", {}).get("finding_version") == previous_version
+        ]
+        closures = [event for event in history if event["event_type"] == "FINDING_CLOSED"]
+        reopenings = [event for event in history if event["event_type"] == "FINDING_REOPENED"]
+        if len(closures) != 1 or len(reopenings) != 1:
+            raise RAEIFindingError("superseding a prior version requires its exact governed closure and reopening events")
+        reopen = reopenings[0]["payload"]
+        if (reopen.get("new_finding_version") != version
+                or reopen.get("closure_event_id") != closures[0]["event_id"]
+                or reopen.get("reopen_decision") != "REOPENED"):
+            raise RAEIFindingError("new finding version does not match the authorized reopening event")
+        if (not isinstance(verifier, ApprovalVerifier) or submitter_credential is None
+                or not isinstance(project_version, str) or not project_version.strip()
+                or not isinstance(request_id, str) or not request_id.strip()):
+            raise RAEIFindingError("resumed finding capture requires an authenticated V3 submitter approval")
+        reopening_context = reopenings[0]
+    elif payload.get("version") != "1.0" and not supersedes:
+        # Independent finding streams may begin at another initial version only when explicitly documented.
+        pass
     submitted_by = payload.get("submitted_by_label")
     if submitted_by is not None and (not isinstance(submitted_by, str) or not submitted_by.strip()):
         raise RAEIFindingError("submitted_by_label must be null or non-empty text")
@@ -237,6 +271,13 @@ def capture_finding(
                 },),
                 require_distinct_actors=False,
             )[0]
+            if reopening_context is not None:
+                prior_auth = reopening_context.get("payload", {}).get("authorization", {})
+                if (verified.subject_id in prior_auth.get("subject_ids", [])
+                        or verified.identity_session_id in prior_auth.get("identity_session_ids", [])
+                        or verified.identity_provider_id not in prior_auth.get("identity_provider_ids", [])
+                        or verified.identity_policy_version not in prior_auth.get("identity_policy_versions", [])):
+                    raise RAEIFindingError("new-version submitter must be independent from reopening reviewers in the same identity domain")
             recorded = registry.append_authenticated_finding_capture_event(
                 event_id, event_payload, project_id=project_id,
                 project_version=project_version, request_id=request_id,
