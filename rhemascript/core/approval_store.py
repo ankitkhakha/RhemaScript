@@ -648,7 +648,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             raise ValueError("chunk byte range is invalid")
         now = datetime.now(timezone.utc)
         now_text = self._utc(now)
-        lease = self._utc(now + __import__("datetime").timedelta(seconds=lease_seconds))
+        lease = self._utc(now + timedelta(seconds=lease_seconds))
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
