@@ -10,7 +10,7 @@ This contract defines verification of externally signed Ed25519 approvals. Rhema
 
 RhemaScript.ApprovalCredential.v1 binds approval ID, nonce, issuer, key ID, actor ID, action, project ID, project version, request ID, issued-at and expiry. V1 remains available for legacy workflows that do not require final-artifact authorization.
 
-V1 credentials are rejected whenever an exact artifact binding is required. They cannot authorize YouTube publication or thumbnail writes.
+V1 credentials are rejected whenever an exact artifact binding is required. They cannot authorize governed finding/knowledge reviews, YouTube publication or thumbnail writes.
 
 ### V2 — exact final-artifact scope
 
@@ -24,11 +24,11 @@ All fields are covered by the Ed25519 signature over canonical JSON. The verifie
 
 ## Publication authorization
 
-A YouTube write requires one atomic two-credential batch:
-1. FINAL_ACCEPTANCE — final acceptance by one authenticated actor;
-2. PUBLISH — publication authorization by a different authenticated actor.
+A YouTube video upload requires one atomic two-credential V3 batch:
+1. FINAL_ACCEPTANCE — final acceptance by one independently authenticated human;
+2. PUBLISH — publication authorization by a different independently authenticated human.
 
-Both V2 credentials must bind the same project ID, project version, request ID, final-film artifact ID, artifact version, SHA-256 and byte length. The approval IDs and nonces must be unique, credentials unexpired and not previously consumed or revoked.
+Both V3 credentials preserve the V2 exact-artifact fields and add signed subject, role, authentication context/time, identity session, identity-policy version and identity-provider claims. Both must bind the same project ID, project version, request ID, final-film artifact ID, artifact version, SHA-256 and byte length. The verifier enforces the trusted identity policy, distinct actor identities, unique approval IDs/nonces, expiry and atomic replay/revocation checks.
 
 ## Evidence verification and upload byte identity
 
@@ -40,7 +40,7 @@ Before approval consumption, RhemaScript:
 
 For upload, the selected video file is opened without following a symlink, copied into a private temporary spool, hashed while copying, and compared to the signed digest and byte length. The provider upload reads from that verified spool, not by reopening the caller's path. A changed, substituted or mismatched file is rejected before any provider request.
 
-Thumbnail changes use the same exact final-film binding and additionally require the client's existing successful YouTube read-back verification context.
+Thumbnail writes are currently disabled. Final-film approvals do not authorize thumbnail bytes. A separate signed thumbnail-artifact approval contract must bind the exact thumbnail bytes and pass independent security review before thumbnail writes can be enabled.
 
 ## Provider boundary
 
