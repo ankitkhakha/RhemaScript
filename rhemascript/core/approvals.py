@@ -43,6 +43,7 @@ _SIGNATURE_HEX = re.compile(r"^[0-9a-f]{128}$")
 _VERIFIED_APPROVAL_TOKEN = object()
 _VERIFIED_APPROVAL_LOCK = threading.Lock()
 _VERIFIED_APPROVALS: weakref.WeakValueDictionary[int, "VerifiedApproval"] = weakref.WeakValueDictionary()
+_CONSUMED_APPROVALS: weakref.WeakValueDictionary[int, "VerifiedApproval"] = weakref.WeakValueDictionary()
 
 
 
@@ -83,6 +84,14 @@ def is_verified_approval(value: object) -> bool:
         return False
     with _VERIFIED_APPROVAL_LOCK:
         return _VERIFIED_APPROVALS.get(id(value)) is value
+
+
+def is_consumed_verified_approval(value: object) -> bool:
+    """Accept only an exact verifier object whose atomic replay-consumption callback succeeded."""
+    if not is_verified_approval(value):
+        return False
+    with _VERIFIED_APPROVAL_LOCK:
+        return _CONSUMED_APPROVALS.get(id(value)) is value
 
 
 class ApprovalVerifier:
@@ -444,4 +453,7 @@ class ApprovalVerifier:
             raise ApprovalError("approval batch state could not be verified") from None
         if consumed is not True:
             raise ApprovalError("approval batch is revoked, replayed, or could not be consumed atomically")
+        with _VERIFIED_APPROVAL_LOCK:
+            for item in verified:
+                _CONSUMED_APPROVALS[id(item)] = item
         return tuple(verified)
