@@ -557,7 +557,8 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
             project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
             owner_id="gateway-A",
         ))
-        self.assertTrue(self.store.begin_publish_reconciliation(
+        restarted = SQLitePublishSessionRegistry(self.path)
+        self.assertTrue(restarted.begin_publish_reconciliation(
             **args, owner_id="gateway-B", total=10, lease_seconds=60,
         ))
         self.assertTrue(self.store.record_publish_response(
@@ -666,6 +667,55 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         registry = SQLitePublishSessionRegistry(self.path)
         self.assertFalse(registry.verify_checkpoint(legacy, key))
         self.assertTrue(base.verify_checkpoint(legacy, key))
+
+    def test_backup_restore_preserves_publish_session_and_v4_checkpoint(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", status=308, range_header="bytes=0-4",
+        ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A",
+        ))
+        key = b"publish-session-checkpoint-key-32-bytes!"
+        checkpoint = self.store.checkpoint(key)
+        backup = self.store.backup_to(self.directory / "publish-session-backup.sqlite3")
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(b"secret-token", backup.read_bytes())
+        restored = SQLitePublishSessionRegistry(backup)
+        self.assertTrue(restored.verify_checkpoint(checkpoint, key))
+        record = restored.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "ACTIVE")
+        self.assertEqual(record["acknowledged_offset"], 5)
+        self.assertEqual(record["session_url_sha256"], self.url_digest)
+        with sqlite3.connect(backup) as db:
+            db.execute(
+                "UPDATE publish_sessions SET acknowledged_offset=6 WHERE request_id=?",
+                ("REQUEST-1",),
+            )
+        self.assertFalse(restored.verify_checkpoint(checkpoint, key))
+
+    def test_restart_does_not_reuse_unbound_session_creation_claim(self):
+        self.assertTrue(self.store.reserve_publish_session(
+            **self.identity, owner_id="gateway-A", lease_seconds=60,
+        ))
+        restarted = SQLitePublishSessionRegistry(self.path)
+        self.assertFalse(restarted.reserve_publish_session(
+            **self.identity, owner_id="gateway-B", lease_seconds=60,
+        ))
+        record = restarted.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "CREATING")
+        self.assertIsNone(record["session_url_sha256"])
 
     def test_registry_state_survives_reopening_database(self):
         self.reserve_and_bind()
