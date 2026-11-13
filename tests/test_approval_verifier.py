@@ -4,7 +4,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, is_verified_approval, is_consumed_verified_approval
+from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, is_verified_approval, is_consumed_verified_approval, is_resumed_verified_approval
 
 
 class ApprovalVerifierTests(unittest.TestCase):
@@ -701,6 +701,86 @@ class ApprovalVerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(ApprovalError, "schema v2 or v3"):
             self.verifier.verify_many_and_consume(
                 (self.credential(schema="RhemaScript.ApprovalCredential.v1"),), (self.v2_expectation(),),
+            )
+
+    def _persisted_record_for_resume(self, item):
+        return {
+            "approval_id": item.approval_id,
+            "nonce": item.nonce,
+            "issuer": item.issuer,
+            "actor_id": item.actor_id,
+            "action": item.action,
+            "project_id": item.project_id,
+            "project_version": item.project_version,
+            "request_id": item.request_id,
+            "issued_at": item.issued_at.isoformat(),
+            "expires_at": item.expires_at.isoformat(),
+            "key_id": item.key_id,
+            "consumed_at": self.now.isoformat(),
+            "artifact_id": item.artifact_id,
+            "artifact_version": item.artifact_version,
+            "artifact_sha256": item.artifact_sha256,
+            "artifact_size_bytes": item.artifact_size_bytes,
+            "credential_schema": item.credential_schema,
+            "signature": item.signature,
+            "subject_id": item.subject_id,
+            "actor_role": item.actor_role,
+            "authn_context": item.authn_context,
+            "authenticated_at": item.authenticated_at.isoformat() if item.authenticated_at else None,
+            "identity_session_id": item.identity_session_id,
+            "identity_policy_version": item.identity_policy_version,
+            "identity_provider_id": item.identity_provider_id,
+            "identity_max_authentication_age_seconds": item.identity_max_authentication_age_seconds,
+            "identity_clock_skew_seconds": item.identity_clock_skew_seconds,
+        }
+
+    def _consumed_publish_batch(self):
+        credentials = (
+            self.credential(
+                approval_id="approval-final-0001", actor_id="director-0001",
+                action="FINAL_ACCEPTANCE", nonce="nonce-final-0001",
+            ),
+            self.credential(
+                approval_id="approval-publish-0001", actor_id="publisher-0001",
+                action="PUBLISH", nonce="nonce-publish-0001",
+            ),
+        )
+        expectations = (self.expectations("FINAL_ACCEPTANCE"), self.expectations("PUBLISH"))
+        consumed = self.verifier.verify_many_and_consume(credentials, expectations)
+        records = [self._persisted_record_for_resume(item) for item in consumed]
+        return credentials, expectations, records
+
+    def test_existing_consumed_approvals_can_be_reverified_for_resume_without_reconsumption(self):
+        credentials, expectations, records = self._consumed_publish_batch()
+        resumed = self.verifier.verify_many_existing_consumed(
+            credentials, expectations, consumed_records=records,
+            is_revoked=lambda approval_id, nonce: (approval_id, nonce) in self.revoked,
+        )
+        self.assertEqual(len(resumed), 2)
+        self.assertTrue(all(is_consumed_verified_approval(item) for item in resumed))
+        self.assertTrue(all(is_resumed_verified_approval(item) for item in resumed))
+        self.assertEqual(len(self.consume_calls), 1)
+
+    def test_existing_consumed_approval_resume_rejects_mismatched_persisted_signature(self):
+        credentials, expectations, records = self._consumed_publish_batch()
+        records[0]["signature"] = "00" * 64
+        with self.assertRaisesRegex(ApprovalError, "differs from the signed credential"):
+            self.verifier.verify_many_existing_consumed(
+                credentials, expectations, consumed_records=records,
+                is_revoked=lambda approval_id, nonce: False,
+            )
+
+    def test_existing_consumed_approval_resume_rejects_revocation_and_missing_record(self):
+        credentials, expectations, records = self._consumed_publish_batch()
+        with self.assertRaisesRegex(ApprovalError, "revoked or unverifiable"):
+            self.verifier.verify_many_existing_consumed(
+                credentials, expectations, consumed_records=records,
+                is_revoked=lambda approval_id, nonce: approval_id == "approval-publish-0001",
+            )
+        with self.assertRaisesRegex(ApprovalError, "record is unavailable"):
+            self.verifier.verify_many_existing_consumed(
+                credentials, expectations, consumed_records=records[:1],
+                is_revoked=lambda approval_id, nonce: False,
             )
 
 if __name__ == "__main__":
