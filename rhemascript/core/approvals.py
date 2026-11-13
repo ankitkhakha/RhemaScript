@@ -71,6 +71,7 @@ class VerifiedApproval:
     identity_policy_version: str | None = None
     identity_provider_id: str | None = None
     identity_max_authentication_age_seconds: int | None = None
+    identity_clock_skew_seconds: float | None = None
     credential_schema: str | None = None
     signature: str | None = field(default=None, repr=False, compare=False)
     _verification_token: object | None = field(default=None, repr=False, compare=False)
@@ -295,6 +296,7 @@ class ApprovalVerifier:
             identity_policy_version=identity.get("identity_policy_version"),
             identity_provider_id=identity.get("identity_provider_id"),
             identity_max_authentication_age_seconds=identity_max_age,
+            identity_clock_skew_seconds=self._clock_skew.total_seconds() if schema == _SCHEMA_V3 else None,
             credential_schema=schema,
             signature=signature,
             _verification_token=_VERIFIED_APPROVAL_TOKEN,
