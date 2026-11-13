@@ -11,6 +11,7 @@ from urllib.error import URLError
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
+from rhemascript.core.approval_store import SQLitePublishSessionRegistry
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport, ExternalIntegrationError
 from rhemascript.integrations.youtube import (
@@ -111,7 +112,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
     def config(self):
         return YouTubeConfig("client-id", "client-secret", "refresh-token")
 
-    def publish_context(self, *, authorised=True, final_film_bytes=b'video'):
+    def publish_context(self, *, authorised=True, final_film_bytes=b'video', approval_store=None):
         gates = (
             "PROJECT_CREATIVE_DIRECTION", "SCRIPT_BIBLICAL_ACCURACY",
             "VISUAL_DEVELOPMENT", "PRODUCTION_PLAN_PROMPT",
@@ -184,7 +185,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         approval_verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
             verification_keys={"key-2026-01": public_key},
-            consume_many_once=consume_once,
+            consume_many_once=(approval_store.consume_many_once if approval_store is not None else consume_once),
             clock=lambda: now,
             identity_policies={"identity-policy-v1": {
                 "provider_id": "test-idp",
@@ -366,20 +367,44 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
         events = []
         transport = MethodTransport()
-        gateway = ExternalIntegrationGateway(
-            (youtube_provider_binding(),), transport=transport,
-            credential_resolver=lambda provider: {}, audit_sink=events.append, enabled=True,
-        )
-        client = YouTubeClient(self.config(), gateway=gateway)
-        with tempfile.NamedTemporaryFile() as video:
-            video.write(b"approved-video-bytes")
-            video.flush()
-            with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                result = client.upload_video(
-                    video.name, title="Approved", description="Test",
-                    **self.publish_context(final_film_bytes=b"approved-video-bytes"),
-                )
-                verified = client.verify_video(result["video_id"])
+        with tempfile.TemporaryDirectory() as registry_directory:
+            os.chmod(registry_directory, 0o700)
+            registry = SQLitePublishSessionRegistry(Path(registry_directory) / "approval.sqlite3")
+            gateway = ExternalIntegrationGateway(
+                (youtube_provider_binding(),), transport=transport,
+                credential_resolver=lambda provider: {}, audit_sink=events.append,
+                publish_session_registry=registry, enabled=True,
+            )
+            client = YouTubeClient(self.config(), gateway=gateway)
+            with tempfile.NamedTemporaryFile() as video:
+                video.write(b"approved-video-bytes")
+                video.flush()
+                with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                    result = client.upload_video(
+                        video.name, title="Approved", description="Test",
+                        **self.publish_context(
+                            final_film_bytes=b"approved-video-bytes", approval_store=registry,
+                        ),
+                    )
+                    calls_after_upload = len(transport.calls)
+                    with self.assertRaisesRegex(ExternalIntegrationError, "already has a publish-session claim"):
+                        gateway.request(
+                            YOUTUBE_INTERFACE_ID, "UPLOAD_SESSION",
+                            "https://www.googleapis.com/upload/youtube/v3/videos",
+                            method="POST", headers={}, body=b"{}",
+                            request_id="publish-request-001", project_id="RS-TEST-001",
+                            source_version="1.0", authority=client._gateway_authority,
+                        )
+                    self.assertEqual(len(transport.calls), calls_after_upload)
+                    verified = client.verify_video(result["video_id"])
+            session = registry.get_publish_session(
+                project_id="RS-TEST-001", project_version="1.0",
+                request_id="publish-request-001",
+            )
+            self.assertEqual(session["state"], "COMPLETE")
+            self.assertEqual(session["acknowledged_offset"], len(b"approved-video-bytes"))
+            self.assertEqual(len(session["session_url_sha256"]), 64)
+            self.assertNotIn(b"private-session", registry.path.read_bytes())
 
         self.assertEqual(result["video_id"], "gateway-video")
         self.assertTrue(result["upload_completed"])
@@ -399,6 +424,31 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("gateway-access", repr(events))
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
+
+    def test_upload_session_is_denied_before_provider_write_without_durable_registry(self):
+        calls = []
+        def transport(request, timeout):
+            calls.append(request.full_url)
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            self.fail("upload provider write must be denied without a durable registry")
+        client = YouTubeClient(self.config(), gateway=ExternalIntegrationGateway(
+            (youtube_provider_binding(),), transport=type("T", (), {
+                "send_request": lambda _self, url, method, headers, body, timeout:
+                    (200, b'{"access_token":"test-token"}', {}) if url.startswith("https://oauth2.googleapis.com/token")
+                    else self.fail("provider write must be denied")
+            })(),
+            credential_resolver=lambda provider: {}, audit_sink=lambda event: None, enabled=True,
+        ))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"approved-video-bytes")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "durable publish-session registry"):
+                    client.upload_video(
+                        video.name, title="Approved", description="Test",
+                        **self.publish_context(final_film_bytes=b"approved-video-bytes"),
+                    )
 
     def test_verify_video_rejects_different_returned_video_id(self):
         def transport(request, timeout):
