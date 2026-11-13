@@ -482,7 +482,7 @@ class ReadinessRunRegistry:
                 if research_for_version or reproduction_for_version:
                     db.rollback()
                     raise ValueError("finding research is already recorded for this version")
-            else:
+            elif event_type == "FINDING_REPRODUCED":
                 if not research_for_version:
                     db.rollback()
                     raise ValueError("finding reproduction requires prior research for this version")
