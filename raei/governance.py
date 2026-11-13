@@ -336,6 +336,11 @@ def record_finding_reopening(
     if len(closures) != 1 or closures[0]["payload"].get("closure_decision") != "CLOSED":
         raise RAEIGovernanceError("reopening requires exactly one prior governed closure")
     closure = closures[0]
+    closure_authorization = closure["payload"].get("authorization", {})
+    if closure_authorization.get("project_version") != project_version:
+        raise RAEIGovernanceError(
+            "reopening project version must match the exact prior closure scope"
+        )
     binding = {
         "evidence_id": current.evidence_id,
         "evidence_version": current.version,
