@@ -44,7 +44,7 @@ class ApprovalVerifierTests(unittest.TestCase):
             }},
         )
 
-    def credential(self, **overrides):
+    def credential(self, identity_overrides=None, **overrides):
         payload = {
             "schema": "RhemaScript.ApprovalCredential.v3",
             "approval_id": "approval-0001",
@@ -78,6 +78,7 @@ class ApprovalVerifierTests(unittest.TestCase):
                 "identity_policy_version": "identity-policy-v1",
                 "identity_provider_id": "test-idp",
             })
+            payload.update(identity_overrides or {})
         payload["signature"] = self.private_key.sign(
             json.dumps(payload, sort_keys=True, separators=(",", ":"),
                        ensure_ascii=False, allow_nan=False).encode()
@@ -130,6 +131,39 @@ class ApprovalVerifierTests(unittest.TestCase):
         )[0]
         self.assertEqual(result.actor_role, "publisher")
         self.assertEqual(result.authn_context, "mfa")
+
+    def test_rejects_identity_role_escalation(self):
+        with self.assertRaisesRegex(ApprovalError, "role or authentication context"):
+            self.verify(self.credential(identity_overrides={"actor_role": "administrator"}))
+
+    def test_rejects_identity_provider_mismatch(self):
+        with self.assertRaisesRegex(ApprovalError, "identity provider"):
+            self.verify(self.credential(identity_overrides={"identity_provider_id": "other-idp"}))
+
+    def test_rejects_authentication_context_downgrade(self):
+        with self.assertRaisesRegex(ApprovalError, "role or authentication context"):
+            self.verify(self.credential(identity_overrides={"authn_context": "password-only"}))
+
+    def test_rejects_stale_authentication(self):
+        stale = (self.now - timedelta(minutes=6)).isoformat()
+        with self.assertRaisesRegex(ApprovalError, "stale or future-dated"):
+            self.verify(self.credential(identity_overrides={"authenticated_at": stale}))
+
+    def test_rejects_future_authentication(self):
+        future = (self.now + timedelta(minutes=2)).isoformat()
+        with self.assertRaisesRegex(ApprovalError, "stale or future-dated"):
+            self.verify(self.credential(identity_overrides={"authenticated_at": future}))
+
+    def test_rejects_authentication_after_credential_issue_time(self):
+        later = (self.now + timedelta(seconds=45)).isoformat()
+        with self.assertRaisesRegex(ApprovalError, "after credential issuance"):
+            self.verify(self.credential(identity_overrides={"authenticated_at": later}))
+
+    def test_rejects_identity_claim_tampering_without_resigning(self):
+        token = self.credential()
+        token["subject_id"] = "subject-attacker-01"
+        with self.assertRaisesRegex(ApprovalError, "signature is invalid"):
+            self.verify(token)
 
     def test_accepts_valid_signed_scoped_approval_once(self):
         result = self.verify(self.credential())
