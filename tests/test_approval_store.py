@@ -53,7 +53,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             "approval_id": "approval-verified-0001",
             "issuer": "trusted-approval-issuer",
             "actor_id": "director-0001",
-            "action": "PUBLISH",
+            "action": "REVIEW",
             "project_id": "RS-PWW-001",
             "project_version": "3.2",
             "request_id": "publish-request-0001",
@@ -72,7 +72,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             consume_many_once=lambda entries: True,
         )
         verified = verifier.verify_and_consume(
-            payload, action="PUBLISH", project_id="RS-PWW-001",
+            payload, action="REVIEW", project_id="RS-PWW-001",
             project_version="3.2", request_id="publish-request-0001",
         )
         copied = replace(verified)
