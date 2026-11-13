@@ -140,6 +140,69 @@ def _metric_values(snapshot: dict[str, Any]) -> dict[str, tuple[Decimal | None, 
     return values
 
 
+def _daily_coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Report returned day keys and unobserved calendar dates without imputing values."""
+    query = snapshot["query"]
+    if query.get("dimensions") != "day":
+        raise YouTubeAnalyticsInsightError(
+            "V1 completeness diagnostics require the single day dimension"
+        )
+    start = date.fromisoformat(query["startDate"])
+    end = date.fromisoformat(query["endDate"])
+    headers = snapshot["response"]["columnHeaders"]
+    day_columns = [
+        index for index, header in enumerate(headers)
+        if header["columnType"] == "DIMENSION" and header["name"] == "day"
+    ]
+    if len(day_columns) != 1:
+        raise YouTubeAnalyticsInsightError("daily report must contain exactly one day column")
+    day_index = day_columns[0]
+    observed: set[date] = set()
+    for row_number, row in enumerate(snapshot["response"].get("rows") or []):
+        value = row[day_index]
+        if not isinstance(value, str):
+            raise YouTubeAnalyticsInsightError(
+                f"day dimension in row {row_number} must be a string"
+            )
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            raise YouTubeAnalyticsInsightError(
+                f"day dimension in row {row_number} is not an ISO date"
+            ) from None
+        if parsed.isoformat() != value:
+            raise YouTubeAnalyticsInsightError(
+                f"day dimension in row {row_number} is not canonical ISO format"
+            )
+        if parsed < start or parsed > end:
+            raise YouTubeAnalyticsInsightError(
+                f"day dimension in row {row_number} is outside the requested range"
+            )
+        if parsed in observed:
+            raise YouTubeAnalyticsInsightError(
+                f"duplicate day dimension value: {value}"
+            )
+        observed.add(parsed)
+
+    expected = {
+        start.fromordinal(ordinal)
+        for ordinal in range(start.toordinal(), end.toordinal() + 1)
+    }
+    unobserved = sorted(expected - observed)
+    return {
+        "status": "NO_ROWS_RETURNED" if not observed else "OBSERVATION_ONLY",
+        "expected_calendar_days": len(expected),
+        "observed_days": [value.isoformat() for value in sorted(observed)],
+        "unobserved_days": [value.isoformat() for value in unobserved],
+        "unobserved_day_count": len(unobserved),
+        "interpretation": (
+            "Unobserved dates are not zero-activity dates. Reporting delays or API "
+            "row omission may explain absent dates; this diagnostic makes no claim "
+            "about completeness or the reason for omission."
+        ),
+    }
+
+
 def _query_identity(query: dict[str, Any]) -> dict[str, Any]:
     return {
         key: value for key, value in query.items()
@@ -218,6 +281,7 @@ def compare_analytics_periods(
             "days": current_days,
             "returned_rows": current_snapshot["row_count"],
             "data_status": "NO_DATA" if current_values is None else "DATA_RETURNED",
+            "daily_coverage": _daily_coverage(current_snapshot),
         },
         "previous_period": {
             "start_date": previous_query["startDate"],
@@ -225,6 +289,7 @@ def compare_analytics_periods(
             "days": previous_days,
             "returned_rows": previous_snapshot["row_count"],
             "data_status": "NO_DATA" if previous_values is None else "DATA_RETURNED",
+            "daily_coverage": _daily_coverage(previous_snapshot),
         },
         "metrics": metrics,
         "interpretation": (
