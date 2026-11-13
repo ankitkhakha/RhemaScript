@@ -75,3 +75,50 @@ The tests exercise revocation after issuance, revocation before acquisition, sta
 ## Acquisition expiry race hardening — 13 November 2026
 
 The synthetic model rechecks lease expiry after acquiring SQLite's serialized write lock, not only before attempting the lock. This prevents a lease that expires while queued behind another writer from being issued using a stale pre-lock timestamp. The adversarial test holds the writer lock until the requested lease expires and verifies acquisition fails closed. This is a local model invariant only; production coordinators must apply the same rule using their authoritative time source and serialized transaction boundary.
+
+
+## Coordinator identity, signing and audit contract
+
+The production coordinator must have a trust domain separate from the RhemaScript worker and from the provider credential resolver. The following is a deployment contract, not an assertion that these services currently exist.
+
+### Caller authentication
+
+- Accept coordinator requests only over mutually authenticated service transport.
+- Validate the caller workload identity against an explicit allowlist of service identities, environment, project and audience; reject user-session tokens and ambient credentials.
+- Bind each request to a short-lived, unique request ID and reject replayed authentication assertions.
+- Authorize distinct operations separately: acquire, revoke, inspect, complete and reconcile. A worker allowed to acquire a lease must not thereby gain revoke or key-administration privileges.
+- Require independent operator identity and step-up authentication for key rotation, emergency invalidation, policy changes and recovery operations.
+
+### Lease signing and verification
+
+- Sign the exact canonical lease claims with an asymmetric key held by an HSM/KMS-backed service. The worker must never receive private signing material.
+- Include a schema/version, signing key ID, coordinator issuer, audience, lease ID, nonce, resource, operation scope, request fingerprint, project/artifact binding, approval tuple, generation, issued-at and expiry.
+- Use a fixed, reviewed canonical serialization and domain-separated signature input. Reject unknown critical claims, duplicate JSON keys, invalid encodings, unsupported algorithms, missing fields and algorithm/key-type mismatches.
+- Verifiers pin the permitted issuer and audience, resolve keys only through the authenticated key registry, enforce key validity/revocation and retain historical public-key material for audit.
+- Key rotation must support overlap without accepting revoked or expired signing keys. Emergency invalidation must advance the authorization generation and invalidate all outstanding leases.
+
+### Audit and recovery
+
+- Emit append-only, independently stored events for lease requested, granted, denied, revoked, accepted, completed, indeterminate, expired and reconciled.
+- Each event binds the prior event digest or a monotonic audit sequence, coordinator identity, lease ID, generation, request fingerprint, approval IDs and outcome. Never log credentials, bearer tokens, raw approval secrets, media bytes or sensitive query/header values.
+- Require durable audit acknowledgement before granting a lease and before reporting a dispatch outcome as definitive. If audit durability is unavailable, fail closed or return an explicit indeterminate state.
+- Persist idempotency mapping from dispatch nonce to one lease and one provider operation ID. A lost response must be reconciled against this mapping; it must not silently mint a replacement lease or repeat a potentially accepted mutation.
+- Recovery must restore the fencing counter, revocations, outstanding/consumed nonces and audit chain from independently protected checkpoints. A restored generation must be strictly greater than every generation that may have been issued before the failure.
+
+### Canonical request binding
+
+The fingerprint contract must define a versioned, unambiguous encoding over provider origin, HTTP method, normalized path, exact query representation, operation, content digest, project and artifact version/digest, and an explicit allowlist of semantic headers. Use length-prefixed fields or a reviewed canonical format; do not concatenate delimiter-separated strings. Exclude volatile transport headers only when they cannot change provider semantics. The provider-side enforcement point must recompute or independently validate the same binding at acceptance.
+
+### Required fault-injection scenarios
+
+- Coordinator identity is valid but has the wrong audience, environment, project or operation privilege.
+- A caller replays a previously used acquisition request ID or dispatch nonce.
+- Signing key is revoked between lease issuance and dispatch acceptance.
+- Key registry is stale, unavailable, equivocal or returns a key with a mismatched issuer/algorithm.
+- Audit sink acknowledges late, loses an event, returns an ambiguous response or becomes unavailable during revocation.
+- Coordinator crashes after committing a lease but before returning it; retry must recover the same idempotent outcome or reject safely.
+- Coordinator crashes after revocation commit but before responding; all older generations must remain fenced.
+- Recovery restores a stale checkpoint or attempts to lower/reuse a fencing generation.
+- Provider acceptance succeeds but the response is lost; reconciliation must not issue a duplicate mutation.
+
+These controls require independent implementation and review. A passing local SQLite test cannot establish caller identity, signing-key custody, audit immutability, provider enforcement or distributed consistency.
