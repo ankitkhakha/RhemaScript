@@ -222,6 +222,20 @@ class ReadinessRunRegistry:
                 or not isinstance(primary, dict)
                 or not {"evidence_id", "version", "sha256", "size_bytes"}.issubset(primary)):
             raise ValueError("finding capture payload is incomplete or already asserts authenticated identity")
+        refs = payload.get("evidence_refs")
+        if (not isinstance(refs, list) or not refs or not isinstance(refs[0], dict)
+                or refs[0].get("evidence_id") != primary.get("evidence_id")
+                or refs[0].get("version") != primary.get("version")
+                or refs[0].get("sha256") != primary.get("sha256")
+                or refs[0].get("size_bytes") != primary.get("size_bytes")
+                or refs[0].get("relative_path") != primary.get("relative_path")
+                or not isinstance(primary.get("sha256"), str)
+                or len(primary["sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in primary["sha256"])
+                or not isinstance(primary.get("size_bytes"), int)
+                or isinstance(primary.get("size_bytes"), bool)
+                or primary["size_bytes"] < 0):
+            raise ValueError("authenticated finding evidence references must match the exact approved primary artifact")
         if (approval.artifact_id != primary.get("evidence_id")
                 or approval.artifact_version != primary.get("version")
                 or approval.artifact_sha256 != primary.get("sha256")
