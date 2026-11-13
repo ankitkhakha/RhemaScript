@@ -41,11 +41,12 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
     def test_persists_snapshot_as_draft_with_separate_file_and_payload_digests(self):
         snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
         with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "youtube").mkdir()
             record = persist_analytics_evidence_artifact(
                 snapshot, evidence_root=directory, relative_path="youtube/analytics.json",
                 artifact_id="YT-ANALYTICS-001", project_id="PROJECT-1",
                 project_version="3",
-            ) if (Path(directory) / "youtube").mkdir() is None else None
+            )
             self.assertEqual(record["artifact_type"], "YOUTUBE_ANALYTICS_SNAPSHOT")
             self.assertEqual(record["status"], "DRAFT")
             self.assertEqual(record["snapshot_sha256"], snapshot["snapshot_sha256"])
