@@ -91,6 +91,55 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             db.execute("UPDATE consumed_approvals SET actor_id='tampered-actor'")
         self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
 
+    def test_checkpoint_snapshot_uses_one_snapshot_during_concurrent_revocation(self):
+        from unittest.mock import patch
+
+        # WAL allows a writer to commit while the checkpoint holds a read
+        # transaction. The checkpoint must retain the pre-write view of both
+        # tables instead of combining old consumed rows with new revocations.
+        with self.store._connect() as db:
+            db.execute("PRAGMA journal_mode=WAL")
+
+        real_connect = self.store._connect
+        injected = {"done": False}
+
+        def interleave():
+            if injected["done"]:
+                return
+            injected["done"] = True
+            writer = sqlite3.connect(self.path, isolation_level=None)
+            try:
+                writer.execute(
+                    "INSERT INTO revoked_approvals VALUES (?, ?, ?, ?, ?)",
+                    ("revoked-race", "nonce-race", "2026-11-13T00:00:00+00:00",
+                     "concurrent checkpoint test", "test-actor"),
+                )
+            finally:
+                writer.close()
+
+        class InterleavingConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, sql, *args):
+                result = self.connection.execute(sql, *args)
+                if "FROM consumed_approvals ORDER BY approval_id" in sql:
+                    interleave()
+                return result
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        with patch.object(
+            self.store, "_connect",
+            side_effect=lambda: InterleavingConnection(real_connect()),
+        ):
+            snapshot = json.loads(self.store._snapshot_bytes().decode("utf-8"))
+
+        self.assertTrue(injected["done"])
+        self.assertEqual(snapshot["revoked"], [])
+        self.assertTrue(self.store.is_revoked("revoked-race", "nonce-race"))
+
     def test_backup_is_owner_only_and_preserves_replay_state(self):
         entry = self.record("approval-backup-0001", "nonce-backup-0001", self.future)
         self.store._consume_many_once((entry,))
