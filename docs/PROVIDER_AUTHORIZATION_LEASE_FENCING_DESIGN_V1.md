@@ -143,3 +143,8 @@ The model also represents the post-acceptance uncertainty boundary:
 - A lease that was never accepted cannot be marked indeterminate or reconciled.
 
 These are synthetic local state-machine behaviors only. The model does not contact a provider, prove that a provider operation ID is authentic, or create an independent audit trail. Production reconciliation must verify provider evidence through an authenticated provider interface, persist evidence and audit acknowledgement independently, and prohibit automatic replay whenever acceptance is ambiguous.
+
+
+## Strict lease claim shape in the reference model — 13 November 2026
+
+Lease acquisition now requires exactly two distinct approval identifiers (not two-or-more) and a lowercase 64-character SHA-256 request fingerprint. Tests reject three-approval ambiguity, duplicate approval identifiers, malformed digest length, uppercase digest encoding and non-hex characters. The production contract still needs a versioned canonical request encoding and independent recomputation at the provider-enforced acceptance point; this local format check alone does not prove the digest binds the right request fields.
