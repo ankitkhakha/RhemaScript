@@ -71,7 +71,8 @@ def _validate_graph(artifacts: dict[str, dict[str, Any]], links: list[dict[str, 
         visited.add(node)
     for node in graph:
         visit(node)
-    films = [a for a in artifacts.values() if a["artifact_type"] == "EDITED_FILM"]
+    films = {ident for ident, artifact in artifacts.items()
+             if artifact["artifact_type"] == "EDITED_FILM"}
     if not films:
         return
     by_type = {}
@@ -80,20 +81,33 @@ def _validate_graph(artifacts: dict[str, dict[str, Any]], links: list[dict[str, 
     missing = [kind for kind in CHAIN_ORDER if not by_type.get(kind)]
     if missing:
         raise EvidencePackError("EDITED_FILM requires complete source-to-final chain; missing: " + ", ".join(missing))
-    def reaches(start, target):
-        pending, seen = [start], set()
+
+    # Validate one continuous, ordered path for every final film. Pairwise
+    # reachability across arbitrary artifacts is insufficient: disconnected
+    # branches must not be spliced together to fabricate a complete lineage.
+    complete_films = set()
+    for source_id in by_type["BIBLICAL_SOURCE"]:
+        pending = [(source_id, 0)]
+        visited_states = set()
         while pending:
-            current = pending.pop()
-            if current == target:
-                return True
-            if current in seen:
+            current, stage_index = pending.pop()
+            state = (current, stage_index)
+            if state in visited_states:
                 continue
-            seen.add(current)
-            pending.extend(graph[current] - seen)
-        return False
-    for first, second in zip(CHAIN_ORDER, CHAIN_ORDER[1:]):
-        if not any(reaches(a, b) for a in by_type[first] for b in by_type[second]):
-            raise EvidencePackError(f"source-to-final chain is disconnected between {first} and {second}")
+            visited_states.add(state)
+            if stage_index == len(CHAIN_ORDER) - 1 and current in films:
+                complete_films.add(current)
+            for child in graph[current]:
+                child_type = artifacts[child]["artifact_type"]
+                next_stage = stage_index + 1
+                if next_stage < len(CHAIN_ORDER) and child_type == CHAIN_ORDER[next_stage]:
+                    pending.append((child, next_stage))
+                else:
+                    pending.append((child, stage_index))
+    for film_id in sorted(films - complete_films):
+        raise EvidencePackError(
+            f"EDITED_FILM {film_id} lacks a complete ordered source-to-final chain"
+        )
 
 def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
     if not isinstance(pack, dict):
