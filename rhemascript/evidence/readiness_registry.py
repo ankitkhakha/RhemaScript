@@ -1,4 +1,4 @@
-"""Durable registry for read-only readiness runs and exact byte evidence.
+"""Durable registry for readiness runs, exact evidence and hash-chained activity events.
 
 SQLite is local persistence, not tamper-proof storage. HMAC checkpoints must be
 retained independently from this database and the key kept secret.
