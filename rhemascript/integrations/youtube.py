@@ -753,7 +753,7 @@ class YouTubeClient:
                 parsed = urlparse(location)
                 if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
                         or parsed.username or parsed.password or parsed.port not in (None, 443)
-                        or parsed.fragment or parsed.path != "/upload/youtube/v3/videos"):
+                        or parsed.fragment or not (parsed.path == "/upload/youtube/v3/videos" or parsed.path.startswith("/upload/youtube/v3/videos/"))):
                     raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
