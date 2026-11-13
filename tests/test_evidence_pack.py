@@ -33,7 +33,7 @@ class EvidencePackTests(unittest.TestCase):
             ident=f"A-{i}"; p["artifacts"].append({"artifact_id":ident,"project_id":PROJECT["project_id"],"project_version":"1.0","artifact_type":kind,"version":"1","status":"APPROVED" if kind.startswith("APPROVED_") else "VERIFIED"})
             p["source_to_final_links"].append({"from_artifact_id":previous,"to_artifact_id":ident,"relationship":"derived_from"}); previous=ident
         validate_evidence_pack(p); p["source_to_final_links"].pop()
-        with self.assertRaisesRegex(EvidencePackError,"disconnected"): validate_evidence_pack(p)
+        with self.assertRaisesRegex(EvidencePackError,"A-7.*complete ordered source-to-final chain"): validate_evidence_pack(p)
     def test_each_edited_film_requires_its_own_complete_source_to_final_chain(self):
         p = pack()
         previous = "SRC-1"
