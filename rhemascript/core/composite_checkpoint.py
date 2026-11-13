@@ -45,6 +45,30 @@ def _key(value: bytes, name: str) -> None:
         raise CompositeCheckpointError(f"{name} must contain at least 32 bytes")
 
 
+def _safe_private_bytes(path: str | os.PathLike[str], limit: int) -> bytes:
+    target = Path(path).expanduser()
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags)
+    except OSError:
+        raise CompositeCheckpointError("checkpoint file is missing or cannot be opened safely") from None
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077
+                or info.st_size <= 0 or info.st_size > limit):
+            raise CompositeCheckpointError("checkpoint file must be bounded, owner-owned and private")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise CompositeCheckpointError("checkpoint file exceeds its size limit")
+        return raw
+    except OSError:
+        raise CompositeCheckpointError("checkpoint file could not be read safely") from None
+    finally:
+        os.close(fd)
+
+
 def _private_parent(path: Path) -> None:
     absolute = Path(os.path.abspath(path.parent))
     current = Path(absolute.anchor)
@@ -162,7 +186,7 @@ def export_composite_checkpoint_manifest(
     if approval_before != approval_after or readiness_before != readiness_after:
         raise CompositeCheckpointError("authoritative stores changed during composite checkpoint capture")
 
-    archive_raw = Path(approval_archive_path).read_bytes()
+    archive_raw = _safe_private_bytes(approval_archive_path, 64 * 1024 * 1024)
     archive_file_digest = hashlib.sha256(archive_raw).hexdigest()
     checkpoint_digest = hashlib.sha256(_canonical(readiness_before)).hexdigest()
     body = {
@@ -219,7 +243,7 @@ def verify_composite_checkpoint_manifest(
 ) -> dict[str, Any]:
     """Verify the manifest, both live stores, and the exact approval archive."""
     envelope, raw = _read_manifest(manifest_path, manifest_key)
-    archive_raw = Path(approval_archive_path).read_bytes()
+    archive_raw = _safe_private_bytes(approval_archive_path, 64 * 1024 * 1024)
     if not hmac.compare_digest(
         hashlib.sha256(archive_raw).hexdigest(), envelope["approval_archive_sha256"],
     ):
@@ -239,8 +263,13 @@ def verify_composite_checkpoint_manifest(
     if not readiness_registry.verify_checkpoint(readiness_checkpoint, readiness_key):
         raise CompositeCheckpointError("readiness checkpoint does not match the live registry")
     approval_checkpoint = approval_store.checkpoint(approval_key)
-    if approval_checkpoint.get("snapshot_sha256") != envelope["approval_snapshot_sha256"]:
+    readiness_checkpoint_after = readiness_registry.checkpoint(readiness_key)
+    approval_checkpoint_after = approval_store.checkpoint(approval_key)
+    if (approval_checkpoint.get("snapshot_sha256") != envelope["approval_snapshot_sha256"]
+            or approval_checkpoint_after != approval_checkpoint):
         raise CompositeCheckpointError("approval store changed after composite checkpoint creation")
+    if readiness_checkpoint_after != readiness_checkpoint:
+        raise CompositeCheckpointError("readiness registry changed during composite verification")
     return {
         "manifest_valid": True,
         "generation": envelope["generation"],
