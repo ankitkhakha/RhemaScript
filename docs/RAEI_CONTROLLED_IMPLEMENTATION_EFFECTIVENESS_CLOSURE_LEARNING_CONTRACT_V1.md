@@ -1,6 +1,6 @@
 # RAEI Controlled Implementation, Effectiveness, Closure & Learning Contract V1.0
 
-**Status:** Candidate implementation transition is implemented and synthetic integration CI passed on `5a34e7110d04f7693f50a6d559120e491d27698a` (run #1446). Effectiveness, closure and knowledge-inheritance transitions remain proposed until their typed APIs, registry enforcement, projections and adversarial tests pass exact-head CI.
+**Status:** Candidate implementation transition is implemented and synthetic integration CI passed on `5a34e7110d04f7693f50a6d559120e491d27698a` (run #1446). Effectiveness is now implemented in the candidate and passed exact-head CI run #1458 on `0771e284a751abebedaf657b9bacf170eddfe10d`. Closure and knowledge-inheritance transitions remain proposed until their typed APIs, registry enforcement, projections and adversarial tests pass exact-head CI.
 **Authority:** A recorded plan is not permission to execute it. The Human Director retains existing decision and execution authority. No new approval gate is silently activated by this document.
 **Scope:** Candidate-only design for the remaining RAEI finding lifecycle. This document does not authorize live project changes, production deployment, provider writes, media generation, upload or publishing.
 
@@ -52,6 +52,8 @@ Required preconditions:
 - One terminal assessment per finding version; changed replay, stale approval, altered report or substituted implementation evidence is rejected.
 
 The report template is `templates/raei-finding-effectiveness.template.json`. It is a proposed evidence shape, not an implemented API or an assessment result.
+
+**Candidate effectiveness status:** `record_finding_effectiveness` and transactional `FINDING_EFFECTIVENESS_ASSESSED` are implemented. They require the exact prior implementation event/evidence tuple, a consumed V3 approval, an independent assessor, and a supported outcome (`EFFECTIVE`, `INEFFECTIVE`, `INCONCLUSIVE`). The finding projection exposes the exact outcome. Synthetic tests cover effective assessment and rejection of implementer reuse. CI run #1458 passed on the exact head above.
 
 ## 4. Closure and re-opening contract
 
