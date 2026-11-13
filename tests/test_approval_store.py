@@ -469,6 +469,10 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.assertTrue(self.store.bind_publish_session(
             **self.identity, session_url_sha256=self.url_digest, owner_id=owner,
         ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id=owner,
+        ))
 
     def test_session_url_digest_only_and_duplicate_session_claim_rejected(self):
         self.reserve_and_bind()
