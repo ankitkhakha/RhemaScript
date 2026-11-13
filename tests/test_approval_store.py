@@ -189,5 +189,32 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             SQLiteApprovalConsumptionStore(self.path)
 
 
+
+    def test_artifact_binding_is_persisted_and_covered_by_external_checkpoint(self):
+        entry = replace(
+            self.record("approval-artifact-0001", "nonce-artifact-0001", self.future),
+            artifact_id="ART-FINAL-001",
+            artifact_version="1",
+            artifact_sha256="a" * 64,
+            artifact_size_bytes=987654,
+        )
+        self.assertTrue(self.store._consume_many_once((entry,)))
+        with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT artifact_id, artifact_version, artifact_sha256, artifact_size_bytes "
+                "FROM consumed_approvals WHERE approval_id=?",
+                (entry.approval_id,),
+            ).fetchone()
+        self.assertEqual(row, ("ART-FINAL-001", "1", "a" * 64, 987654))
+        key = b"approval-state-checkpoint-key-32-bytes!!"
+        checkpoint = self.store.checkpoint(key)
+        self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE consumed_approvals SET artifact_sha256=? WHERE approval_id=?",
+                ("b" * 64, entry.approval_id),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+
 if __name__ == "__main__":
     unittest.main()
