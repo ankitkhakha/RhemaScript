@@ -154,6 +154,8 @@ class ReadinessRunRegistry:
             raise ValueError("unsupported external activity event type")
         if event_type in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("governed review events require append_governed_activity_event")
+        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED"}:
+            raise ValueError("authenticated finding lifecycle events require append_authenticated_finding_lifecycle_event")
         for name, value in (("project_id", project_id), ("subject_id", subject_id)):
             if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ValueError(f"{name} must be null or a non-empty string")
@@ -270,6 +272,202 @@ class ReadinessRunRegistry:
             self._append_event_tx(
                 db, event_id, "FINDING_CAPTURED", normalised, project_id, finding_id,
             )
+            db.commit()
+        return True
+
+    def append_authenticated_finding_lifecycle_event(
+        self, event_id: str, event_type: str, payload: dict[str, Any], *,
+        project_id: str, project_version: str, request_id: str, approval: Any,
+    ) -> bool:
+        """Append V3-authenticated research/reproduction evidence with ordered state checks."""
+        from datetime import datetime, timezone
+        from rhemascript.core.approvals import is_consumed_verified_approval
+
+        actions = {
+            "FINDING_RESEARCHED": "FINDING_RESEARCH",
+            "FINDING_REPRODUCED": "FINDING_REPRODUCE",
+        }
+        if event_type not in actions:
+            raise ValueError("unsupported authenticated finding lifecycle event")
+        for name, value in (
+            ("event_id", event_id), ("project_id", project_id),
+            ("project_version", project_version), ("request_id", request_id),
+        ):
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"{name} must be non-empty trimmed text")
+        if not is_consumed_verified_approval(approval):
+            raise ValueError("finding lifecycle requires a verifier-issued, consumed approval")
+        if (approval.credential_schema != "RhemaScript.ApprovalCredential.v3"
+                or approval.action != actions[event_type]
+                or approval.project_id != project_id
+                or approval.project_version != project_version
+                or approval.request_id != request_id
+                or approval.expires_at <= datetime.now(timezone.utc)):
+            raise ValueError("finding lifecycle approval schema, action, scope or expiry is invalid")
+        if not isinstance(payload, dict) or "authorization" in payload:
+            raise ValueError("finding lifecycle payload must be an object without caller authorization")
+        finding_id = payload.get("finding_id")
+        finding_version = payload.get("finding_version")
+        if (not isinstance(finding_id, str) or not finding_id.strip()
+                or not isinstance(finding_version, str) or not finding_version.strip()
+                or event_id != f"{event_type}:{finding_id}@{finding_version}:{request_id}"):
+            raise ValueError("finding lifecycle subject, version or event ID is invalid")
+        binding = payload.get("evidence_binding")
+        if (not isinstance(binding, dict)
+                or set(binding) != {"evidence_id", "evidence_version", "sha256", "size_bytes"}
+                or any(not isinstance(binding.get(key), str) or not binding[key].strip()
+                       for key in ("evidence_id", "evidence_version"))
+                or not isinstance(binding.get("sha256"), str)
+                or len(binding["sha256"]) != 64
+                or any(ch not in "0123456789abcdef" for ch in binding["sha256"])
+                or not isinstance(binding.get("size_bytes"), int)
+                or isinstance(binding.get("size_bytes"), bool) or binding["size_bytes"] < 0):
+            raise ValueError("finding lifecycle requires exact evidence ID/version/SHA-256/size")
+        evidence_refs = payload.get("evidence_refs")
+        if (not isinstance(evidence_refs, list) or len(evidence_refs) != 1
+                or not isinstance(evidence_refs[0], dict)):
+            raise ValueError("finding lifecycle requires exactly one byte-verifiable evidence reference")
+        ref = evidence_refs[0]
+        if (ref.get("evidence_id") != binding["evidence_id"]
+                or ref.get("version") != binding["evidence_version"]
+                or ref.get("sha256") != binding["sha256"]
+                or ref.get("size_bytes") != binding["size_bytes"]
+                or not isinstance(ref.get("relative_path"), str) or not ref["relative_path"].strip()):
+            raise ValueError("finding lifecycle evidence reference does not match its exact binding")
+        if (approval.artifact_id != binding["evidence_id"]
+                or approval.artifact_version != binding["evidence_version"]
+                or approval.artifact_sha256 != binding["sha256"]
+                or approval.artifact_size_bytes != binding["size_bytes"]
+                or not approval.subject_id or not approval.actor_id
+                or not approval.actor_role or not approval.authn_context
+                or not approval.identity_session_id or not approval.identity_policy_version
+                or not approval.identity_provider_id or approval.authenticated_at is None):
+            raise ValueError("finding lifecycle approval is not bound to its evidence or identity claims")
+        if event_type == "FINDING_RESEARCHED":
+            required = {
+                "finding_id", "finding_version", "research_question", "methodology",
+                "findings", "knowledge_gaps", "limitations", "evidence_binding",
+                "evidence_refs", "created_at_utc",
+            }
+            if set(payload) != required:
+                raise ValueError("research event payload has an invalid field set")
+            for field in ("research_question", "methodology", "created_at_utc"):
+                if not isinstance(payload.get(field), str) or not payload[field].strip():
+                    raise ValueError(f"{field} must be non-empty text")
+            for field in ("findings", "knowledge_gaps", "limitations"):
+                if (not isinstance(payload.get(field), list)
+                        or any(not isinstance(item, str) or not item.strip() for item in payload[field])):
+                    raise ValueError(f"{field} must be a list of non-empty strings")
+        else:
+            required = {
+                "finding_id", "finding_version", "outcome", "environment", "steps",
+                "expected_behavior", "observed_behavior", "evidence_binding",
+                "evidence_refs", "created_at_utc",
+            }
+            if set(payload) != required:
+                raise ValueError("reproduction event payload has an invalid field set")
+            if payload.get("outcome") not in {"REPRODUCED", "NOT_REPRODUCED", "INCONCLUSIVE"}:
+                raise ValueError("reproduction outcome is unsupported")
+            for field in ("environment", "expected_behavior", "observed_behavior", "created_at_utc"):
+                if not isinstance(payload.get(field), str) or not payload[field].strip():
+                    raise ValueError(f"{field} must be non-empty text")
+            if (not isinstance(payload.get("steps"), list) or not payload["steps"]
+                    or any(not isinstance(item, str) or not item.strip() for item in payload["steps"])):
+                raise ValueError("reproduction steps must be a non-empty list of strings")
+        enriched = dict(payload)
+        enriched["authorization"] = {
+            "issuer": approval.issuer,
+            "approval_id": approval.approval_id,
+            "actor_id": approval.actor_id,
+            "subject_id": approval.subject_id,
+            "actor_role": approval.actor_role,
+            "action": approval.action,
+            "identity_provider_id": approval.identity_provider_id,
+            "identity_policy_version": approval.identity_policy_version,
+            "identity_session_id": approval.identity_session_id,
+            "authenticated_at_utc": approval.authenticated_at.isoformat(),
+            "project_id": project_id,
+            "project_version": project_version,
+            "request_id": request_id,
+            "artifact_sha256": binding["sha256"],
+            "artifact_size_bytes": binding["size_bytes"],
+            "signature_sha256": hashlib.sha256((approval.signature or "").encode("ascii")).hexdigest(),
+        }
+        normalised = self._normalise(enriched)
+        encoded = self._canonical(normalised)
+        if not self.verify():
+            raise ValueError("cannot append to an invalid activity history")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            captured_rows = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?
+                ORDER BY sequence DESC""",
+                (project_id, finding_id),
+            ).fetchall()
+            captured = next(
+                (json.loads(row[0]) for row in captured_rows
+                 if json.loads(row[0]).get("version") == finding_version),
+                None,
+            )
+            if not captured:
+                db.rollback()
+                raise ValueError("finding lifecycle requires the exact captured finding version")
+            prior_research = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type='FINDING_RESEARCHED' AND project_id=? AND subject_id=?
+                ORDER BY sequence DESC""",
+                (project_id, finding_id),
+            ).fetchall()
+            prior_reproduction = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type='FINDING_REPRODUCED' AND project_id=? AND subject_id=?
+                ORDER BY sequence DESC""",
+                (project_id, finding_id),
+            ).fetchall()
+            prior_disposition = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type='FINDING_DISPOSITIONED' AND project_id=? AND subject_id=?
+                ORDER BY sequence DESC""",
+                (project_id, finding_id),
+            ).fetchall()
+            def matches_version(rows):
+                return [json.loads(row[0]) for row in rows
+                        if json.loads(row[0]).get("finding_version") == finding_version]
+            research_for_version = matches_version(prior_research)
+            reproduction_for_version = matches_version(prior_reproduction)
+            disposition_for_version = matches_version(prior_disposition)
+            if disposition_for_version:
+                db.rollback()
+                raise ValueError("a finding cannot be researched or reproduced after disposition")
+            if event_type == "FINDING_RESEARCHED":
+                if research_for_version or reproduction_for_version:
+                    db.rollback()
+                    raise ValueError("finding research is already recorded for this version")
+            else:
+                if not research_for_version:
+                    db.rollback()
+                    raise ValueError("finding reproduction requires prior research for this version")
+                if reproduction_for_version:
+                    db.rollback()
+                    raise ValueError("finding reproduction is already recorded for this version")
+                researcher = research_for_version[-1].get("authorization", {}).get("subject_id")
+                submitter = captured.get("submitter_identity", {}).get("subject_id")
+                if (approval.subject_id == researcher
+                        or (submitter and approval.subject_id == submitter)):
+                    db.rollback()
+                    raise ValueError("reproduction requires an independent human subject")
+            row = db.execute(
+                "SELECT event_type,project_id,subject_id,payload_json FROM activity_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if row:
+                if row != (event_type, project_id, finding_id, encoded):
+                    db.rollback()
+                    raise ReadinessReplayError("finding lifecycle event ID was replayed with different data")
+                db.commit()
+                return False
+            self._append_event_tx(db, event_id, event_type, normalised, project_id, finding_id)
             db.commit()
         return True
 
