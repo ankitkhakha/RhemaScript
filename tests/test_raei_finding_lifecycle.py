@@ -1045,7 +1045,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "review_due_utc": "2026-12-13T00:00:00+00:00",
         }
         raw, evidence = self._write_report("inherited-knowledge.json", payload, payload["evidence_id"])
-        return inherit_closed_finding_as_knowledge(self.registry, payload, evidence)
+        return inherit_closed_finding_as_knowledge(self.registry, payload, evidence, evidence_root=self.evidence_root)
 
     def test_knowledge_inheritance_rejects_cross_project_version_lineage(self):
         self._record_research()
@@ -1075,7 +1075,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_closure()
         inherited = self._inherit_closed_knowledge()
         self.assertEqual(inherited["knowledge_payload"]["status"], "PENDING_REVIEW")
-        item = list_knowledge(self.registry)[0]
+        item = list_knowledge(self.registry, evidence_root=self.evidence_root)[0]
         self.assertEqual(item["status"], "PENDING_REVIEW")
         self.assertEqual(item["source_authentication_status"], "NOT_CHECKED")
         self.assertEqual(item["claim_relevance_status"], "NOT_ASSESSED")
