@@ -61,7 +61,9 @@ If any digest, generation, HMAC, archive, checkpoint, or anchor check fails, pre
 - altered approval archive;
 - changed readiness state;
 - changed approval state;
-- private create-once manifest behavior;
+- private create-once manifest behavior and symlink-substitution rejection;
+- capture abort when either authoritative store changes during the sampling window;
+- future-dated independent-anchor record rejection;
 - independent anchor registration/read-back;
 - modified/stale manifest rejection.
 
