@@ -657,6 +657,60 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 with self.assertRaises(YouTubeIntegrationError):
                     _validate_analytics_report(report, params)
 
+    def test_analytics_client_omits_optional_dimensions_parameter(self):
+        from urllib.parse import parse_qs, urlparse
+
+        class Gateway:
+            def __init__(self):
+                self.analytics_url = None
+
+            def request(self, interface_id, operation, url, **kwargs):
+                if operation == "OAUTH_TOKEN":
+                    return 200, b'{"access_token":"analytics-token"}', {}
+                if operation == "ANALYTICS_READ":
+                    self.analytics_url = url
+                    return 200, (
+                        b'{"kind":"youtubeAnalytics#resultTable",'
+                        b'"columnHeaders":[{"name":"views","columnType":"METRIC","dataType":"INTEGER"}],'
+                        b'"rows":[[12]]}'
+                    ), {}
+                raise AssertionError("unexpected provider operation")
+
+        gateway = Gateway()
+        client = YouTubeClient(self.config(), gateway=gateway)
+        result = client.analytics(
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 11, 2),
+            metrics="views",
+            dimensions="",
+        )
+        self.assertEqual(result["rows"], [[12]])
+        query = parse_qs(urlparse(gateway.analytics_url).query)
+        self.assertNotIn("dimensions", query)
+
+    def test_analytics_report_rejects_non_finite_and_boolean_values(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,likes",
+        }
+        headers = [
+            {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+            {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+            {"name": "likes", "columnType": "METRIC", "dataType": "INTEGER"},
+        ]
+        for invalid in (float("nan"), float("inf"), float("-inf"), True):
+            report = {
+                "kind": "youtubeAnalytics#resultTable",
+                "columnHeaders": headers,
+                "rows": [["2026-11-01", invalid, 2]],
+            }
+            with self.subTest(value=repr(invalid)):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_report(report, params)
+
     def test_analytics_request_rejects_injected_or_duplicate_identifiers_and_bad_filters(self):
         from rhemascript.integrations.youtube import _validate_analytics_request
 
@@ -672,7 +726,11 @@ class YouTubeIntegrationTests(unittest.TestCase):
             {**base, "filters": "country=US"},
             {**base, "filters": "country=="},
             {**base, "filters": "country==US;"},
-            {**base, "filters": "country==US\\ncountry==IN"},
+            {**base, "filters": "country==US\ncountry==IN"},
+            {**base, "filters": "country==U\tS"},
+            {**base, "filters": "country==U\x00S"},
+            {**base, "filters": "country==U\x1fS"},
+            {**base, "filters": "country==U\x7fS"},
             {**base, "alt": "csv"},
             {**base, "ids": "channel==OTHER"},
             {**base, "startDate": "2026-2-1"},
