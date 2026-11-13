@@ -8,6 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import json
 import re
 import sqlite3
 import uuid
@@ -30,8 +33,20 @@ class AuthorizationLease:
 class SQLiteLeaseStateModel:
     """Local transactional model used only to exercise lease/fence invariants."""
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, *, anchor_path: str | None = None):
         self.path = path
+        # Separate local database models an independently retained high-water
+        # anchor. It is still synthetic and not an external trust service.
+        self.anchor_path = anchor_path or (path + ".recovery-anchor.sqlite3")
+        with self._anchor_connect() as anchor:
+            anchor.execute("""
+                CREATE TABLE IF NOT EXISTS recovery_anchor (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    sequence INTEGER NOT NULL,
+                    generation_high_water INTEGER NOT NULL,
+                    checkpoint_sha256 TEXT NOT NULL
+                )
+            """)
         with self._connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS resource_fences (
@@ -74,6 +89,11 @@ class SQLiteLeaseStateModel:
                     ON dispatch_outcomes(provider_operation_id)
                     WHERE provider_operation_id IS NOT NULL;
             """)
+
+    def _anchor_connect(self):
+        db = sqlite3.connect(self.anchor_path, timeout=5, isolation_level=None)
+        db.execute("PRAGMA synchronous=FULL")
+        return db
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=5, isolation_level=None)
@@ -245,6 +265,99 @@ class SQLiteLeaseStateModel:
             raise LeaseStateError("dispatch acceptance transaction failed") from None
         finally:
             db.close()
+
+    def create_recovery_checkpoint(self) -> dict[str, object]:
+        """Create a state digest and advance a separate local anti-rollback anchor."""
+        tables = {
+            "resource_fences": "SELECT resource_id,generation FROM resource_fences ORDER BY resource_id",
+            "revoked_approvals": "SELECT approval_id,revoked_at FROM revoked_approvals ORDER BY approval_id",
+            "leases": "SELECT lease_id,resource_id,generation,dispatch_nonce,request_fingerprint,expires_at,state FROM leases ORDER BY lease_id",
+            "lease_approvals": "SELECT lease_id,approval_id FROM lease_approvals ORDER BY lease_id,approval_id",
+            "accepted_dispatches": "SELECT dispatch_nonce,lease_id,accepted_at FROM accepted_dispatches ORDER BY dispatch_nonce",
+            "dispatch_outcomes": "SELECT lease_id,status,provider_operation_id,reason_code,updated_at FROM dispatch_outcomes ORDER BY lease_id",
+        }
+        db = self._connect()
+        try:
+            db.execute("BEGIN")
+            state = {name: db.execute(query).fetchall() for name, query in tables.items()}
+            db.execute("COMMIT")
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise LeaseStateError("recovery checkpoint snapshot failed") from None
+        finally:
+            db.close()
+        generations = [row[1] for row in state["resource_fences"]]
+        generations.extend(row[2] for row in state["leases"])
+        generation = max(generations, default=0)
+        canonical = json.dumps(
+            {"schema_version": 1, "generation_high_water": generation, "state": state},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(canonical).hexdigest()
+        anchor = self._anchor_connect()
+        try:
+            anchor.execute("BEGIN IMMEDIATE")
+            row = anchor.execute(
+                "SELECT sequence,generation_high_water FROM recovery_anchor WHERE singleton=1"
+            ).fetchone()
+            previous_sequence, previous_generation = row if row else (0, 0)
+            if generation < previous_generation:
+                anchor.execute("ROLLBACK")
+                raise LeaseStateError("checkpoint generation is below trusted recovery anchor")
+            sequence = previous_sequence + 1
+            anchor.execute(
+                """INSERT INTO recovery_anchor VALUES(1,?,?,?)
+                   ON CONFLICT(singleton) DO UPDATE SET
+                   sequence=excluded.sequence,
+                   generation_high_water=excluded.generation_high_water,
+                   checkpoint_sha256=excluded.checkpoint_sha256""",
+                (sequence, generation, digest),
+            )
+            anchor.execute("COMMIT")
+        except sqlite3.Error:
+            if anchor.in_transaction:
+                anchor.execute("ROLLBACK")
+            raise LeaseStateError("recovery anchor update failed") from None
+        finally:
+            anchor.close()
+        return {
+            "schema_version": 1,
+            "sequence": sequence,
+            "generation_high_water": generation,
+            "state": state,
+            "sha256": digest,
+        }
+
+    def verify_recovery_checkpoint(self, checkpoint: dict[str, object]) -> bool:
+        """Verify integrity and freshness against the separate local anchor."""
+        if not isinstance(checkpoint, dict) or checkpoint.get("schema_version") != 1:
+            return False
+        state = checkpoint.get("state")
+        generation = checkpoint.get("generation_high_water")
+        sequence = checkpoint.get("sequence")
+        digest = checkpoint.get("sha256")
+        if (not isinstance(state, dict) or not isinstance(generation, int)
+                or not isinstance(sequence, int) or not isinstance(digest, str)):
+            return False
+        canonical = json.dumps(
+            {"schema_version": 1, "generation_high_water": generation, "state": state},
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        calculated = hashlib.sha256(canonical).hexdigest()
+        if not hmac.compare_digest(calculated, digest):
+            return False
+        anchor = self._anchor_connect()
+        try:
+            row = anchor.execute(
+                "SELECT sequence,generation_high_water,checkpoint_sha256 "
+                "FROM recovery_anchor WHERE singleton=1"
+            ).fetchone()
+            return row == (sequence, generation, digest)
+        except sqlite3.Error:
+            return False
+        finally:
+            anchor.close()
 
     def get_dispatch_state(self, dispatch_nonce: str) -> dict[str, str | int | None] | None:
         """Read-only local reconciliation lookup; never retries or dispatches."""
