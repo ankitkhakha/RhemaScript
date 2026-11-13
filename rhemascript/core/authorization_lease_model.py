@@ -45,7 +45,8 @@ class SQLiteLeaseStateModel:
                     sequence INTEGER NOT NULL,
                     generation_high_water INTEGER NOT NULL,
                     checkpoint_sha256 TEXT NOT NULL,
-                    checkpoint_json TEXT
+                    checkpoint_json TEXT,
+                    event_sequence_high_water INTEGER NOT NULL DEFAULT 0
                 )
             """)
             anchor_columns = {
@@ -53,6 +54,10 @@ class SQLiteLeaseStateModel:
             }
             if "checkpoint_json" not in anchor_columns:
                 anchor.execute("ALTER TABLE recovery_anchor ADD COLUMN checkpoint_json TEXT")
+            if "event_sequence_high_water" not in anchor_columns:
+                anchor.execute(
+                    "ALTER TABLE recovery_anchor ADD COLUMN event_sequence_high_water INTEGER NOT NULL DEFAULT 0"
+                )
         with self._connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS resource_fences (
@@ -421,32 +426,40 @@ class SQLiteLeaseStateModel:
         anchor = self._anchor_connect()
         try:
             anchor.execute("BEGIN IMMEDIATE")
+            event_sequence = max(
+                (row[0] for row in state["event_history"]), default=0
+            )
             row = anchor.execute(
-                "SELECT sequence,generation_high_water FROM recovery_anchor WHERE singleton=1"
+                """SELECT sequence,generation_high_water,event_sequence_high_water
+                   FROM recovery_anchor WHERE singleton=1"""
             ).fetchone()
-            previous_sequence, previous_generation = row if row else (0, 0)
-            if generation < previous_generation:
+            previous_sequence, previous_generation, previous_event_sequence = (
+                row if row else (0, 0, 0)
+            )
+            if generation < previous_generation or event_sequence < previous_event_sequence:
                 anchor.execute("ROLLBACK")
-                raise LeaseStateError("checkpoint generation is below trusted recovery anchor")
+                raise LeaseStateError("checkpoint state is below trusted recovery anchor")
             sequence = previous_sequence + 1
             checkpoint = {
                 "schema_version": 1,
                 "sequence": sequence,
                 "generation_high_water": generation,
+                "event_sequence_high_water": event_sequence,
                 "state": state,
                 "sha256": digest,
             }
             checkpoint_json = json.dumps(checkpoint, sort_keys=True, separators=(",", ":"))
             anchor.execute(
                 """INSERT INTO recovery_anchor
-                   (singleton,sequence,generation_high_water,checkpoint_sha256,checkpoint_json)
-                   VALUES(1,?,?,?,?)
+                   (singleton,sequence,generation_high_water,checkpoint_sha256,checkpoint_json,event_sequence_high_water)
+                   VALUES(1,?,?,?,?,?)
                    ON CONFLICT(singleton) DO UPDATE SET
                    sequence=excluded.sequence,
                    generation_high_water=excluded.generation_high_water,
                    checkpoint_sha256=excluded.checkpoint_sha256,
-                   checkpoint_json=excluded.checkpoint_json""",
-                (sequence, generation, digest, checkpoint_json),
+                   checkpoint_json=excluded.checkpoint_json,
+                   event_sequence_high_water=excluded.event_sequence_high_water""",
+                (sequence, generation, digest, checkpoint_json, event_sequence),
             )
             anchor.execute("COMMIT")
         except sqlite3.Error:
@@ -479,10 +492,12 @@ class SQLiteLeaseStateModel:
             return False
         state = checkpoint.get("state")
         generation = checkpoint.get("generation_high_water")
+        event_sequence = checkpoint.get("event_sequence_high_water")
         sequence = checkpoint.get("sequence")
         digest = checkpoint.get("sha256")
         if (not isinstance(state, dict) or not isinstance(generation, int)
-                or not isinstance(sequence, int) or not isinstance(digest, str)):
+                or not isinstance(event_sequence, int) or not isinstance(sequence, int)
+                or not isinstance(digest, str)):
             return False
         canonical = json.dumps(
             {"schema_version": 1, "generation_high_water": generation, "state": state},
@@ -494,10 +509,10 @@ class SQLiteLeaseStateModel:
         anchor = self._anchor_connect()
         try:
             row = anchor.execute(
-                "SELECT sequence,generation_high_water,checkpoint_sha256 "
-                "FROM recovery_anchor WHERE singleton=1"
+                """SELECT sequence,generation_high_water,event_sequence_high_water,
+                          checkpoint_sha256 FROM recovery_anchor WHERE singleton=1"""
             ).fetchone()
-            return row == (sequence, generation, digest)
+            return row == (sequence, generation, event_sequence, digest)
         except sqlite3.Error:
             return False
         finally:
