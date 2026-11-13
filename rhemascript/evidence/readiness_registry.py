@@ -334,24 +334,26 @@ class ReadinessRunRegistry:
                         or evidence_items[0].get("size_bytes") != binding["size_bytes"]):
                     db.rollback()
                     raise ValueError("knowledge review evidence does not match the pending knowledge record")
-            prior = db.execute(
+            prior_rows = db.execute(
                 """SELECT payload_json FROM activity_events
                 WHERE event_type=? AND project_id=? AND subject_id=?
                 ORDER BY sequence DESC""",
                 (event_type, project_id, subject_id),
             ).fetchall()
-            if event_type == "KNOWLEDGE_REVIEWED" and prior:
+            version_field = "finding_version" if event_type == "FINDING_DISPOSITIONED" else "knowledge_version"
+            same_version_prior = [
+                json.loads(row[0]) for row in prior_rows
+                if json.loads(row[0]).get(version_field) == payload.get(version_field)
+            ]
+            if event_type == "KNOWLEDGE_REVIEWED" and same_version_prior:
                 db.rollback()
                 raise ValueError("a knowledge version may receive only one terminal review decision")
-            if event_type == "FINDING_DISPOSITIONED" and prior:
-                previous_payload = json.loads(prior[0][0])
+            if event_type == "FINDING_DISPOSITIONED" and same_version_prior:
+                previous_payload = same_version_prior[0]
                 previous_disposition = previous_payload.get("disposition")
                 if previous_disposition in {"ACCEPTED", "REJECTED", "DUPLICATE", "WITHDRAWN"}:
                     db.rollback()
                     raise ValueError("a terminal finding disposition cannot be overwritten")
-                if previous_payload.get("finding_version") != payload.get("finding_version"):
-                    db.rollback()
-                    raise ValueError("a finding disposition cannot change the reviewed finding version")
             self._append_event_tx(db, event_id, event_type, normalised, project_id, subject_id)
             db.commit()
         return True
