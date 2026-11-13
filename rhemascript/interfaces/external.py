@@ -601,7 +601,31 @@ class ExternalIntegrationGateway:
                  "operation": operation.upper(), "method": method.upper(),
                  "host": parsed.hostname, "request_fingerprint": fingerprint,
                  "request_bytes": len(body or b""), "phase": "REQUESTED"}
-        self.audit_sink(dict(event))
+        try:
+            self.audit_sink(dict(event))
+        except Exception:
+            if session_context is not None:
+                try:
+                    if session_context["phase"] == "CREATE":
+                        self.publish_session_registry.mark_publish_session_failed(
+                            project_id=session_context["project_id"],
+                            project_version=session_context["project_version"],
+                            request_id=session_context["request_id"],
+                            owner_id=session_context["owner_id"],
+                        )
+                    else:
+                        self.publish_session_registry.mark_publish_session_indeterminate(
+                            project_id=session_context["project_id"],
+                            project_version=session_context["project_version"],
+                            request_id=session_context["request_id"],
+                            owner_id=session_context["owner_id"],
+                        )
+                except Exception:
+                    pass
+                raise ExternalIntegrationError(
+                    "required request audit could not be recorded; provider request denied"
+                ) from None
+            raise
         write_attempted = (
             method.upper() not in {"GET", "HEAD", "OPTIONS"}
             and operation.upper() != "OAUTH_TOKEN"
