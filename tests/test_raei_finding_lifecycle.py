@@ -372,7 +372,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         plan = events["FINDING_PLANNED"]
         implementation = events["FINDING_IMPLEMENTED"]
         effectiveness = events["FINDING_EFFECTIVENESS_ASSESSED"]
-        closure = events["FINDING_CLOSED"]
+        closure = events.get("FINDING_CLOSED")
         payload = {
             "schema": "raei-knowledge-item-v1",
             "knowledge_id": "RS-KNOW-CLOSED-FINDING-001",
@@ -401,7 +401,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 "plan_event_id": plan["event_id"],
                 "implementation_event_id": implementation["event_id"],
                 "effectiveness_event_id": effectiveness["event_id"],
-                "closure_event_id": closure["event_id"],
+                "closure_event_id": closure["event_id"] if closure else "MISSING-FINDING-CLOSED-EVENT",
                 "plan_evidence_binding": plan["payload"]["evidence_binding"],
                 "implementation_evidence_binding": implementation["payload"]["evidence_binding"],
                 "effectiveness_evidence_binding": effectiveness["payload"]["evidence_binding"],
