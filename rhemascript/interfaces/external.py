@@ -589,7 +589,16 @@ class ExternalIntegrationGateway:
                     )
                 session_context = {
                     **session_identity, "owner_id": owner_id, "phase": phase,
+                    "session_url_sha256": session_url_sha256, "total_bytes": total,
+                    "chunk_start": start, "chunk_end": end,
                 }
+                if phase == "RECONCILE":
+                    current_session = self.publish_session_registry.get_publish_session(
+                        project_id=project_id, project_version=source_version, request_id=request_id,
+                    )
+                    if current_session is not None:
+                        session_context["chunk_start"] = current_session["inflight_start"]
+                        session_context["chunk_end"] = current_session["inflight_end"]
 
         fingerprint = sha256(
             interface_id.encode() + b":" + operation.upper().encode() + b":" +
@@ -626,6 +635,21 @@ class ExternalIntegrationGateway:
                     "required request audit could not be recorded; provider request denied"
                 ) from None
             raise
+        if session_context is not None:
+            event.update({
+                "approval_fingerprint": session_context["approval_fingerprint"],
+                "artifact_id": session_context["artifact_id"],
+                "artifact_version": session_context["artifact_version"],
+                "artifact_sha256": session_context["artifact_sha256"],
+                "artifact_size_bytes": session_context["artifact_size_bytes"],
+            })
+            if session_context.get("session_url_sha256"):
+                event["session_url_sha256"] = session_context["session_url_sha256"]
+            if session_context.get("total_bytes") is not None:
+                event["chunk_total_bytes"] = session_context["total_bytes"]
+                event["chunk_start"] = session_context.get("chunk_start")
+                event["chunk_end"] = session_context.get("chunk_end")
+                event["status_reconciliation"] = session_context["phase"] == "RECONCILE"
         write_attempted = (
             method.upper() not in {"GET", "HEAD", "OPTIONS"}
             and operation.upper() != "OAUTH_TOKEN"
@@ -682,6 +706,8 @@ class ExternalIntegrationGateway:
                             raise ExternalIntegrationError(
                                 "provider session could not be bound to its durable claim; do not retry"
                             )
+                        session_context["session_url_sha256"] = session_digest
+                        event["session_url_sha256"] = session_digest
                         session_context["phase"] = "RECORDED"
                     elif status >= 500:
                         registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
@@ -699,6 +725,10 @@ class ExternalIntegrationGateway:
                             "provider acknowledgement violated the durable upload-session byte-range contract"
                         )
                     session_context["phase"] = "RECORDED" if status < 500 else "TERMINAL"
+                session_record = registry.get_publish_session(**identity)
+                if session_record is not None:
+                    event["publish_session_state"] = session_record["state"]
+                    event["acknowledged_offset"] = session_record["acknowledged_offset"]
             event.update({"phase": "COMPLETED", "http_status": status,
                           "response_bytes": len(raw)})
             try:
