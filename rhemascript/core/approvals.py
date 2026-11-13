@@ -58,6 +58,8 @@ class VerifiedApproval:
     artifact_version: str | None = None
     artifact_sha256: str | None = None
     artifact_size_bytes: int | None = None
+    credential_schema: str | None = None
+    signature: str | None = field(default=None, repr=False, compare=False)
     _verification_token: object | None = field(default=None, repr=False, compare=False)
 
 
@@ -209,11 +211,82 @@ class ApprovalVerifier:
             artifact_version=token.get("artifact_version"),
             artifact_sha256=token.get("artifact_sha256"),
             artifact_size_bytes=token.get("artifact_size_bytes"),
+            credential_schema=schema,
+            signature=signature,
             _verification_token=_VERIFIED_APPROVAL_TOKEN,
         )
         with _VERIFIED_APPROVAL_LOCK:
             _VERIFIED_APPROVALS[id(verified)] = verified
         return verified
+
+
+    def verify_persisted_record(self, record: Mapping[str, object]) -> dict[str, object]:
+        """Re-verify the stored issuer signature without treating an expired credential as currently usable."""
+        if not isinstance(record, Mapping):
+            raise ApprovalError("persisted approval record must be an object")
+        schema = record.get("credential_schema")
+        if schema not in {_SCHEMA_V1, _SCHEMA_V2}:
+            raise ApprovalError("persisted approval credential schema is unsupported")
+        required = {
+            "approval_id", "issuer", "actor_id", "action", "project_id",
+            "project_version", "request_id", "issued_at", "expires_at",
+            "nonce", "key_id", "signature",
+        }
+        if not required.issubset(record):
+            raise ApprovalError("persisted approval record is incomplete")
+        payload = {key: record[key] for key in required if key != "signature"}
+        payload["schema"] = schema
+        if schema == _SCHEMA_V2:
+            artifact_fields = {
+                "artifact_id": record.get("artifact_id"),
+                "artifact_version": record.get("artifact_version"),
+                "artifact_sha256": record.get("artifact_sha256"),
+                "artifact_size_bytes": record.get("artifact_size_bytes"),
+            }
+            if any(value is None for value in artifact_fields.values()):
+                raise ApprovalError("persisted V2 approval is missing artifact scope")
+            payload.update(artifact_fields)
+        elif any(record.get(key) is not None for key in (
+            "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes"
+        )):
+            raise ApprovalError("persisted V1 approval contains unexpected artifact scope")
+        signature = record.get("signature")
+        key_id = record.get("key_id")
+        if (not isinstance(signature, str) or not _SIGNATURE_HEX.fullmatch(signature)
+                or not isinstance(key_id, str) or key_id not in self._keys
+                or record.get("issuer") != self.issuer):
+            raise ApprovalError("persisted approval signature or trusted issuer is invalid")
+        signed_payload = {**payload, "signature": signature}
+        try:
+            Ed25519PublicKey.from_public_bytes(self._keys[key_id]).verify(
+                bytes.fromhex(signature), self._canonical(signed_payload)
+            )
+        except (InvalidSignature, ValueError, TypeError):
+            raise ApprovalError("persisted approval signature is invalid") from None
+        issued_at = self._timestamp(record.get("issued_at"), "issued_at")
+        expires_at = self._timestamp(record.get("expires_at"), "expires_at")
+        now = self._clock()
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ApprovalError("verifier clock must return a timezone-aware datetime")
+        expired = expires_at <= now.astimezone(timezone.utc)
+        return {
+            "signature_valid": True,
+            "issuer_trusted": True,
+            "credential_schema": schema,
+            "approval_id": record["approval_id"],
+            "actor_id": record["actor_id"],
+            "action": record["action"],
+            "project_id": record["project_id"],
+            "project_version": record["project_version"],
+            "request_id": record["request_id"],
+            "issued_at": issued_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "expired_now": expired,
+            "artifact_id": record.get("artifact_id"),
+            "artifact_version": record.get("artifact_version"),
+            "artifact_sha256": record.get("artifact_sha256"),
+            "artifact_size_bytes": record.get("artifact_size_bytes"),
+        }
 
     def verify_and_consume(
         self,
