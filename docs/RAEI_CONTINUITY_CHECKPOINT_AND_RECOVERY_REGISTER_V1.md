@@ -175,3 +175,39 @@ Record the test result as PASS, FAIL or NOT RUN with the exact checkpoint and ev
 This register is versioned. Amendments must preserve prior checkpoint facts, include the reason for change, identify the authorizing decision where one is required, and be validated on the resulting exact commit. Historical checkpoint entries are not silently rewritten.
 
 **End — RAEI Continuity, Priority and Recovery Register V1.0**
+
+
+## 10. Follow-on engineering checkpoint — 13 November 2026
+
+**Repository state observed after the evidence-byte consistency hardening:**
+
+- Main/base SHA: `c44d8e9c0847bd220167945b967db74fcf12635f`.
+- Feature branch: `feat/ieif-raei-integration`.
+- Candidate SHA: `afd91860b14846fbcf23e9ebf5a9df0852181b33`.
+- PR #62 remains open and draft; no merge or deployment occurred.
+- Candidate is 449 commits ahead and 0 behind the recorded base at this checkpoint.
+- Exact-head CI run #1576 succeeded on the candidate SHA: `https://github.com/ankitkhakha/RhemaScript/actions/runs/43396638166`.
+- Earlier runs #1574 and #1575 succeeded on the immediately preceding code candidate `42277ad500834e88b786daa07bfd007da72a01e0`; they are not substitutes for #1576.
+
+### Evidence-consumption correction
+
+The RAEI CLI previously hashed a JSON evidence file and then reopened it to obtain its identity or payload. The new `verify_json_artifact` path reads through descriptor-relative, no-follow file descriptors, derives the evidence ID/version from that byte snapshot, hashes those same bytes, and returns those exact immutable bytes to the caller. The CLI now parses and processes the returned bytes without reopening the evidence path.
+
+Added negative/positive coverage for valid JSON identity, malformed/non-object JSON, symlink rejection, exact digest/size, and ensuring a later on-disk replacement does not change the already verified byte snapshot.
+
+### Process-restart coverage
+
+The RAEI CLI test harness now invokes each command in a separate Python interpreter using `python -m raei`. Existing init/status/next, knowledge, training, finding and tamper-read tests therefore exercise persisted registry recovery across process boundaries rather than only calling the CLI entry point in one interpreter.
+
+This is automated process-restart coverage, not a claim that a human operator has completed the full clean-session handover exercise.
+
+### Residual boundaries
+
+- The main `ReadinessRunRegistry` remains the durable lifecycle/event-history store; its hash chain and external HMAC checkpoint are tamper-evident only when the checkpoint is retained independently.
+- The standalone `AssessmentRegistry` is not the authoritative lifecycle history and must not be treated as independently tamper-proof.
+- CI remains synthetic/offline; no live Google authorization, YouTube channel verification, publishing, deployment or production identity integration has been performed.
+- PR #62 remains unmerged and draft. Passing CI is not merge approval or production certification.
+
+### Next bounded task
+
+Continue the dependency/security review and inspect every assessment and evidence persistence path for consistency with the authoritative readiness/event registry. Resolve or explicitly disposition the standalone assessment registry's integrity boundary before treating P1 evidence/history assurance as closed.
