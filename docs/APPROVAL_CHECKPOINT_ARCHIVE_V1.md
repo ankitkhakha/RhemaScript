@@ -100,7 +100,7 @@ A generation-bound archive uses `RhemaScript.ApprovalCheckpointArchive.v2`. Its 
 The candidate now defines `rhemascript/core/checkpoint_freshness.py`:
 - `MonotonicCheckpointAnchor` requires an independently administered adapter with authenticated, linearizable `read_latest` and atomic compare-and-advance operations;
 - `advance_checkpoint_anchor` verifies the archive bytes and HMAC itself before attempting an exact next-generation append, then reads the record back and checks generation and digest;
-- `verify_checkpoint_against_anchor` cryptographically verifies the archive and requires its generation and digest to match the independently retained latest record;
+- `verify_checkpoint_against_anchor` cryptographically verifies the archive and requires its generation and digest to match the independently retained latest record; it also rejects stale or future-dated anchor-read responses;
 - generation conflicts, missing anchors, stale archives, digest mismatches and archive-authentication failures fail closed.
 
 Synthetic tests exercise exact-generation registration, read-back, stale-archive rejection, compare-and-advance conflict, wrong archive key and skipped-generation rejection. The fake anchor is test-only. No network service, hardware monotonic counter, separate account, external append-only log or independent administrator is implemented. The protocol contract does not make a local adapter independent by itself.
