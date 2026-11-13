@@ -60,7 +60,7 @@ class CheckpointFreshnessTests(unittest.TestCase):
         )
         self.assertEqual(record.generation, 1)
         self.assertTrue(verify_checkpoint_against_anchor(
-            str(archive), key=self.key, anchor=self.anchor,
+            str(archive), key=self.key, anchor=self.anchor, now=self.anchor.now,
         ) == record)
 
     def test_stale_archive_is_rejected_after_anchor_advances(self):
@@ -76,7 +76,7 @@ class CheckpointFreshnessTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "stale or differs"):
             verify_checkpoint_against_anchor(
-                str(old_archive), key=self.key, anchor=self.anchor,
+                str(old_archive), key=self.key, anchor=self.anchor, now=self.anchor.now,
             )
 
     def test_generation_conflict_does_not_overwrite_latest_anchor(self):
@@ -115,7 +115,7 @@ class CheckpointFreshnessTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "response is stale"):
             verify_checkpoint_against_anchor(
-                str(archive), key=self.key, anchor=self.anchor,
+                str(archive), key=self.key, anchor=self.anchor, now=self.anchor.now,
             )
 
     def test_nonconsecutive_generation_is_rejected(self):
