@@ -87,6 +87,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [("IF-18", "OAUTH_TOKEN"), ("IF-18", "CHANNEL_READ")],
         )
 
+    def test_injected_transport_requires_explicit_test_mode(self):
+        with self.assertRaisesRegex(YouTubeIntegrationError, "test-only"):
+            YouTubeClient(self.config(), transport=lambda *args: (200, b"", {}))
+        client = YouTubeClient(self.config(), transport=lambda *args: (200, b"", {}), test_mode=True)
+        self.assertIsNotNone(client._transport)
+
     def test_read_only_connection_rejects_wrong_channel_identity(self):
         calls = []
         def transport(request, timeout):
@@ -94,14 +100,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
             if request.full_url.startswith("https://oauth2.googleapis.com/token"):
                 return 200, b'{"access_token":"read-only-token"}', {}
             return 200, b'{"items":[{"id":"UC-WRONG","snippet":{"title":"Other channel"}}]}', {}
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         with self.assertRaisesRegex(YouTubeIntegrationError, "does not match the expected channel ID"):
             client.verify_connection(expected_channel_id="UC-EXPECTED")
         self.assertEqual(calls, ["POST", "GET"])
 
     def test_read_only_connection_requires_expected_channel_id_before_network(self):
         calls = []
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         for value in ("", " UC-EXPECTED", None):
             with self.subTest(value=value):
                 with self.assertRaisesRegex(YouTubeIntegrationError, "expected_channel_id"):
@@ -350,7 +356,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 self.assertEqual(request.get_header("Authorization"), "Bearer fresh-token")
                 return 200, b'{"items":[{"id":"channel-1"}]}', {}
             self.fail("unexpected request")
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         result = client.channel()
         self.assertEqual(result["id"], "channel-1")
         self.assertEqual(calls, {"tokens": 2, "channel": 2})
@@ -414,7 +420,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             if request.full_url.startswith("https://oauth2.googleapis.com/token"):
                 return 200, b'{"access_token":"verify-token"}', {}
             return 200, b'{"items":[{"id":"different-video","snippet":{"title":"Wrong"},"status":{"privacyStatus":"private"},"processingDetails":{"processingStatus":"succeeded"}}]}', {}
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         with self.assertRaisesRegex(YouTubeIntegrationError, "different video ID"):
             client.verify_video("expected-video")
 
@@ -423,12 +429,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
             if request.full_url.startswith("https://oauth2.googleapis.com/token"):
                 return 200, b'{"access_token":"verify-token"}', {}
             return 200, b'{"items":[{"id":"expected-video","snippet":{},"status":null,"processingDetails":{}}]}', {}
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         with self.assertRaisesRegex(YouTubeIntegrationError, "incomplete video verification"):
             client.verify_video("expected-video")
 
     def test_verify_video_rejects_empty_video_id_before_network(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "non-empty exact ID"):
             client.verify_video(" ")
 
@@ -456,7 +462,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
 
     def test_thumbnail_write_remains_disabled_without_project_verification_evidence(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"thumbnail")
@@ -466,7 +472,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     client.set_thumbnail("video-123", image.name, **context)
 
     def test_thumbnail_write_remains_disabled_for_caller_fabricated_verification(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.add_verified_video_evidence(self.publish_context())
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"thumbnail")
@@ -476,7 +482,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     client.set_thumbnail("video-123", image.name, **context)
 
     def test_thumbnail_write_remains_disabled_for_mismatched_final_film(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.add_verified_video_evidence(self.publish_context())
         context["evidence_pack"]["artifacts"][-1]["verified_final_film_artifact_id"] = "ART-7"
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
@@ -487,7 +493,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     client.set_thumbnail("video-123", image.name, **context)
 
     def test_thumbnail_write_remains_disabled_for_oversized_file(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"x" * (2 * 1024 * 1024 + 1))
@@ -497,7 +503,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     client.set_thumbnail("video-123", image.name, **self.add_verified_video_evidence(self.publish_context()))
 
     def test_thumbnail_write_remains_disabled_for_unknown_extension(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".gif") as image:
             image.write(b"image")
@@ -508,18 +514,18 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
     def test_request_rejects_non_google_hosts_before_transport(self):
         calls = []
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         with self.assertRaisesRegex(YouTubeIntegrationError, "official HTTPS Google host allowlist"):
             client._request("https://attacker.example/collect", method="POST", body=b"secret")
         self.assertEqual(calls, [])
 
     def test_request_rejects_nonstandard_google_port_before_transport(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("transport must not run"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("transport must not run"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "official HTTPS Google host allowlist"):
             client._request("https://www.googleapis.com:8443/youtube/v3/channels")
 
     def test_oversized_transport_response_is_rejected(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: (200, b"x" * 8_000_001, {}))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: (200, b"x" * 8_000_001, {}))
         with self.assertRaisesRegex(YouTubeIntegrationError, "8 MB safety limit"):
             client.channel()
 
@@ -529,12 +535,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
     def test_import_and_client_creation_do_not_make_network_calls(self):
         calls = []
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         self.assertEqual(calls, [])
         self.assertIsNotNone(client)
 
     def test_upload_requires_explicit_publishing_authority(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
@@ -543,20 +549,20 @@ class YouTubeIntegrationTests(unittest.TestCase):
                                     **self.publish_context(authorised=False))
 
     def test_thumbnail_write_remains_disabled_without_project_authority(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
         with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_final_gate_must_reference_the_approved_final_film(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
         context["evidence_pack"]["gate_records"][-1]["evidence_ref"] = "evidence:OTHER-FILM"
         with self.assertRaisesRegex(YouTubeIntegrationError, "does not match the approved final film"):
             client.upload_video("/not/read.mp4", title="Approved", description="Test", **context)
 
     def test_thumbnail_write_remains_disabled_for_out_of_order_gate_records(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
         context["evidence_pack"]["gate_records"][0], context["evidence_pack"]["gate_records"][1] = (
             context["evidence_pack"]["gate_records"][1],
@@ -566,7 +572,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             client.set_thumbnail("video-123", "/not/read.png", **context)
 
     def test_invalid_video_metadata_is_rejected_before_network(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
@@ -595,7 +601,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
     def test_invalid_final_film_evidence_is_rejected_before_upload_network(self):
         calls = []
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         context = self.publish_context()
         for item in context["evidence_pack"]["artifacts"]:
             if item["artifact_type"] == "EDITED_FILM":
@@ -610,7 +616,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_invalid_scheduled_timestamp_is_rejected_before_network(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
@@ -623,7 +629,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                         )
 
     def test_scheduled_publication_must_use_private_upload(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
@@ -633,12 +639,12 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     **self.publish_context())
 
     def test_analytics_date_range_is_validated_before_network(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
 
     def test_upload_rejects_invalid_tags_and_category_before_network(self):
-        client = YouTubeClient(
+        client = YouTubeClient(test_mode=True, 
             self.config(),
             transport=lambda *args: self.fail("network must not be called"),
         )
@@ -663,7 +669,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                         )
 
     def test_analytics_rejects_datetime_and_malformed_parameters_before_network(self):
-        client = YouTubeClient(
+        client = YouTubeClient(test_mode=True, 
             self.config(),
             transport=lambda *args: self.fail("network must not be called"),
         )
@@ -704,7 +710,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             self.fail("unexpected HTTP request: " + request.full_url)
 
         config = YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size)
-        client = YouTubeClient(config, transport=transport)
+        client = YouTubeClient(test_mode=True, config, transport=transport)
         with tempfile.NamedTemporaryFile() as video:
             video.write(payload)
             video.flush()
@@ -750,7 +756,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 return 201, b'{"id":"video-reconciled"}', {}
             self.fail("unexpected HTTP request: " + request.full_url)
 
-        client = YouTubeClient(YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size),
+        client = YouTubeClient(test_mode=True, YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size),
                                transport=transport)
         with tempfile.NamedTemporaryFile() as video:
             video.write(payload)
@@ -774,7 +780,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 raise URLError("simulated lost session-creation response")
             self.fail("no request may follow an indeterminate session creation")
 
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         context = self.publish_context()
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
@@ -797,7 +803,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 return 503, b'{"error":"temporarily unavailable"}', {}
             self.fail("indeterminate session creation must not be retried")
 
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         context = self.publish_context()
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
@@ -820,7 +826,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 return 308, b"", {"Range": "bytes=0-999999"}
             self.fail("unexpected HTTP request")
 
-        client = YouTubeClient(YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size),
+        client = YouTubeClient(test_mode=True, YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size),
                                transport=transport)
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"x" * chunk_size)
@@ -840,7 +846,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         )
         with open(os.path.join(context["evidence_root"], final_artifact["local_path"]), "wb") as stream:
             stream.write(b"tampered-final-film")
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
@@ -851,7 +857,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
     def test_publish_rejects_upload_file_not_matching_signed_final_film(self):
         calls = []
         context = self.publish_context(final_film_bytes=b"approved-final-film")
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"different-upload-bytes")
             video.flush()
@@ -866,7 +872,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         token["artifact_sha256"] = "b" * 64
         payload = {key: value for key, value in token.items() if key != "signature"}
         token["signature"] = self._sign_test_approval(context, payload)
-        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: calls.append(args))
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
@@ -886,7 +892,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         ).hex()
 
     def test_upload_requires_existing_nonempty_file(self):
-        client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
+        client = YouTubeClient(test_mode=True, self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "missing or cannot be opened safely"):
             client.upload_video("/definitely/not/a/real/video.mp4", title="Approved",
                 description="Test", **self.publish_context())
@@ -897,7 +903,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             calls.append((request.get_method(), request.full_url))
             return 401, b'{"error":"unauthorized"}', {}
 
-        client = YouTubeClient(self.config(), transport=transport)
+        client = YouTubeClient(test_mode=True, self.config(), transport=transport)
         status, raw, _ = client._authorized_request(
             "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
             method="POST",
