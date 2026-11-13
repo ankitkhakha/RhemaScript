@@ -188,6 +188,12 @@ class ApprovalVerifierTests(unittest.TestCase):
             issuer="RhemaScript-Approval-Service", key_registry=registry,
             key_registry_environment="production", consume_many_once=lambda entries: True,
             clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {"PUBLISH": ["publisher"]},
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
         with self.assertRaisesRegex(ApprovalError, "not active"):
             verifier.verify_many_and_consume(
