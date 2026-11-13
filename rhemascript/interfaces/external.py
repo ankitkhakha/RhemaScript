@@ -374,9 +374,20 @@ class ExternalIntegrationGateway:
                      task_need=task_need, approved_scope=approved_scope)
         except DisclosureError:
             raise ExternalIntegrationError("disclosure denied") from None
-        authority_operation = "PUBLISH" if operation.upper() in {
-            "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
-        } else operation.upper()
+        operation_name = operation.upper()
+        safe_methods = {"GET", "HEAD", "OPTIONS"}
+        if operation_name in {"UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"}:
+            authority_operation = "PUBLISH"
+        elif method.upper() not in safe_methods and operation_name != "OAUTH_TOKEN":
+            # A new or custom mutating operation must never bypass authority
+            # merely because its operation label is not a known consequential action.
+            authority_operation = (
+                operation_name
+                if operation_name in self.CONSEQUENT_OPERATIONS
+                else "EXTERNAL_WRITE"
+            )
+        else:
+            authority_operation = operation_name
         write_approvals = None
         if authority_operation == "PUBLISH":
             from datetime import datetime, timezone
