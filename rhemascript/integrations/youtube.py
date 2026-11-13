@@ -536,7 +536,7 @@ class YouTubeClient:
         ]
         if len(final_films) != 1:
             raise YouTubeIntegrationError(
-                "upload requires one approved final-film artifact matching the evidence reference"
+                "upload requires one approved final film artifact matching the evidence reference"
             )
         if not isinstance(title, str) or not title.strip() or len(title) > 100:
             raise YouTubeIntegrationError("title must contain 1 to 100 characters")
