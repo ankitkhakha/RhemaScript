@@ -103,6 +103,8 @@ def persist_analytics_evidence_artifact(
     version: str = "1",
     current_snapshot_artifact_id: str | None = None,
     previous_snapshot_artifact_id: str | None = None,
+    current_snapshot: dict[str, Any] | None = None,
+    previous_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist verified evidence without overwriting; return a DRAFT pack record.
 
@@ -125,7 +127,14 @@ def persist_analytics_evidence_artifact(
             artifact_kind = "YOUTUBE_ANALYTICS_SNAPSHOT"
             metadata: dict[str, Any] = {"snapshot_sha256": payload["snapshot_sha256"]}
         elif artifact_type == "YOUTUBE_ANALYTICS_PERIOD_COMPARISON":
-            verify_analytics_period_comparison(payload)
+            if not isinstance(current_snapshot, dict) or not isinstance(previous_snapshot, dict):
+                raise YouTubeAnalyticsArtifactStoreError(
+                    "comparison persistence requires both exact source snapshots"
+                )
+            verify_analytics_period_comparison(
+                payload, current_snapshot=current_snapshot,
+                previous_snapshot=previous_snapshot,
+            )
             artifact_kind = "YOUTUBE_ANALYTICS_COMPARISON"
             current_snapshot_artifact_id = _required_text(
                 current_snapshot_artifact_id, "current_snapshot_artifact_id"
