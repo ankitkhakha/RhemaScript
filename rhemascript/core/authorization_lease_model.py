@@ -61,6 +61,8 @@ class SQLiteLeaseStateModel:
                     lease_id TEXT NOT NULL UNIQUE,
                     accepted_at TEXT NOT NULL
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_lease_per_approval
+                    ON lease_approvals(approval_id);
             """)
 
     def _connect(self):
