@@ -27,7 +27,13 @@ The API can omit the most recent days when all requested metrics are not yet ava
 
 ## Authorization
 
-This code path does not initiate OAuth or broaden existing grants. The owner's currently documented consent is `youtube.readonly` only. Google documentation currently contains both a method-specific statement requiring `youtube.readonly` and a general scope table listing `yt-analytics.readonly`; verify the live consent and method requirements with the owner before attempting any live Analytics request. No live request is part of this implementation or its synthetic tests.
+This code path does not initiate OAuth or broaden existing grants. The repository readiness record states that the owner's completed consent is exactly `https://www.googleapis.com/auth/youtube.readonly`.
+
+The current Google `reports.query` reference explicitly states that requests to this method now require the `youtube.readonly` scope. The same reference also lists `yt-analytics.readonly` in its general authorization-scope table and retains an example using that scope. Treat the method-specific requirement as the current minimum documented requirement; do not infer that the broader feature inventory in this repository must be granted together. The current recorded owner consent matches the method-specific requirement for channel-scoped report queries.
+
+Source checked 13 November 2026: https://developers.google.com/youtube/analytics/reference/reports/query
+
+No live Analytics request was made in this implementation or its synthetic tests. Before the first live query, verify that the local credential is still the same owner-authorized credential and that the intended Google account/channel remains correct. Do not request or add scopes unless a specific API operation demonstrably requires them and the owner separately approves that consent.
 
 ## Verification boundary
 
