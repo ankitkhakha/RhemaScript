@@ -60,16 +60,14 @@ The V3 HMAC checkpoint snapshot includes the persisted credential schema, signat
 
 ## Provider upload-session authorization boundary
 
-The current method-aware gateway verifies V3 approval objects, project/version/request scope and the exact final-film artifact before UPLOAD_SESSION and UPLOAD_CHUNK requests. However, the gateway does not yet persist a one-time publish-session claim, bind the returned resumable-session URL to that claim, or reject reuse of the same consumed approval objects for a second session. Its current path-prefix allowlist is not a substitute for session ownership.
+The method-aware gateway now requires a durable `SQLitePublishSessionRegistry` before UPLOAD_SESSION or UPLOAD_CHUNK can reach the provider. The candidate registry:
+- atomically claims one upload session per project/version/request, approval fingerprint and exact final-artifact tuple;
+- binds the full provider-issued session URL by SHA-256 digest only; the bearer URL is never persisted;
+- permits chunks and status reconciliation only against the bound session URL digest and exact approval/artifact context;
+- enforces monotonic acknowledged byte offsets, one in-flight operation, bounded lease recovery after process interruption, terminal completion and duplicate-session rejection;
+- records indeterminate outcomes and includes session state in the V4 approval-state HMAC checkpoint.
 
-This is a release blocker for production provider writes. Before enabling them, implement and independently review a durable, linearizable publish-session registry that:
-- atomically claims one upload session per approval/request/artifact tuple;
-- binds the exact provider-issued session URL (store a digest, not the bearer URL) to the same request, approvals and artifact;
-- permits chunk/status reconciliation only against that session;
-- marks completion and rejects further chunks or duplicate session creation;
-- preserves indeterminate outcomes across process restarts and audit-sink failures.
-
-No production session registry is configured. Synthetic tests and the ordinary upload_video credential-replay check do not establish this durable gateway guarantee.
+The gateway fails closed if no durable registry is supplied. This is a local SQLite candidate implementation, not a production deployment. It must receive independent review and operational validation of database custody, checkpoint retention, backup/restore, process-restart recovery and concurrency before any production provider write can be enabled.
 
 ## Remaining prerequisites
 
