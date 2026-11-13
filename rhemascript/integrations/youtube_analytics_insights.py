@@ -319,38 +319,127 @@ def compare_analytics_periods(
     return body
 
 
-def verify_analytics_period_comparison(comparison: dict[str, Any]) -> bool:
-    """Verify the comparison envelope digest and its metric status consistency."""
+def verify_analytics_period_comparison(
+    comparison: dict[str, Any],
+    current_snapshot: dict[str, Any] | None = None,
+    previous_snapshot: dict[str, Any] | None = None,
+) -> bool:
+    """Verify digest, internal metric arithmetic, and optionally exact source derivation.
+
+    A digest alone proves only consistency with the supplied envelope. When the
+    source snapshots are available, recompute the entire comparison and require
+    an exact match to establish derivation from those verified snapshots.
+    """
     if not isinstance(comparison, dict):
         raise YouTubeAnalyticsInsightError("comparison must be an object")
-    if "comparison_sha256" not in comparison:
-        raise YouTubeAnalyticsInsightError("comparison digest is missing")
     expected = {
         "schema_version", "evidence_type", "current_snapshot_sha256",
         "previous_snapshot_sha256", "current_period", "previous_period",
         "metrics", "interpretation", "comparison_sha256",
     }
     if set(comparison) != expected:
-        raise YouTubeAnalyticsInsightError("comparison contains unsupported fields")
+        raise YouTubeAnalyticsInsightError("comparison contains unsupported or missing fields")
+    digest = comparison["comparison_sha256"]
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)):
+        raise YouTubeAnalyticsInsightError("comparison digest is not a lowercase SHA-256 value")
     body = {key: value for key, value in comparison.items() if key != "comparison_sha256"}
-    if comparison["comparison_sha256"] != _canonical_digest(body):
+    if digest != _canonical_digest(body):
         raise YouTubeAnalyticsInsightError("comparison digest does not match")
     if comparison["schema_version"] != "1.0" or comparison["evidence_type"] != "YOUTUBE_ANALYTICS_PERIOD_COMPARISON":
         raise YouTubeAnalyticsInsightError("comparison identity is unsupported")
-    if not isinstance(comparison["metrics"], dict):
+    for field in ("current_snapshot_sha256", "previous_snapshot_sha256"):
+        value = comparison[field]
+        if (not isinstance(value, str) or len(value) != 64
+                or any(char not in "0123456789abcdef" for char in value)):
+            raise YouTubeAnalyticsInsightError(f"{field} is not a lowercase SHA-256 value")
+    if not isinstance(comparison["interpretation"], str):
+        raise YouTubeAnalyticsInsightError("comparison interpretation must be text")
+
+    for period_name in ("current_period", "previous_period"):
+        period = comparison[period_name]
+        if not isinstance(period, dict) or not {
+            "start_date", "end_date", "days", "returned_rows", "data_status", "daily_coverage"
+        } == set(period):
+            raise YouTubeAnalyticsInsightError(f"{period_name} has an invalid structure")
+        try:
+            start_date = date.fromisoformat(period["start_date"])
+            end_date = date.fromisoformat(period["end_date"])
+        except (TypeError, ValueError):
+            raise YouTubeAnalyticsInsightError(f"{period_name} has invalid dates") from None
+        if (start_date.isoformat() != period["start_date"]
+                or end_date.isoformat() != period["end_date"]
+                or end_date < start_date
+                or period["days"] != (end_date - start_date).days + 1
+                or isinstance(period["days"], bool)
+                or not isinstance(period["returned_rows"], int)
+                or isinstance(period["returned_rows"], bool)
+                or period["returned_rows"] < 0
+                or period["data_status"] not in {"NO_DATA", "DATA_RETURNED"}
+                or (period["data_status"] == "NO_DATA") != (period["returned_rows"] == 0)
+                or not isinstance(period["daily_coverage"], dict)):
+            raise YouTubeAnalyticsInsightError(f"{period_name} fields are inconsistent")
+    current_period = comparison["current_period"]
+    previous_period = comparison["previous_period"]
+    if (current_period["days"] != previous_period["days"]
+            or current_period["start_date"] <= previous_period["end_date"]):
+        raise YouTubeAnalyticsInsightError("comparison periods are not equal-length and chronological")
+
+    metrics = comparison["metrics"]
+    if not isinstance(metrics, dict):
         raise YouTubeAnalyticsInsightError("comparison metrics must be an object")
-    for name, metric in comparison["metrics"].items():
-        if not isinstance(name, str) or not isinstance(metric, dict):
+    metric_fields = {
+        "aggregation", "current_value", "previous_value",
+        "absolute_change", "percentage_change", "status",
+    }
+    allowed_names = _ADDITIVE_METRICS | {"averageViewDuration"}
+    for name, metric in metrics.items():
+        if name not in allowed_names or not isinstance(metric, dict) or set(metric) != metric_fields:
             raise YouTubeAnalyticsInsightError("comparison metric entry is malformed")
-        if metric.get("status") not in {"COMPARABLE", "ZERO_BASELINE", "INSUFFICIENT_DATA", "ZERO_DENOMINATOR"}:
-            raise YouTubeAnalyticsInsightError("comparison metric status is invalid")
-        if metric.get("aggregation") not in {"SUM", "WEIGHTED_AVERAGE_SECONDS"}:
+        expected_aggregation = "WEIGHTED_AVERAGE_SECONDS" if name == "averageViewDuration" else "SUM"
+        if metric["aggregation"] != expected_aggregation:
             raise YouTubeAnalyticsInsightError("comparison metric aggregation is invalid")
-        if metric["status"] == "INSUFFICIENT_DATA" and (
-            metric.get("absolute_change") is not None
-            or metric.get("percentage_change") is not None
-        ):
-            raise YouTubeAnalyticsInsightError("insufficient-data metric cannot report a change")
-        if metric["status"] in {"ZERO_BASELINE", "ZERO_DENOMINATOR"} and metric.get("percentage_change") is not None:
-            raise YouTubeAnalyticsInsightError("undefined percentage metric cannot report percentage change")
+        status = metric["status"]
+        if status not in {"COMPARABLE", "ZERO_BASELINE", "INSUFFICIENT_DATA", "ZERO_DENOMINATOR"}:
+            raise YouTubeAnalyticsInsightError("comparison metric status is invalid")
+        parsed: dict[str, Decimal | None] = {}
+        for field in ("current_value", "previous_value", "absolute_change", "percentage_change"):
+            value = metric[field]
+            if value is None:
+                parsed[field] = None
+                continue
+            if not isinstance(value, str):
+                raise YouTubeAnalyticsInsightError(f"comparison metric {field} must be decimal text or null")
+            try:
+                number = Decimal(value)
+            except InvalidOperation:
+                raise YouTubeAnalyticsInsightError(f"comparison metric {field} is not decimal text") from None
+            if not number.is_finite() or _decimal_text(number) != value:
+                raise YouTubeAnalyticsInsightError(f"comparison metric {field} is not canonical finite decimal text")
+            parsed[field] = number
+        current_value, previous_value = parsed["current_value"], parsed["previous_value"]
+        delta, pct = parsed["absolute_change"], parsed["percentage_change"]
+        if status == "INSUFFICIENT_DATA":
+            if (delta is not None or pct is not None
+                    or (current_value is not None and previous_value is not None)):
+                raise YouTubeAnalyticsInsightError("insufficient-data metric has inconsistent values")
+        elif status == "ZERO_DENOMINATOR":
+            if (name != "averageViewDuration" or delta is not None or pct is not None
+                    or (current_value is not None and previous_value is not None)):
+                raise YouTubeAnalyticsInsightError("zero-denominator metric has inconsistent values")
+        else:
+            if current_value is None or previous_value is None or delta != current_value - previous_value:
+                raise YouTubeAnalyticsInsightError("comparison metric absolute change is inconsistent")
+            if status == "ZERO_BASELINE":
+                if previous_value != 0 or pct is not None:
+                    raise YouTubeAnalyticsInsightError("zero-baseline metric is inconsistent")
+            elif previous_value == 0 or pct != _decimal_text(delta / previous_value * 100):
+                raise YouTubeAnalyticsInsightError("comparable metric percentage change is inconsistent")
+
+    if (current_snapshot is None) != (previous_snapshot is None):
+        raise YouTubeAnalyticsInsightError("both exact source snapshots are required for derivation verification")
+    if current_snapshot is not None and previous_snapshot is not None:
+        recomputed = compare_analytics_periods(current_snapshot, previous_snapshot)
+        if recomputed != comparison:
+            raise YouTubeAnalyticsInsightError("comparison does not match its exact source snapshots")
     return True
