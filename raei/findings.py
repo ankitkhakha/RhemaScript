@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
 from rhemascript.evidence.artifact_verification import (
     EvidenceVersion, is_verified_evidence_version, verify_artifact,
 )
@@ -77,8 +78,13 @@ def capture_finding(
     evidence_root: str | Path,
     artifact_bytes: bytes,
     evidence: EvidenceVersion,
+    *,
+    verifier: ApprovalVerifier | None = None,
+    submitter_credential: object | None = None,
+    project_version: str | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
-    """Capture an exact observation artifact and append its event to the shared registry."""
+    """Capture an exact observation; optionally bind the submitter to a V3 signed identity approval."""
     if not isinstance(registry, ReadinessRunRegistry):
         raise RAEIFindingError("a ReadinessRunRegistry is required")
     if not is_verified_evidence_version(evidence):
@@ -207,10 +213,43 @@ def capture_finding(
         "created_at_utc": payload["created_at_utc"],
     }
     event_id = f"FINDING:{finding_id}@{version}"
-    recorded = registry.append_activity_event(
-        event_id, "FINDING_CAPTURED", event_payload,
-        project_id=project_id, subject_id=finding_id,
-    )
+    identity_status = "UNVERIFIED"
+    if any(value is not None for value in (verifier, submitter_credential, project_version, request_id)):
+        if (not isinstance(verifier, ApprovalVerifier) or submitter_credential is None
+                or not isinstance(project_version, str) or not project_version.strip()
+                or not isinstance(request_id, str) or not request_id.strip()):
+            raise RAEIFindingError("authenticated submitter capture requires verifier, V3 credential, project_version and request_id")
+        artifact_binding = {
+            "artifact_id": evidence.evidence_id,
+            "artifact_version": evidence.version,
+            "sha256": evidence.sha256,
+            "size_bytes": evidence.size_bytes,
+        }
+        try:
+            verified = verifier.verify_many_and_consume(
+                (submitter_credential,),
+                ({
+                    "action": "FINDING_SUBMIT",
+                    "project_id": project_id,
+                    "project_version": project_version,
+                    "request_id": request_id,
+                    "artifact_binding": artifact_binding,
+                },),
+                require_distinct_actors=False,
+            )[0]
+            recorded = registry.append_authenticated_finding_capture_event(
+                event_id, event_payload, project_id=project_id,
+                project_version=project_version, request_id=request_id,
+                approval=verified,
+            )
+        except (ApprovalError, ValueError, TypeError) as exc:
+            raise RAEIFindingError(f"authenticated finding submission rejected: {exc}") from exc
+        identity_status = "VERIFIED"
+    else:
+        recorded = registry.append_activity_event(
+            event_id, "FINDING_CAPTURED", event_payload,
+            project_id=project_id, subject_id=finding_id,
+        )
     return {
         "recorded": recorded,
         "event_id": event_id,
@@ -219,7 +258,7 @@ def capture_finding(
         "status": "SUBMITTED",
         "suggested_evidence_level": suggested_level,
         "evidence_assessment_status": "NOT_ASSESSED",
-        "identity_authentication_status": "UNVERIFIED",
+        "identity_authentication_status": identity_status,
         "observation_sha256": evidence.sha256,
     }
 
