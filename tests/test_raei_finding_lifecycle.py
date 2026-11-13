@@ -426,6 +426,22 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             project_version=self.project_version, request_id=request_id,
         )
 
+    def test_closure_rejects_lifecycle_events_from_different_project_version(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self.project_version = "3.3"
+        with self.assertRaisesRegex(RAEIGovernanceError, "same project version"):
+            self._record_closure()
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_CLOSED"
+            for event in self.registry.list_activity_events()
+        ))
+        self.assertTrue(self.registry.verify())
+
     def test_reopening_requires_two_reviewers_and_new_authenticated_version(self):
         self._record_research()
         self._record_reproduction()
