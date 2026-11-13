@@ -325,6 +325,13 @@ def list_findings(
             item.get("payload", {})
         for item in reviews
     }
+    closures = list_governed_reviews(
+        registry, event_type="FINDING_CLOSED", project_id=project_id,
+    )
+    closure_by_version = {
+        (item.get("subject_id"), item.get("payload", {}).get("finding_version")): item
+        for item in closures
+    }
     finding_by_version = {(entry["finding_id"], entry["version"]): entry for entry in results}
     lifecycle_events = [
         event for event in registry.list_activity_events()
@@ -485,7 +492,23 @@ def list_findings(
         plan = latest_plan.get(key)
         implementation = latest_implementation.get(key)
         effectiveness = latest_effectiveness.get(key)
-        if effectiveness:
+        closure = closure_by_version.get(key)
+        if closure:
+            closure_payload = closure.get("payload", {})
+            lineage = closure_payload.get("lifecycle_lineage", {})
+            if (not effectiveness or effectiveness["payload"].get("outcome") != "EFFECTIVE"
+                    or closure_payload.get("evidence_binding") != effectiveness["payload"].get("evidence_binding")
+                    or lineage != {
+                        "plan_event_id": plan["event_id"] if plan else None,
+                        "implementation_event_id": implementation["event_id"] if implementation else None,
+                        "effectiveness_event_id": effectiveness["event_id"] if effectiveness else None,
+                    }):
+                raise RAEIFindingError("finding closure does not bind an effective assessment and exact lifecycle lineage")
+            item["status"] = "CLOSED"
+            item["closure_event_id"] = closure["event_id"]
+            item["closure_rationale"] = closure_payload.get("rationale")
+            item["effectiveness_event_id"] = effectiveness["event_id"]
+        elif effectiveness:
             item["status"] = effectiveness["payload"]["outcome"]
             item["effectiveness_event_id"] = effectiveness["event_id"]
             item["effectiveness_evidence_binding"] = effectiveness["payload"].get("evidence_binding")
