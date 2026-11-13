@@ -6,6 +6,7 @@ from unittest.mock import patch
 import hashlib
 import json
 import shutil
+from pathlib import Path
 from urllib.error import URLError
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
