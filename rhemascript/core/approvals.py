@@ -159,7 +159,9 @@ class ApprovalVerifier:
         consumption_store = getattr(consume_many_once, "__self__", None)
         self._consumption_state = (
             consumption_store
-            if callable(getattr(consumption_store, "read_consumption_state", None))
+            if (callable(getattr(consumption_store, "read_consumption_state", None))
+                or (callable(getattr(consumption_store, "is_consumed", None))
+                    and callable(getattr(consumption_store, "is_revoked", None))))
             else None
         )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -571,9 +573,16 @@ class ApprovalVerifier:
             raise ApprovalError("approval expired before provider transport")
         if self._consumption_state is not None:
             try:
-                still_consumed, revoked = self._consumption_state.read_consumption_state(
+                read_state = getattr(self._consumption_state, "read_consumption_state", None)
+                if not callable(read_state):
+                    raise ApprovalError(
+                        "approval store does not support a consistent consumption/revocation snapshot"
+                    )
+                still_consumed, revoked = read_state(
                     approval.approval_id, approval.nonce,
                 )
+            except ApprovalError:
+                raise
             except Exception:
                 raise ApprovalError(
                     "approval consumption/revocation state is unavailable before provider transport"
