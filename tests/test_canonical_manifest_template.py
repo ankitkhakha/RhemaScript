@@ -43,6 +43,8 @@ class CanonicalManifestTemplateTests(unittest.TestCase):
         self.assertIn("comparison_sha256", comparison_rule["then"]["required"])
         self.assertIn("current_snapshot_artifact_id", comparison_rule["then"]["required"])
         self.assertIn("previous_snapshot_artifact_id", comparison_rule["then"]["required"])
+        self.assertIn("current_snapshot_sha256", comparison_rule["then"]["required"])
+        self.assertIn("previous_snapshot_sha256", comparison_rule["then"]["required"])
 
     def test_template_is_intentionally_not_generation_authorisation(self):
         manifest = json.loads((ROOT / "templates" / "project-evidence-pack-v1.template.json").read_text(encoding="utf-8"))
