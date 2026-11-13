@@ -1,36 +1,43 @@
 # Reproducible Python CI dependency lock design
 
-Status: generated lock reviewed and committed; primary CI now installs from the committed lock in a clean environment. Exact-head CI validation passed.
+Status: committed hash lock, security floor, and primary clean-install CI are implemented. Exact-head CI and independent lock regeneration have passed.
 
 ## Supported target and committed lock
 
 - CI target: Ubuntu 24.04, CPython 3.12, Linux x86_64.
-- Lock inputs: `requirements-ci.in`.
+- Lock inputs: `requirements-ci.in` and `pyproject.toml`.
 - Lock generator: pip-tools 7.4.1 with pip 24.3.1.
 - Generator Python: 3.12.16.
 - Committed files: `requirements-ci.lock`, `requirements-ci.lock.sha256`, and `lock-generation-record.txt`.
-- Lock SHA-256: `a8210130b58d3fe86c8805b97a5cf98229e13d270e04a21ace171f717d62582c`.
-- Verified candidate ZIP SHA-256 from CI run 1659: `10f0430fbadb37ec0a1523e69d85685fc4c4f1d6149b893f876fb3f6b73c1cc6`.
-- Lock contains four exact pinned distributions and 153 SHA-256 artifact hashes. All four distributions have hash entries: cffi (100), cryptography (49), pycparser (2), and setuptools (2).
-- The downloaded archive was independently checked against its GitHub artifact digest; the embedded lock checksum was verified with `sha256sum -c`.
-- The committed lock blob SHA is `c1b90013dd52c3340302c08778f8ddc5e95c5bc9`, matching the generated artifact file's Git blob hash. The checksum manifest blob is `8586bb8081ba2eab522a363bb4a75a066271b374`; the generation record blob is `0dd9bdc524ec061e27491a759dcac7349e204ca4`.
+- Lock SHA-256: `206f0b760b60fffe0ec1e1cbd86b1f61901e26bf8a9baf0c35699ea8a7a308ad`.
+- Verified regenerated candidate ZIP SHA-256 from generator run 8: `10ea3f823add39b41fb65acb6f4dcbe12728d94f1dbaf8adddc381bd89713a3d`.
+- Lock contains four exact pinned distributions and 163 SHA-256 artifact hashes: cffi 2.1.1 (100), cryptography 50.0.2 (59), pycparser 3.12 (2), setuptools 84.2.1 (2).
+- The regenerated artifact archive was independently checked against its GitHub artifact digest; the embedded lock checksum was verified with `sha256sum -c`.
+- The downloaded regenerated lock matches the committed lock byte-for-byte. Its Git blob SHA is `c4c8cab244532a475696ffe1f1903a848ef8249c`. Checksum manifest blob SHA: `594d4a31b7282002dde746c5a83b97ae79fac36a`; generation record blob SHA: `be1e67a9a34158e7e27ae88cbdac20b2d9e3d9e6`.
 
-The candidate is an actual generated artifact, not a hand-authored lock. Do not hand-write hashes, copy hashes from an unrelated platform, or treat an observed package version as a lock.
+## Security review and dependency floor
+
+The previous `cryptography==47.0.0` lock was inside affected version ranges for two reviewed upstream advisories:
+- CVE-2026-69247 / GHSA-g6cj-pr64-35w5: PKCS#7 EnvelopedData decryption could expose a Bleichenbacher oracle; patched in 50.0.0. See https://github.com/advisories/GHSA-g6cj-pr64-35w5.
+- CVE-2026-69248 / GHSA-m2h6-j472-rp4c: wildcard DNS SAN validation could escape certificate name constraints; patched in 49.0.0. See https://github.com/advisories/GHSA-m2h6-j472-rp4c.
+
+The dependency input and project runtime constraint now both require `cryptography>=50.0.2,<51.0.0`. Version 50.0.2 is above both advisory patch floors. The package advisory scan lists 50.0.2 as the latest non-vulnerable release at review time; this is a point-in-time review, not a promise that future advisories will not emerge.
 
 ## Clean-install CI sequence
 
-The primary `.github/workflows/ci.yml` checks out the committed lock directly, verifies `requirements-ci.lock.sha256`, creates a fresh virtual environment, installs the complete hash-pinned dependency closure with `--require-hashes`, installs the project editable with `--no-deps --no-build-isolation`, runs `pip check`, and executes the full contract and synthetic integration suite. The primary CI no longer generates or consumes an ephemeral lock artifact.
+The primary `.github/workflows/ci.yml` checks out the committed lock directly, verifies `requirements-ci.lock.sha256`, creates a fresh virtual environment, installs the complete hash-pinned dependency closure with `--require-hashes`, installs the project editable with `--no-deps --no-build-isolation`, runs `pip check`, and executes the full contract and synthetic integration suite. The primary CI does not generate or consume an ephemeral lock artifact.
 
 The separate `.github/workflows/generate-ci-lock.yml` remains a candidate-regeneration workflow. It generates and validates a new lock artifact when lock inputs or the generator workflow change; that artifact must be reviewed and committed deliberately. It does not silently replace the committed lock.
 
-## Exact-head CI validation
+## Exact-head validation and audit history
 
-- CI run 1659 completed successfully on commit `a029e9c8b4e1352146eace96234833ac3075a539` using the generated candidate artifact. This validated the earlier generated-candidate path, not the committed-lock path.
-- After committing the files and changing primary CI to use them, runs 1665-1670 exposed two separate issues: an initial single-character lock-hash transcription error, then stale workflow-contract tests that still expected the old artifact-download design. These runs failed and are retained as audit history.
-- The lock transcription was corrected against the generated artifact; the committed lock's SHA-256 and Git blob SHA now match the artifact exactly.
-- Updated `tests/test_remote_ci_workflow.py` to assert the committed-lock design and verify that the workflow no longer downloads an ephemeral lock artifact.
-- GitHub Actions run 1671 completed SUCCESS on exact head `fa87123b5c83298752f78df7e151a946b9e29297`: https://github.com/ankitkhakha/RhemaScript/actions/runs/43416638581.
-- On that exact head, the checksum verification and clean locked dependency installation passed, the full local CI suite passed, and the redacted IF-18 report uploaded successfully.
+- CI run 1659 passed on commit `a029e9c8b4e1352146eace96234833ac3075a539` using the generated candidate artifact. This validated the earlier generated-candidate path, not the committed-lock path.
+- Runs 1665-1670 exposed a one-character transcription error in the initial manually committed lock, followed by stale workflow-contract tests that still expected the previous artifact-download design. These failures were corrected and remain visible as audit history.
+- Exact committed-lock code/test head `fa87123b5c83298752f78df7e151a946b9e29297` passed full CI run 1671: https://github.com/ankitkhakha/RhemaScript/actions/runs/43416638581.
+- Security review then identified the cryptography 47.0.0 advisory exposure. The lock input and project metadata were raised to 50.0.2, the new candidate was generated by workflow run 8, and its artifact digest, lock checksum, package pins and hashes were independently verified.
+- Runs 1680-1681 failed because the project metadata still required cryptography below 48.0.0; this was corrected in `pyproject.toml`. The failures are retained as audit history.
+- GitHub Actions run 1682 completed SUCCESS on exact head `8ee17a41945263753cae5a73590e0567b1ec3d9c`: https://github.com/ankitkhakha/RhemaScript/actions/runs/43417001810. On that head, the committed-lock checksum and clean installation passed, the full local CI suite passed, and the redacted IF-18 report uploaded successfully.
+- Separate lock regeneration workflow run 8 completed SUCCESS on the same exact head: https://github.com/ankitkhakha/RhemaScript/actions/runs/43417001725. Its regenerated lock matched the committed lock byte-for-byte.
 
 ## Security and platform boundaries
 
@@ -38,7 +45,7 @@ The lock's hashes constrain the allowed distribution bytes for the supported run
 
 This lock is specific to the declared Ubuntu 24.04 / CPython 3.12 target. Other Python/platform combinations need separately generated and reviewed locks rather than reusing Linux wheel hashes. Regenerate and review whenever `requirements-ci.in`, `pyproject.toml`, Python minor version, runner platform, or build backend changes.
 
-The generator itself currently bootstraps pip and pip-tools with exact direct versions, but pip-tools' own transitive bootstrap environment is not itself represented as a separate hash-locked toolchain. That is a remaining reproducibility-hardening opportunity; it does not alter the hash-pinned application/test dependency install performed by primary CI.
+The generator itself currently bootstraps pip and pip-tools with exact direct versions, but pip-tools' own transitive bootstrap environment is not itself represented as a separate hash-locked toolchain. That remains a reproducibility-hardening opportunity; it does not alter the hash-pinned application/test dependency install performed by primary CI.
 
 ## Remaining integration gate
 
