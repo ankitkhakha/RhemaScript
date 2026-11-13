@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
-from raei.governance import record_finding_disposition, record_finding_closure
+from raei.governance import record_finding_disposition, record_finding_closure, record_finding_reopening
 from raei.knowledge import inherit_closed_finding_as_knowledge, list_knowledge
 from raei.finding_lifecycle import (
     RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation, record_finding_effectiveness,
@@ -53,6 +53,9 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                     "FINDING_EFFECTIVENESS_ASSESS": ["assessor"],
                     "FINDING_CLOSURE_REVIEW": ["closure-reviewer"],
                     "FINDING_CLOSURE_CONFIRM": ["closure-approver"],
+                    "FINDING_REOPEN_REVIEW": ["reopen-reviewer"],
+                    "FINDING_REOPEN_CONFIRM": ["reopen-approver"],
+                    "FINDING_SUBMIT": ["submitter"],
                 },
                 "allowed_authn_contexts": ["mfa"],
                 "max_authentication_age_seconds": 300,
@@ -118,7 +121,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver"}[action],
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver", "FINDING_REOPEN_REVIEW": "reopen-reviewer", "FINDING_REOPEN_CONFIRM": "reopen-approver", "FINDING_SUBMIT": "submitter"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -361,6 +364,117 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             request_id=request_id, rationale="Independent effectiveness evidence meets all approved acceptance criteria.",
             evidence_root=str(self.evidence_root), evidence=evidence,
         )
+
+    def _record_reopening(self):
+        evidence = verify_artifact(
+            self.evidence_root, "effectiveness.json",
+            evidence_id="EV-FND-EFFECTIVENESS-001", version="1.0",
+        )
+        request_id = f"request-FINDING-REOPEN-{self.finding_id}"
+        credentials = (
+            self._credential(
+                "FINDING_REOPEN_REVIEW", evidence,
+                subject_id="subject-reopen-reviewer-001", actor_id="actor-reopen-reviewer-001",
+                session_id="session-reopen-reviewer-001", request_id=request_id,
+            ),
+            self._credential(
+                "FINDING_REOPEN_CONFIRM", evidence,
+                subject_id="subject-reopen-approver-001", actor_id="actor-reopen-approver-001",
+                session_id="session-reopen-approver-001", request_id=request_id,
+            ),
+        )
+        return record_finding_reopening(
+            self.registry, self.verifier, credentials,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            new_finding_version="1.1", project_id=self.project_id,
+            project_version=self.project_version, request_id=request_id,
+            rationale="New counterexample evidence requires a controlled follow-up version.",
+            evidence_root=str(self.evidence_root), evidence=evidence,
+        )
+
+    def _capture_resumed_finding(self):
+        payload = {
+            "schema": FINDING_SCHEMA,
+            "finding_id": self.finding_id,
+            "version": "1.1",
+            "project_id": self.project_id,
+            "title": "Portrait clip rendered in landscape — follow-up",
+            "raw_observation": "A newly observed counterexample requires renewed research.",
+            "affected_workflow": "video_generation",
+            "expected_behavior": "Output should remain 9:16 portrait.",
+            "observed_behavior": "A new candidate path still emitted landscape output.",
+            "impact": "The correction needs a bounded follow-up investigation.",
+            "reproduction_steps": ["Repeat the controlled generation request on the revised path."],
+            "supporting_evidence": [],
+            "evidence_id": "EV-FND-OBS-002",
+            "evidence_version": "1.0",
+            "created_at_utc": self.now.isoformat(),
+            "tags": ["aspect-ratio", "follow-up"],
+            "related_work_ids": ["RS-PWW-001"],
+            "supersedes": [f"{self.finding_id}@{self.finding_version}"],
+        }
+        raw, evidence = self._write_report("observation-v1.1.json", payload, payload["evidence_id"])
+        request_id = f"request-FINDING-SUBMIT-{self.finding_id}-1.1"
+        credential = self._credential(
+            "FINDING_SUBMIT", evidence, subject_id="subject-new-submitter-001",
+            actor_id="actor-new-submitter-001", session_id="session-new-submitter-001",
+            request_id=request_id,
+        )
+        return capture_finding(
+            self.registry, self.evidence_root, raw, evidence,
+            verifier=self.verifier, submitter_credential=credential,
+            project_version=self.project_version, request_id=request_id,
+        )
+
+    def test_reopening_requires_two_reviewers_and_new_authenticated_version(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        reopened = self._record_reopening()
+        self.assertEqual(reopened["decision"], "REOPENED")
+        old_finding = next(item for item in list_findings(self.registry) if item["version"] == "1.0")
+        self.assertEqual(old_finding["status"], "REOPENED")
+        self.assertEqual(old_finding["reopened_as_version"], "1.1")
+        resumed = self._capture_resumed_finding()
+        self.assertEqual(resumed["version"], "1.1")
+        findings = list_findings(self.registry)
+        new_finding = next(item for item in findings if item["version"] == "1.1")
+        self.assertEqual(new_finding["status"], "SUBMITTED")
+        self.assertEqual(new_finding["supersedes"], [f"{self.finding_id}@1.0"])
+
+    def test_reopening_rejects_same_closure_reviewer(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        evidence = verify_artifact(
+            self.evidence_root, "effectiveness.json",
+            evidence_id="EV-FND-EFFECTIVENESS-001", version="1.0",
+        )
+        request_id = f"request-FINDING-REOPEN-{self.finding_id}"
+        credentials = (
+            self._credential("FINDING_REOPEN_REVIEW", evidence, subject_id="subject-closure-reviewer-001",
+                             actor_id="actor-reopen-reviewer-001", session_id="session-new-review-001", request_id=request_id),
+            self._credential("FINDING_REOPEN_CONFIRM", evidence, subject_id="subject-reopen-approver-002",
+                             actor_id="actor-reopen-approver-002", session_id="session-reopen-approver-002", request_id=request_id),
+        )
+        with self.assertRaisesRegex(RAEIGovernanceError, "independent from closure reviewers"):
+            record_finding_reopening(
+                self.registry, self.verifier, credentials,
+                finding_id=self.finding_id, finding_version=self.finding_version,
+                new_finding_version="1.1", project_id=self.project_id,
+                project_version=self.project_version, request_id=request_id,
+                rationale="Counterexample requires a new investigation.",
+                evidence_root=str(self.evidence_root), evidence=evidence,
+            )
+        self.assertFalse(any(event["event_type"] == "FINDING_REOPENED" for event in self.registry.list_activity_events()))
 
     def _inherit_closed_knowledge(self):
         events = {
