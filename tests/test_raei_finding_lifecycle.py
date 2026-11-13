@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
 from raei.governance import record_finding_disposition, record_finding_closure
+from raei.knowledge import inherit_closed_finding_as_knowledge, list_knowledge
 from raei.finding_lifecycle import (
     RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation, record_finding_effectiveness,
 )
@@ -360,6 +361,85 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             request_id=request_id, rationale="Independent effectiveness evidence meets all approved acceptance criteria.",
             evidence_root=str(self.evidence_root), evidence=evidence,
         )
+
+    def _inherit_closed_knowledge(self):
+        events = {
+            event["event_type"]: event
+            for event in self.registry.list_activity_events()
+            if event.get("subject_id") == self.finding_id
+            and event.get("payload", {}).get("finding_version") == self.finding_version
+        }
+        plan = events["FINDING_PLANNED"]
+        implementation = events["FINDING_IMPLEMENTED"]
+        effectiveness = events["FINDING_EFFECTIVENESS_ASSESSED"]
+        closure = events["FINDING_CLOSED"]
+        payload = {
+            "schema": "raei-knowledge-item-v1",
+            "knowledge_id": "RS-KNOW-CLOSED-FINDING-001",
+            "version": "1.0",
+            "title": "Preserve the approved portrait aspect ratio through generation.",
+            "domain": "RhemaScript generation workflow",
+            "source_type": "RAEI_CLOSED_FINDING",
+            "authority_level": "UNVERIFIED",
+            "source_name": "RhemaScript RAEI closed finding",
+            "source_version": "1.0",
+            "source_reference": f"finding:{self.finding_id}@{self.finding_version}",
+            "summary": "A closed, independently assessed finding documented a portrait aspect-ratio propagation correction.",
+            "claims": ["The candidate request mapping preserves the selected 9:16 aspect ratio."],
+            "limitations": ["Synthetic candidate evidence does not establish live provider behavior."],
+            "tags": ["aspect-ratio", "generation", "closed-finding"],
+            "evidence_id": "EV-KNOW-CLOSED-FINDING-001",
+            "evidence_version": "1.0",
+            "status": "PENDING_REVIEW",
+            "source_authentication_status": "NOT_CHECKED",
+            "claim_relevance_status": "NOT_ASSESSED",
+            "created_at_utc": self.now.isoformat(),
+            "supersedes": [],
+            "source_finding_id": self.finding_id,
+            "source_finding_version": self.finding_version,
+            "source_lifecycle_lineage": {
+                "plan_event_id": plan["event_id"],
+                "implementation_event_id": implementation["event_id"],
+                "effectiveness_event_id": effectiveness["event_id"],
+                "closure_event_id": closure["event_id"],
+                "plan_evidence_binding": plan["payload"]["evidence_binding"],
+                "implementation_evidence_binding": implementation["payload"]["evidence_binding"],
+                "effectiveness_evidence_binding": effectiveness["payload"]["evidence_binding"],
+            },
+            "learning_scope": "The exact prompt-to-generation ratio mapping used by this candidate.",
+            "applicability_conditions": ["A project uses the same validated request-construction path."],
+            "confidence_level": "Candidate-tested; not live-provider verified.",
+            "known_counterexamples": ["Other providers or workflows may apply different aspect-ratio defaults."],
+            "review_due_utc": "2026-12-13T00:00:00+00:00",
+        }
+        raw, evidence = self._write_report("inherited-knowledge.json", payload, payload["evidence_id"])
+        return inherit_closed_finding_as_knowledge(self.registry, payload, evidence)
+
+    def test_closed_finding_knowledge_inheritance_remains_pending_review(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        inherited = self._inherit_closed_knowledge()
+        self.assertEqual(inherited["knowledge_payload"]["status"], "PENDING_REVIEW")
+        item = list_knowledge(self.registry)[0]
+        self.assertEqual(item["status"], "PENDING_REVIEW")
+        self.assertEqual(item["source_authentication_status"], "NOT_CHECKED")
+        self.assertEqual(item["claim_relevance_status"], "NOT_ASSESSED")
+        self.assertEqual(item["source_finding_id"], self.finding_id)
+
+    def test_knowledge_inheritance_rejects_unclosed_finding(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        with self.assertRaisesRegex(Exception, "missing or wrong lifecycle events"):
+            self._inherit_closed_knowledge()
 
     def test_closure_requires_effective_assessment_and_projects_closed(self):
         self._record_research()
