@@ -240,6 +240,30 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         self.assertEqual(restored.get("RUN-1")["run_id"], "RUN-1")
         self.assertTrue(restored.verify_checkpoint(checkpoint, key))
 
+    def test_restored_backup_rejects_rewritten_history_against_external_checkpoint(self):
+        import sqlite3
+        key = b"independent-recovery-checkpoint-key-32bytes"
+        self.registry.record("RUN-1", self.report, self.evidence)
+        self.registry.append_activity_event(
+            "FINDING:RECOVERY-1@1.0", "FINDING_CAPTURED",
+            {"finding_id": "RECOVERY-1", "version": "1.0", "status": "SUBMITTED"},
+            project_id="PROJECT-RECOVERY", subject_id="RECOVERY-1",
+        )
+        checkpoint = self.registry.checkpoint(key)
+        backup_path = Path(self.tmp.name) / "recovery-backup.sqlite3"
+        self.registry.backup_to(backup_path)
+        restored = ReadinessRunRegistry(backup_path)
+        self.assertTrue(restored.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(backup_path) as db:
+            db.execute("DROP TRIGGER activity_events_no_update")
+            db.execute(
+                "UPDATE activity_events SET payload_json=? WHERE event_id=?",
+                ('{"finding_id":"RECOVERY-1","status":"ALTERED","version":"1.0"}',
+                 "FINDING:RECOVERY-1@1.0"),
+            )
+        self.assertFalse(restored.verify())
+        self.assertFalse(restored.verify_checkpoint(checkpoint, key))
+
     def test_backup_refuses_existing_destination(self):
         destination = Path(self.tmp.name) / "existing.sqlite3"
         destination.write_text("do not overwrite", encoding="utf-8")
