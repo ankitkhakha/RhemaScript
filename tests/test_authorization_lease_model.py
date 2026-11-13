@@ -165,6 +165,47 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         self.assertFalse(worker.is_alive(), "dispatch worker did not finish")
         self.assertEqual(outcome, [False])
 
+    def test_indeterminate_dispatch_requires_reconciliation_and_cannot_be_replayed(self):
+        lease = self.acquire(nonce="dispatch-indeterminate")
+        self.assertTrue(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
+        self.assertTrue(self.model.mark_indeterminate(
+            lease.lease_id, reason_code="RESPONSE_LOST_AFTER_SEND",
+        ))
+        self.assertFalse(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
+        self.assertTrue(self.model.reconcile_dispatch(
+            lease.lease_id, provider_operation_id="provider-op-123", outcome="SUCCEEDED",
+        ))
+        self.assertTrue(self.model.reconcile_dispatch(
+            lease.lease_id, provider_operation_id="provider-op-123", outcome="SUCCEEDED",
+        ))
+        self.assertFalse(self.model.reconcile_dispatch(
+            lease.lease_id, provider_operation_id="provider-op-456", outcome="SUCCEEDED",
+        ))
+
+    def test_provider_operation_id_cannot_be_reused_for_another_lease(self):
+        first = self.acquire(nonce="dispatch-op-one")
+        self.assertTrue(self.model.accept_dispatch(first, request_fingerprint="a" * 64))
+        self.assertTrue(self.model.mark_indeterminate(
+            first.lease_id, reason_code="LOST_RESPONSE",
+        ))
+        self.assertTrue(self.model.reconcile_dispatch(
+            first.lease_id, provider_operation_id="provider-op-shared", outcome="SUCCEEDED",
+        ))
+        second = self.model.acquire(
+            resource_id="youtube:channel-2:publish",
+            approval_ids=("approval-other-director", "approval-other-publisher"),
+            dispatch_nonce="dispatch-op-two", request_fingerprint="b" * 64,
+            expires_at=self.expiry,
+        )
+        self.assertTrue(self.model.accept_dispatch(second, request_fingerprint="b" * 64))
+        self.assertTrue(self.model.mark_indeterminate(
+            second.lease_id, reason_code="LOST_RESPONSE",
+        ))
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.model.reconcile_dispatch(
+                second.lease_id, provider_operation_id="provider-op-shared", outcome="SUCCEEDED",
+            )
+
     def test_concurrent_acceptance_has_at_most_one_winner(self):
         lease = self.acquire()
         with ThreadPoolExecutor(max_workers=8) as pool:
