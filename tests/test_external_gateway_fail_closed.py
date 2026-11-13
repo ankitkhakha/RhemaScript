@@ -463,7 +463,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             }},
         )
         authority = self.publish_authority("write-1")
-        temporary, registry = self.make_registry(authority, "write-1")
+        temporary, registry, vault = self.make_registry(authority, "write-1")
         self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=AmbiguousTransport(),
@@ -527,7 +527,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             }},
         )
         authority = self.publish_authority("write-2")
-        temporary, registry = self.make_registry(authority, "write-2")
+        temporary, registry, vault = self.make_registry(authority, "write-2")
         self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=SuccessTransport(), audit_sink=audit,
@@ -558,7 +558,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         transport = MethodTransport()
         authority = self.publish_authority("request-3", project_id="project-1", source_version="1.0")
         session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque"
-        temporary, registry = self.make_registry(authority, "request-3", session_url=session_url)
+        temporary, registry, vault = self.make_registry(authority, "request-3", session_url=session_url)
         self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (ProviderBinding(

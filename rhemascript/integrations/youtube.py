@@ -662,27 +662,26 @@ class YouTubeClient:
                 or not str(category_id).isdigit()):
             raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
-        if self._gateway is None and self._transport is None:
+        if self._gateway is None:
             raise YouTubeIntegrationError(
-                "live YouTube traffic requires an explicitly configured IF-18 gateway"
+                "YouTube publishing requires an explicitly configured IF-18 gateway"
             )
-        if self._gateway is not None:
-            from rhemascript.core.approval_store import SQLitePublishSessionRegistry
-            from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
-            if not isinstance(
-                getattr(self._gateway, "publish_session_registry", None),
-                SQLitePublishSessionRegistry,
-            ):
-                raise YouTubeIntegrationError(
-                    "durable SQLite publish-session registry is required before approval consumption"
-                )
-            if not isinstance(
-                getattr(self._gateway, "session_url_vault", None),
-                SQLiteEncryptedSessionUrlVault,
-            ):
-                raise YouTubeIntegrationError(
-                    "encrypted SQLite session URL vault is required before approval consumption"
-                )
+        from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+        from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
+        if not isinstance(
+            getattr(self._gateway, "publish_session_registry", None),
+            SQLitePublishSessionRegistry,
+        ):
+            raise YouTubeIntegrationError(
+                "durable SQLite publish-session registry is required before approval consumption"
+            )
+        if not isinstance(
+            getattr(self._gateway, "session_url_vault", None),
+            SQLiteEncryptedSessionUrlVault,
+        ):
+            raise YouTubeIntegrationError(
+                "encrypted SQLite session URL vault is required before approval consumption"
+            )
         project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
