@@ -346,9 +346,13 @@ def advance_composite_checkpoint_anchor(
         raise CompositeCheckpointError("anchor verification time must be timezone-aware")
     age = (current.astimezone(timezone.utc) - latest.resolved_at.astimezone(timezone.utc)).total_seconds()
     if age < -30 or age > 30:
-        raise CompositeCheckpointError("independent anchor response is stale or future-dated")
+        raise CompositeCheckpointError(
+            "anchor advance may have committed; read-back is stale or future-dated; reconcile latest generation before retrying"
+        )
     if latest.recorded_at > current.astimezone(timezone.utc) + timedelta(seconds=30):
-        raise CompositeCheckpointError("independent anchor record is future-dated")
+        raise CompositeCheckpointError(
+            "anchor advance may have committed; read-back record is future-dated; reconcile latest generation before retrying"
+        )
     return latest
 
 

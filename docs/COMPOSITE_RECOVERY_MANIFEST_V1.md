@@ -67,6 +67,8 @@ If any digest, generation, HMAC, archive, checkpoint, or anchor check fails, pre
 - independent anchor registration/read-back;
 - modified/stale manifest rejection.
 
+An anchor compare-and-advance may commit even when the subsequent read-back is stale or unavailable. In that indeterminate case, the caller must re-read and reconcile the latest generation before retrying; blindly repeating the advance is unsafe. The implementation reports this explicitly and the synthetic suite covers the committed-but-stale-readback case.
+
 CI success validates code and synthetic test behavior only. It does not certify production recovery or the independent anchor deployment.
 
 ## Release gates
