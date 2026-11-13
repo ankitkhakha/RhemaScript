@@ -399,12 +399,12 @@ class ExternalIntegrationGateway:
         else:
             authority_operation = operation_name
         write_approvals = None
-        if authority_operation == "EXTERNAL_WRITE":
-            # A caller-supplied boolean is not an authenticated approval.
-            # Keep generic external mutations disabled until a signed,
-            # identity-bound, independently verifiable authority contract exists.
+        if authority_operation in {"GENERATE", "SPEND", "EXTERNAL_WRITE"}:
+            # Caller-supplied booleans are not authenticated approvals.
+            # Keep generic consequential mutations disabled until signed,
+            # identity-bound, independently verifiable authority contracts exist.
             raise ExternalIntegrationError(
-                "generic external writes are disabled until signed external-write authority is implemented"
+                "generic consequential external writes are disabled until signed operation authority is implemented"
             )
         if authority_operation == "PUBLISH":
             from datetime import datetime, timezone
