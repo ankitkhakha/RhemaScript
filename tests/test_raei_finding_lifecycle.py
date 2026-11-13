@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from raei.findings import RAEIFindingError, capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
 from raei.governance import RAEIGovernanceError, record_finding_disposition, record_finding_closure, record_finding_reopening
-from raei.knowledge import inherit_closed_finding_as_knowledge, list_knowledge
+from raei.knowledge import RAEIKnowledgeError, inherit_closed_finding_as_knowledge, list_knowledge
 from raei.finding_lifecycle import (
     RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation, record_finding_effectiveness,
 )
@@ -967,6 +968,26 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         }
         raw, evidence = self._write_report("inherited-knowledge.json", payload, payload["evidence_id"])
         return inherit_closed_finding_as_knowledge(self.registry, payload, evidence)
+
+    def test_knowledge_inheritance_rejects_cross_project_version_lineage(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        events = self.registry.list_activity_events()
+        for event in events:
+            if event["event_type"] == "FINDING_RESEARCHED":
+                event["payload"] = dict(event["payload"])
+                event["payload"]["authorization"] = dict(event["payload"]["authorization"])
+                event["payload"]["authorization"]["project_version"] = "9.9"
+        with patch.object(self.registry, "list_activity_events", return_value=events):
+            with self.assertRaisesRegex(RAEIKnowledgeError, "project or project-version lifecycle scope"):
+                self._inherit_closed_knowledge()
+        self.assertEqual(self.registry.list_all(), [])
+        self.assertTrue(self.registry.verify())
 
     def test_closed_finding_knowledge_inheritance_remains_pending_review(self):
         self._record_research()
