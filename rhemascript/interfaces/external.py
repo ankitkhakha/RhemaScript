@@ -185,135 +185,25 @@ class ExternalIntegrationGateway:
     def invoke(self, interface_id: str, request: dict[str, Any], *,
                recipient_clearance: str = "OPERATIONAL", task_need: bool = True,
                approved_scope: bool = True, authority: dict[str, bool] | None = None) -> dict[str, Any]:
-        from rhemascript.core.authority import authorise_action, AuthorityError
-        from rhemascript.core.disclosure import disclose, DisclosureError
+        """Fail closed for the legacy generic POST API.
+
+        This interface has no signed, operation-specific authorization contract.
+        Use the method-aware request path only for operations with an explicit
+        verifier-backed contract; generic mutations remain disabled.
+        """
         from rhemascript.registry.system_registry import INTERFACES
 
         if interface_id not in INTERFACES:
             raise ExternalIntegrationError("unknown interface")
         if not self.enabled:
             raise ExternalIntegrationError("external integration is disabled")
-        binding = self.bindings.get(interface_id)
-        if binding is None:
+        if interface_id not in self.bindings:
             raise ExternalIntegrationError("no provider contract configured for interface")
-        if not isinstance(request, dict):
-            raise ExternalIntegrationError("request must be an object")
-        required = ("request_id", "project_id", "operation", "payload", "source_version")
-        if any(k not in request for k in required):
-            raise ExternalIntegrationError("request is missing required contract fields")
-        if any(not isinstance(request[k], str) or not request[k].strip()
-               for k in ("request_id", "project_id", "operation", "source_version")):
-            raise ExternalIntegrationError("request identity fields must be non-empty strings")
-        if not isinstance(request["payload"], dict):
-            raise ExternalIntegrationError("payload must be an object")
-        try:
-            disclose(item_classification=request.get("classification", "OPERATIONAL"),
-                     recipient_clearance=recipient_clearance, task_need=task_need,
-                     approved_scope=approved_scope)
-        except DisclosureError as exc:
-            raise ExternalIntegrationError("disclosure denied") from exc
-
-        operation = request["operation"].upper()
-        path = binding.operations.get(operation)
-        if not isinstance(path, str) or not path:
-            raise ExternalIntegrationError("operation is not mapped by provider contract")
-        relative = urlparse(path)
-        decoded_path = unquote(path)
-        if (relative.scheme or relative.netloc or relative.query or relative.fragment
-                or path.startswith("/") or "\\" in path
-                or any(part in {".", ".."} for part in decoded_path.split("/"))
-                or any(ord(char) < 32 for char in path)):
-            raise ExternalIntegrationError("operation path is not a safe relative provider path")
-
         if self.audit_sink is None:
             raise ExternalIntegrationError("auditable integration requires an audit sink")
-        # This legacy entry point always transmits POST. Require write
-        # authority before cache access as well as before provider transport.
-        try:
-            authorise_action("EXTERNAL_WRITE", authority or {})
-        except AuthorityError as exc:
-            raise ExternalIntegrationError(
-                "generic POST invocation lacks explicit authority: external-write authority is required"
-            ) from exc
-
-        parsed = urlparse(binding.endpoint)
-        url = binding.endpoint.rstrip("/") + "/" + path
-        if urlparse(url).hostname != parsed.hostname:
-            raise ExternalIntegrationError("operation mapping changed provider host")
-        if urlparse(url).hostname != parsed.hostname:
-            raise ExternalIntegrationError("operation mapping changed provider host")
-        canonical = json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        key = sha256((interface_id + ":" + canonical).encode()).hexdigest()
-        # Claim the key before transport. Duplicates wait for this request's
-        # terminal result instead of racing into a second provider POST.
-        with self._lock:
-            cached = self._responses.get(key)
-            if cached is not None:
-                return json.loads(json.dumps(cached))
-            flight = self._inflight.get(key)
-            owner = flight is None
-            if owner:
-                flight = {"event": threading.Event(), "result": None, "error": None}
-                self._inflight[key] = flight
-        if not owner:
-            flight["event"].wait()
-            if flight["result"] is not None:
-                return json.loads(json.dumps(flight["result"]))
-            error = flight["error"]
-            if isinstance(error, ExternalIntegrationError):
-                raise ExternalIntegrationError(str(error)) from None
-            raise ExternalIntegrationError("concurrent duplicate provider invocation failed") from None
-
-        event = {"interface_id": interface_id, "provider": binding.provider_name,
-                 "request_id": request["request_id"], "operation": operation,
-                 "idempotency_key": key, "phase": "REQUESTED"}
-        try:
-            self.audit_sink(dict(event))
-            headers = {"Content-Type": "application/json", "Accept": "application/json",
-                       binding.idempotency_header: key}
-            secret_headers = self.credential_resolver(binding.provider_name)
-            if not isinstance(secret_headers, dict) or any(not isinstance(k, str) or not isinstance(v, str)
-                                                           for k, v in secret_headers.items()):
-                raise ExternalIntegrationError("credential resolver returned invalid headers")
-            headers.update(secret_headers)
-            body = json.dumps({"project_id": request["project_id"], "request_id": request["request_id"],
-                               "operation": operation, "source_version": request["source_version"],
-                               "payload": request["payload"]}, separators=(",", ":")).encode()
-            status, raw = self.transport.send(url, headers, body, binding.timeout_seconds)
-            if len(raw) > 2_000_000:
-                raise ExternalIntegrationError("provider response exceeds size limit")
-            if status < 200 or status >= 300:
-                raise ExternalIntegrationError(f"provider returned HTTP {status}")
-            try:
-                payload = json.loads(raw.decode("utf-8")) if raw else {}
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                raise ExternalIntegrationError("provider returned invalid JSON") from exc
-            if not isinstance(payload, dict):
-                raise ExternalIntegrationError("provider response must be a JSON object")
-            result = {"status": "PROVIDER_CONFIRMED", "provider": binding.provider_name,
-                      "interface_id": interface_id, "request_id": request["request_id"],
-                      "idempotency_key": key, "http_status": status, "payload": payload}
-            event.update({"phase": "COMPLETED", "http_status": status})
-            self.audit_sink(dict(event))
-            with self._lock:
-                self._responses[key] = result
-                flight["result"] = result
-            return json.loads(json.dumps(result))
-        except Exception as exc:
-            flight["error"] = (exc if isinstance(exc, ExternalIntegrationError)
-                               else ExternalIntegrationError("provider invocation failed"))
-            try:
-                event.update({"phase": "FAILED", "error_type": type(exc).__name__})
-                self.audit_sink(dict(event))
-            except Exception:
-                pass
-            if isinstance(exc, ExternalIntegrationError):
-                raise
-            raise ExternalIntegrationError("provider invocation failed") from exc
-        finally:
-            with self._lock:
-                self._inflight.pop(key, None)
-                flight["event"].set()
+        raise ExternalIntegrationError(
+            "legacy generic POST invocation is disabled until signed, identity-bound operation authority is implemented"
+        )
 
     def request(self, interface_id: str, operation: str, url: str, *,
                 method: str, headers: dict[str, str] | None = None,
