@@ -75,3 +75,10 @@ python -m raei record-attempt --database "$HOME/.local/share/rhemascript/raei/le
 ```
 
 The database parent must already exist, be owner-controlled and private (POSIX mode 0700 or stricter); the database is created owner-only (0600). The CLI refuses symlinked paths and does not create a missing registry during read operations. Every read operation also re-hashes all retained evidence files against their recorded SHA-256 and size; missing or altered evidence blocks the read. Pending knowledge is excluded from default search. RAEI self-assessments can earn only PROVISIONAL_PASS or NEEDS_REMEDIATION; they cannot create independent-review or production-approval status.
+
+
+## Versioned curriculum integration addendum — BWSF V1.0
+
+The RAEI curriculum is extended to `RAEI-CURRICULUM-1.1` with eight evidence-required thematic units (`BWSF-01` through `BWSF-08`) covering Solomon's discernment, Bezalel's craftsmanship, wisdom in trials, Proverbs' pursuit of wisdom, testing claims, stewardship, Nehemiah's prayerful planning, and Scripture's teaching/corrective role.
+
+These units follow the existing Bible-only ethics domain and precede RhemaScript capability mastery. The curriculum registry reports 154 units and remains `CURRICULUM_DEFINED_NOT_ASSESSED` until actual evidence-backed assessments are recorded. Historical `RAEI-CURRICULUM-1.0` assessment records remain readable for unchanged unit IDs; new attempts must use the current curriculum version. No existing assessment is upgraded or rewritten.
