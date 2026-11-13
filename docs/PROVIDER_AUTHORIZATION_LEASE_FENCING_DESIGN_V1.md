@@ -157,3 +157,10 @@ The SQLite reference model now treats repeated revocation of the same approval a
 A read-only `get_dispatch_state(dispatch_nonce)` lookup now exposes the local lease state and any recorded indeterminate/terminal outcome, including the associated provider operation ID and reason code. It performs no dispatch, retry, state mutation or lease issuance. Tests exercise inspection after an ambiguous lost-response transition and confirm that inspection does not make the dispatch replayable.
 
 This lookup is only a local SQLite recovery aid. Production must authenticate the caller, enforce least-privilege inspect access, read from the authoritative coordinator, preserve audit evidence and reconcile provider status through an authenticated provider interface. A local record cannot prove that a remote provider accepted or completed a request.
+
+
+## Concurrent revocation-versus-acceptance ordering test — 13 November 2026
+
+An adversarial two-thread test now races approval revocation against dispatch acceptance. The SQLite write lock establishes one serial order: if acceptance commits first, exactly one accepted-dispatch ledger row is retained before the later revocation; if revocation commits first, acceptance rejects and no accepted row is created. In both orders the final approval ledger records revocation, the lease is unusable for subsequent acceptance, and no duplicate acceptance is possible.
+
+This proves only that the local SQLite reference model is internally consistent under this test. It does not make the provider's remote acceptance part of the same transaction and cannot close the distributed race in a production HTTP dispatch path.
