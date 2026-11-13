@@ -1,8 +1,13 @@
 import os
 import tempfile
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
+import json
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from rhemascript.core.approvals import ApprovalVerifier
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport
 from rhemascript.integrations.youtube import (
@@ -150,11 +155,57 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "source_to_final_links": links,
             "gate_records": records,
         }
+        now = datetime.now(timezone.utc)
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        consumed = set()
+
+        def consume_once(entries):
+            identities = [(item.approval_id, item.nonce) for item in entries]
+            if len(set(identities)) != len(identities) or any(item in consumed for item in identities):
+                return False
+            consumed.update(identities)
+            return True
+
+        approval_verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=consume_once,
+            clock=lambda: now,
+        )
+        request_id = "publish-request-001"
+
+        def signed_credential(action, actor, suffix):
+            payload = {
+                "schema": "RhemaScript.ApprovalCredential.v1",
+                "approval_id": f"approval-{suffix}",
+                "issuer": "RhemaScript-Approval-Service",
+                "actor_id": actor,
+                "action": action,
+                "project_id": "RS-TEST-001",
+                "project_version": "1.0",
+                "request_id": request_id,
+                "issued_at": now.isoformat(),
+                "expires_at": (now + timedelta(minutes=5)).isoformat(),
+                "nonce": f"nonce-{suffix}",
+                "key_id": "key-2026-01",
+            }
+            payload["signature"] = private_key.sign(
+                json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False, allow_nan=False).encode()
+            ).hex()
+            return payload
+
+        publisher_actor = "director-001" if authorised else "director-000"
         return {
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
-            "human_director_acceptance": True,
-            "publishing_authorisation": authorised,
+            "approval_verifier": approval_verifier,
+            "approval_credentials": (
+                signed_credential("FINAL_ACCEPTANCE", "director-001", "final-001"),
+                signed_credential("PUBLISH", publisher_actor, "publish-001"),
+            ),
+            "approval_request_id": request_id,
         }
 
     def add_verified_video_evidence(self, context, video_id="video-123"):
@@ -411,7 +462,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "publishing_authorisation"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "distinct authenticated actors"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
