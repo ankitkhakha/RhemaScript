@@ -415,7 +415,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         temporary, registry = self.make_registry(authority, "upload-2", session_url=session_url)
         self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
-            (binding,), transport=transport, audit_sink=lambda event: None,
+            (binding,), transport=transport, audit_sink=events.append,
             publish_session_registry=registry, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
@@ -431,6 +431,13 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(body, b"")
         self.assertEqual(response_headers["Range"], "bytes=0-4")
         self.assertEqual(transport.calls[0][1], "PUT")
+        self.assertEqual(
+            events[-1]["session_url_sha256"],
+            hashlib.sha256(session_url.encode()).hexdigest(),
+        )
+        self.assertEqual(events[-1]["acknowledged_offset"], 5)
+        self.assertEqual(events[-1]["publish_session_state"], "ACTIVE")
+        self.assertNotIn("upload_id=session-opaque", repr(events))
 
     def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
         class AmbiguousTransport:
