@@ -213,6 +213,7 @@ class ReadinessRunRegistry:
         primary = payload.get("observation_evidence")
         if (not isinstance(finding_id, str) or not finding_id.strip()
                 or not isinstance(version, str) or not version.strip()
+                or event_id != f"FINDING:{finding_id}@{version}"
                 or payload.get("project_id") != project_id
                 or payload.get("identity_authentication_status") != "UNVERIFIED"
                 or not isinstance(primary, dict)
