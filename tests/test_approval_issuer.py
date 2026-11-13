@@ -169,6 +169,20 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         self.assertEqual(ledger.entries, [])
         self.assertEqual(audit.events[-1]["event"], "approval_denied")
 
+        unassigned_directory = DirectoryIdentity(
+            subject_id=identity.subject_id, actor_id="directory-actor-0002",
+            active=True, roles=frozenset({"director"}),
+            project_ids=frozenset({"OTHER-PROJECT"}),
+        )
+        unassigned_issuer, unassigned_signer, unassigned_ledger, unassigned_audit, _ = self.make_trusted_issuer(
+            identity=identity, directory=unassigned_directory,
+        )
+        with self.assertRaisesRegex(ApprovalIssuerError, "not assigned"):
+            unassigned_issuer.request_approval(scope)
+        self.assertEqual(unassigned_signer.calls, [])
+        self.assertEqual(unassigned_ledger.entries, [])
+        self.assertEqual(unassigned_audit.events[-1]["event"], "approval_denied")
+
     def test_synthetic_issuer_rejects_stale_authentication_before_signing(self):
         now = datetime(2026, 11, 13, 10, 0, tzinfo=timezone.utc)
         identity = AuthenticatedIdentity(
