@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from dataclasses import replace
@@ -201,6 +203,34 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             ("director-0001", "FINAL_ACCEPTANCE", "RS-PWW-001", "3.2", "publish-request-0001"),
             ("publisher-0001", "PUBLISH", "RS-PWW-001", "3.2", "publish-request-0001"),
         ])
+
+    def test_expiry_is_rechecked_after_waiting_for_consumption_lock(self):
+        # Hold SQLite's writer lock while a credential approaches expiry.
+        # Consumption must use the time after BEGIN IMMEDIATE succeeds, not
+        # the timestamp captured before waiting for the lock.
+        lock = sqlite3.connect(self.path, isolation_level=None)
+        lock.execute("BEGIN IMMEDIATE")
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=0.3)
+        entry = self.record(
+            "approval-lock-expiry-0001", "nonce-lock-expiry-0001", expires_at
+        )
+        started = threading.Event()
+        outcome = []
+
+        def consume():
+            started.set()
+            outcome.append(self.store._consume_many_once((entry,)))
+
+        worker = threading.Thread(target=consume)
+        worker.start()
+        self.assertTrue(started.wait(timeout=2))
+        time.sleep(0.45)
+        lock.execute("ROLLBACK")
+        lock.close()
+        worker.join(timeout=3)
+        self.assertFalse(worker.is_alive(), "consumption worker did not finish")
+        self.assertEqual(outcome, [False])
+        self.assertFalse(self.store.is_consumed(entry.approval_id, entry.nonce))
 
     def test_duplicate_existing_entry_rejects_entire_batch(self):
         first = self.record("approval-existing-0001", "nonce-existing-0001", self.future)
