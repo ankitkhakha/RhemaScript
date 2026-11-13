@@ -93,6 +93,18 @@ The readiness registry now holds one explicit read transaction while it reads re
 Adversarial interleaving tests arrange a real second-connection commit after the first table has been read. They assert that the in-flight verification/checkpoint snapshot remains internally consistent and that the concurrent commit is visible to a subsequent read. This does not replace independent HMAC checkpoint custody, and it does not make local SQLite storage tamper-proof.
 
 
+## Generation-bound archives and independent freshness-anchor contract
+
+A generation-bound archive uses `RhemaScript.ApprovalCheckpointArchive.v2`. Its monotonically increasing integer generation is included inside the HMAC-authenticated envelope alongside the snapshot digest. V1 archives remain verifiable for historical purposes but have no generation and cannot be registered as a current production recovery point.
+
+The candidate now defines `rhemascript/core/checkpoint_freshness.py`:
+- `MonotonicCheckpointAnchor` requires an independently administered adapter with authenticated, linearizable `read_latest` and atomic compare-and-advance operations;
+- `advance_checkpoint_anchor` verifies the archive bytes and HMAC itself before attempting an exact next-generation append, then reads the record back and checks generation and digest;
+- `verify_checkpoint_against_anchor` cryptographically verifies the archive and requires its generation and digest to match the independently retained latest record;
+- generation conflicts, missing anchors, stale archives, digest mismatches and archive-authentication failures fail closed.
+
+Synthetic tests exercise exact-generation registration, read-back, stale-archive rejection, compare-and-advance conflict, wrong archive key and skipped-generation rejection. The fake anchor is test-only. No network service, hardware monotonic counter, separate account, external append-only log or independent administrator is implemented. The protocol contract does not make a local adapter independent by itself.
+
 ## Anti-rollback and freshness boundary
 
 The archive's authenticated `created_at` value is a signed timestamp, not a monotonic sequence or an independently trusted freshness proof. `verify_checkpoint_archive` proves that the supplied archive is internally authentic; with `current_store`, it reports whether that archive matches the current database snapshot. It cannot determine whether a newer valid archive exists elsewhere, and it cannot detect a coordinated rollback in which an older database snapshot and its matching older archive are both replayed.
