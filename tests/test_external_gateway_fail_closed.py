@@ -170,6 +170,60 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_unclassified_mutating_operation_requires_external_write_authority(self):
+        transport = NeverTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"CUSTOM_MUTATION": {
+                    "method": "POST", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/custom/resource",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(
+            ExternalIntegrationError, "consequential operation lacks explicit authority",
+        ):
+            gateway.request(
+                "IF-18", "CUSTOM_MUTATION",
+                "https://www.googleapis.com/custom/resource",
+                method="POST", body=b"mutation", request_id="custom-write-001",
+                project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_unclassified_mutating_operation_can_proceed_only_with_explicit_external_write_authority(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, body))
+                return 200, b"{}", {}
+
+        transport = MethodTransport()
+        gateway = ExternalIntegrationGateway(
+            (ProviderBinding(
+                interface_id="IF-18", provider_name="youtube",
+                endpoint="https://www.googleapis.com",
+                allowed_hosts=("www.googleapis.com",),
+                operations={"CUSTOM_MUTATION": {
+                    "method": "POST", "hosts": ("www.googleapis.com",),
+                    "path_prefix": "/custom/resource",
+                }},
+            ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        gateway.request(
+            "IF-18", "CUSTOM_MUTATION",
+            "https://www.googleapis.com/custom/resource",
+            method="POST", body=b"mutation", request_id="custom-write-002",
+            project_id="RS-1", source_version="1.0",
+            authority={"external_action_authorisation": True},
+        )
+        self.assertEqual(len(transport.calls), 1)
+        self.assertEqual(transport.calls[0][1], "POST")
+
     def test_method_aware_request_rejects_path_prefix_sibling(self):
         class MethodTransport:
             def __init__(self):
