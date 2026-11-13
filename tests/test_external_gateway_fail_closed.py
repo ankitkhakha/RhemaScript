@@ -296,7 +296,10 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
 
     def test_oauth_token_exception_rejects_query_and_fragment(self):
-        for suffix in ("?redirect_uri=https://attacker.example", "#fragment"):
+        for suffix, expected_error in (
+            ("?redirect_uri=https://attacker.example", "exact Google token endpoint"),
+            ("#fragment", "outside the provider operation allowlist"),
+        ):
             with self.subTest(suffix=suffix):
                 transport = NeverTransport()
                 gateway = ExternalIntegrationGateway(
@@ -311,7 +314,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     ),), transport=transport, audit_sink=lambda event: None, enabled=True,
                 )
                 with self.assertRaisesRegex(
-                    ExternalIntegrationError, "exact Google token endpoint",
+                    ExternalIntegrationError, expected_error,
                 ):
                     gateway.request(
                         "IF-18", "OAUTH_TOKEN",
