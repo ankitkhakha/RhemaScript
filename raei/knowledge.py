@@ -162,6 +162,19 @@ def list_knowledge(registry: ReadinessRunRegistry) -> list[dict[str, Any]]:
                 or payload.get("evidence_version") != evidence_item.get("version")):
             raise RAEIKnowledgeError("stored knowledge status or evidence provenance was altered")
         results.append(dict(payload))
+    # Review events are a separate, signed governance stream. The immutable
+    # intake record remains PENDING_REVIEW; this projection never rewrites it.
+    from raei.governance import list_governed_reviews
+    reviews = list_governed_reviews(registry, event_type="KNOWLEDGE_REVIEWED")
+    latest_by_version = {
+        (item.get("subject_id"), item.get("payload", {}).get("knowledge_version")):
+            item.get("payload", {}).get("decision")
+        for item in reviews
+    }
+    for item in results:
+        decision = latest_by_version.get((item["knowledge_id"], item["version"]))
+        item["review_status"] = decision or "PENDING_REVIEW"
+        item["status"] = decision or "PENDING_REVIEW"
     return results
 
 
@@ -208,7 +221,7 @@ def search_knowledge(
         return []
     matches = []
     for item in list_knowledge(registry):
-        if item["status"] == "PENDING_REVIEW" and not include_pending:
+        if item["status"] != "APPROVED" and not include_pending:
             continue
         haystack = " ".join(
             [item["title"], item["summary"], item["domain"], item["source_type"],
