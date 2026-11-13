@@ -49,7 +49,9 @@ def _open_parent(root: str | os.PathLike[str], relative_path: str) -> tuple[int,
     if (rel.is_absolute() or not rel.parts
             or rel.as_posix() != relative_path
             or any(part in ("", ".", "..") for part in rel.parts)):
-        raise YouTubeAnalyticsArtifactStoreError("artifact path must stay beneath evidence root")
+        raise YouTubeAnalyticsArtifactStoreError(
+            "artifact path must be a canonical relative path beneath evidence root"
+        )
     root_path = Path(root).expanduser()
     try:
         root_info = root_path.lstat()
