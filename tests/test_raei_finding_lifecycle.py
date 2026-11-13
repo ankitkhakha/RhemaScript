@@ -101,7 +101,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "action": action,
             "project_id": self.project_id,
             "project_version": self.project_version,
-            "request_id": f"request-{action.lower()}-{self.finding_id}",
+            "request_id": f"request-{action}-{self.finding_id}",
             "issued_at": self.now.isoformat(),
             "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
             "nonce": f"nonce-{action.lower()}-{subject_id}",
