@@ -13,6 +13,7 @@ from rhemascript.evidence.artifact_verification import verify_artifact
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 from .curriculum import registry_summary
 from .knowledge import RAEIKnowledgeError, record_knowledge, search_knowledge
+from .findings import RAEIFindingError, capture_finding, list_findings
 from .training import (
     RAEITrainingError,
     build_training_brief,
@@ -98,6 +99,16 @@ def _parser() -> argparse.ArgumentParser:
     search.add_argument("--include-pending", action="store_true")
     search.add_argument("--evidence-root", required=True)
 
+    capture = sub.add_parser("capture-finding", help="capture an immutable, evidence-bound field observation")
+    capture.add_argument("--database", required=True)
+    capture.add_argument("--evidence-root", required=True)
+    capture.add_argument("--artifact-path", required=True, help="finding JSON relative to evidence root")
+
+    finding_list = sub.add_parser("finding-list", help="list captured field findings")
+    finding_list.add_argument("--database", required=True)
+    finding_list.add_argument("--evidence-root", required=True)
+    finding_list.add_argument("--project-id")
+
     for name, help_text in (
         ("record-attempt", "record an evidence-bound RAEI self-assessment"),
         ("record-knowledge", "record a knowledge artifact as pending human review"),
@@ -153,7 +164,22 @@ def main(argv: list[str] | None = None) -> int:
             print(_json(search_knowledge(registry, args.query, include_pending=args.include_pending)))
             return 0
 
+        if args.command == "finding-list":
+            print(_json(list_findings(registry, project_id=args.project_id)))
+            return 0
+
         root = Path(args.evidence_root).expanduser()
+        if args.command == "capture-finding":
+            evidence = verify_artifact(
+                root, args.artifact_path,
+                evidence_id=_read_identity(root, args.artifact_path, "evidence_id"),
+                version=_read_identity(root, args.artifact_path, "evidence_version"),
+            )
+            artifact_bytes = (root / args.artifact_path).read_bytes()
+            result = capture_finding(registry, root, artifact_bytes, evidence)
+            print(_json(result))
+            return 0
+
         artifact = verify_artifact(
             root, args.artifact_path,
             evidence_id=_read_identity(root, args.artifact_path, "evidence_id"),
@@ -168,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             raise RAEICLIError("unsupported command")
         print(_json(result))
         return 0
-    except (RAEICLIError, RAEITrainingError, RAEIKnowledgeError, OSError, ValueError, json.JSONDecodeError) as exc:
+    except (RAEICLIError, RAEITrainingError, RAEIKnowledgeError, RAEIFindingError, OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"RAEI: {exc}", file=sys.stderr)
         return 2
 
