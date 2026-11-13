@@ -81,6 +81,7 @@ class VerifiedApproval:
     credential_schema: str | None = None
     signature: str | None = field(default=None, repr=False, compare=False)
     _verification_token: object | None = field(default=None, repr=False, compare=False)
+    _verifier: object | None = field(default=None, repr=False, compare=False)
 
 
 def is_verified_approval(value: object) -> bool:
@@ -152,6 +153,16 @@ class ApprovalVerifier:
         self._key_registry_environment = key_registry_environment
         self._key_registry_max_age = key_registry_max_age
         self._consume_many_once = consume_many_once
+        # When the atomic-consumption callback is a bound durable store method,
+        # retain its read-only consumption/revocation interface for write-boundary
+        # checks. Plain callbacks remain useful only for isolated synthetic tests.
+        consumption_store = getattr(consume_many_once, "__self__", None)
+        self._consumption_state = (
+            consumption_store
+            if callable(getattr(consumption_store, "is_consumed", None))
+            and callable(getattr(consumption_store, "is_revoked", None))
+            else None
+        )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_lifetime = max_lifetime
         self._clock_skew = clock_skew
@@ -378,6 +389,7 @@ class ApprovalVerifier:
             credential_schema=schema,
             signature=signature,
             _verification_token=_VERIFIED_APPROVAL_TOKEN,
+            _verifier=self,
         )
         with _VERIFIED_APPROVAL_LOCK:
             _VERIFIED_APPROVALS[id(verified)] = verified
@@ -546,3 +558,61 @@ class ApprovalVerifier:
             for item in verified:
                 _CONSUMED_APPROVALS[id(item)] = item
         return tuple(verified)
+
+    def revalidate_consumed_approval(self, approval: VerifiedApproval) -> bool:
+        """Recheck expiry, identity freshness and current signing-key state at the write boundary."""
+        if (not is_consumed_verified_approval(approval)
+                or approval._verifier is not self):
+            raise ApprovalError("approval was not consumed by this verifier")
+        now = self._clock()
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ApprovalError("verifier clock must return a timezone-aware datetime")
+        now = now.astimezone(timezone.utc)
+        if approval.expires_at <= now:
+            raise ApprovalError("approval expired before provider transport")
+        if self._consumption_state is not None:
+            try:
+                still_consumed = self._consumption_state.is_consumed(
+                    approval.approval_id, approval.nonce,
+                )
+                revoked = self._consumption_state.is_revoked(
+                    approval.approval_id, approval.nonce,
+                )
+            except Exception:
+                raise ApprovalError(
+                    "approval consumption/revocation state is unavailable before provider transport"
+                ) from None
+            if still_consumed is not True or revoked is not False:
+                raise ApprovalError(
+                    "approval is no longer consumed or has been revoked before provider transport"
+                )
+        public_key, record = self._resolve_verification_key(approval.key_id)
+        fingerprint = hashlib.sha256(public_key).hexdigest()
+        if not hmac.compare_digest(fingerprint, approval.verification_key_fingerprint or ""):
+            raise ApprovalError("approval signing key changed before provider transport")
+        if record is not None and (
+            record.status != "ACTIVE"
+            or (record.revoked_at is not None and now >= record.revoked_at.astimezone(timezone.utc))
+            or now < record.valid_from.astimezone(timezone.utc)
+            or (record.valid_until is not None and now >= record.valid_until.astimezone(timezone.utc))
+        ):
+            raise ApprovalError("approval signing key is no longer active before provider transport")
+        if approval.authenticated_at is not None:
+            if (approval.identity_max_authentication_age_seconds is None
+                    or approval.identity_clock_skew_seconds is None):
+                raise ApprovalError("approval identity assurance metadata is incomplete")
+            age = (now - approval.authenticated_at).total_seconds()
+            if (age < -approval.identity_clock_skew_seconds
+                    or age > approval.identity_max_authentication_age_seconds):
+                raise ApprovalError("approval human authentication is stale before provider transport")
+        return True
+
+
+def revalidate_consumed_verified_approval(approval: object) -> bool:
+    """Revalidate a consumed approval using the exact verifier that issued it."""
+    if not is_consumed_verified_approval(approval):
+        raise ApprovalError("provider write requires a consumed verifier-issued approval")
+    verifier = approval._verifier
+    if not isinstance(verifier, ApprovalVerifier):
+        raise ApprovalError("approval verifier is no longer available for write-boundary revalidation")
+    return verifier.revalidate_consumed_approval(approval)

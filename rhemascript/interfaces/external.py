@@ -377,9 +377,13 @@ class ExternalIntegrationGateway:
         authority_operation = "PUBLISH" if operation.upper() in {
             "UPLOAD_SESSION", "UPLOAD_CHUNK", "THUMBNAIL_WRITE"
         } else operation.upper()
+        write_approvals = None
         if authority_operation == "PUBLISH":
             from datetime import datetime, timezone
-            from rhemascript.core.approvals import is_consumed_verified_approval
+            from rhemascript.core.approvals import (
+                ApprovalError, is_consumed_verified_approval,
+                revalidate_consumed_verified_approval,
+            )
             approvals = (authority or {}).get("verified_approvals")
             now = datetime.now(timezone.utc)
             if (not isinstance(approvals, tuple) or len(approvals) != 2
@@ -436,6 +440,7 @@ class ExternalIntegrationGateway:
                     or isinstance(first.artifact_size_bytes, bool)
                     or first.artifact_size_bytes <= 0):
                 raise ExternalIntegrationError("provider write approval scope, final-artifact binding or actor separation is invalid")
+            write_approvals = approvals
         elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
                 authorise_action(authority_operation, authority or {})
@@ -466,6 +471,14 @@ class ExternalIntegrationGateway:
             if any(not isinstance(k, str) or not isinstance(v, str) for k, v in request_headers.items()):
                 raise ExternalIntegrationError("request headers are invalid")
             request_headers.update(secret_headers)
+            if write_approvals is not None:
+                try:
+                    for approval in write_approvals:
+                        revalidate_consumed_verified_approval(approval)
+                except ApprovalError:
+                    raise ExternalIntegrationError(
+                        "provider write approval expired or signing key/identity assurance changed before transport"
+                    ) from None
             sender = getattr(self.transport, "send_request", None)
             if sender is None:
                 raise ExternalIntegrationError("transport does not support method-aware requests")
