@@ -116,13 +116,16 @@ class SQLiteApprovalConsumptionStore:
                     artifact_id TEXT,
                     artifact_version TEXT,
                     artifact_sha256 TEXT,
-                    artifact_size_bytes INTEGER
+                    artifact_size_bytes INTEGER,
+                    credential_schema TEXT,
+                    signature TEXT
                 )
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(consumed_approvals)")}
             for name, sql_type in (
                 ("artifact_id", "TEXT"), ("artifact_version", "TEXT"),
                 ("artifact_sha256", "TEXT"), ("artifact_size_bytes", "INTEGER"),
+                ("credential_schema", "TEXT"), ("signature", "TEXT"),
             ):
                 if name not in columns:
                     db.execute(f"ALTER TABLE consumed_approvals ADD COLUMN {name} {sql_type}")
@@ -183,12 +186,23 @@ class SQLiteApprovalConsumptionStore:
             if any(value is not None for value in artifact_values):
                 if (not all(isinstance(value, str) and value.strip() for value in artifact_values[:3])
                         or not isinstance(artifact_values[3], int)
-                        or isinstance(artifact_values[3], bool) or artifact_values[3] < 0):
+                        or isinstance(artifact_values[3], bool) or artifact_values[3] <= 0):
+                    return False
+            credential_schema, signature = item.credential_schema, item.signature
+            if (credential_schema is None) != (signature is None):
+                return False
+            if credential_schema is not None:
+                if (credential_schema not in {
+                    "RhemaScript.ApprovalCredential.v1",
+                    "RhemaScript.ApprovalCredential.v2",
+                } or not isinstance(signature, str)
+                        or len(signature) != 128
+                        or any(ch not in "0123456789abcdef" for ch in signature)):
                     return False
             normalized.append((
                 item.approval_id, item.nonce, item.issuer, item.actor_id, item.action,
                 item.project_id, item.project_version, item.request_id, issued_at,
-                expires_at, item.key_id, *artifact_values,
+                expires_at, item.key_id, *artifact_values, credential_schema, signature,
             ))
         if (len({item[0] for item in normalized}) != len(normalized)
                 or len({item[1] for item in normalized}) != len(normalized)):
@@ -215,8 +229,8 @@ class SQLiteApprovalConsumptionStore:
                     approval_id, nonce, issuer, actor_id, action, project_id,
                     project_version, request_id, issued_at, expires_at, key_id,
                     consumed_at, artifact_id, artifact_version, artifact_sha256,
-                    artifact_size_bytes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    artifact_size_bytes, credential_schema, signature
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [( *entry[:11], consumed_at, *entry[11:] ) for entry in normalized],
             )
             db.execute("COMMIT")
@@ -260,6 +274,26 @@ class SQLiteApprovalConsumptionStore:
         finally:
             db.close()
 
+
+    def list_consumed_approval_records(self) -> list[dict[str, object]]:
+        """Return detached persisted credential records for offline signature audit."""
+        columns = (
+            "approval_id", "nonce", "issuer", "actor_id", "action", "project_id",
+            "project_version", "request_id", "issued_at", "expires_at", "key_id",
+            "consumed_at", "artifact_id", "artifact_version", "artifact_sha256",
+            "artifact_size_bytes", "credential_schema", "signature",
+        )
+        db = self._connect()
+        try:
+            rows = db.execute(
+                "SELECT " + ", ".join(columns) + " FROM consumed_approvals ORDER BY consumed_at, approval_id"
+            ).fetchall()
+            return [dict(zip(columns, row)) for row in rows]
+        except sqlite3.Error:
+            raise ApprovalStoreError("persisted approval records could not be read") from None
+        finally:
+            db.close()
+
     def is_consumed(self, approval_id: str, nonce: str) -> bool:
         db = self._connect()
         try:
@@ -291,7 +325,7 @@ class SQLiteApprovalConsumptionStore:
                 """SELECT approval_id, nonce, issuer, actor_id, action, project_id,
                           project_version, request_id, issued_at, expires_at, key_id,
                           consumed_at, artifact_id, artifact_version, artifact_sha256,
-                          artifact_size_bytes
+                          artifact_size_bytes, credential_schema, signature
                    FROM consumed_approvals ORDER BY approval_id"""
             ).fetchall()
             revoked = db.execute(
