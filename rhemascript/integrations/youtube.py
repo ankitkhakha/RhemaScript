@@ -50,19 +50,21 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 
-def _authorise_project_publish(*, evidence_pack: dict[str, Any],
-                               final_film_evidence_ref: str,
-                               human_director_acceptance: bool,
-                               publishing_authorisation: bool) -> tuple[str, str]:
-    """Validate the canonical evidence pack before permitting any YouTube write."""
+def _authorise_project_publish(
+    *, evidence_pack: dict[str, Any], final_film_evidence_ref: str,
+    approval_verifier: Any, approval_credentials: tuple[object, ...],
+    approval_request_id: str,
+) -> tuple[str, str, tuple[Any, ...], str]:
+    """Validate all six gates and consume two distinct signed approvals."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
-    from rhemascript.core.authority import (
-        authorise_action, final_acceptance_allowed, AuthorityError,
-    )
-    from rhemascript.core.gates import (
-        GateDecision, GateError, GateRecord, ProjectGateState,
-    )
+    from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
+    from rhemascript.core.gates import GateDecision, GateError, GateRecord, ProjectGateState
+
     try:
+        if not isinstance(approval_verifier, ApprovalVerifier):
+            raise ApprovalError("trusted ApprovalVerifier is required")
+        if not isinstance(approval_request_id, str) or not approval_request_id.strip():
+            raise ApprovalError("exact approval_request_id is required")
         validated = validate_evidence_pack(evidence_pack)
         films = [
             item for item in validated.artifacts
@@ -74,9 +76,7 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             )
         ]
         if len(films) != 1:
-            raise EvidencePackError(
-                "final film must resolve to exactly one approved EDITED_FILM artifact"
-            )
+            raise EvidencePackError("final film must resolve to exactly one approved EDITED_FILM artifact")
         state = ProjectGateState(validated.project_id)
         for raw in validated.gate_records:
             if not isinstance(raw, dict):
@@ -92,19 +92,16 @@ def _authorise_project_publish(*, evidence_pack: dict[str, Any],
             raise GateError("all six project gates must be approved")
         if state.records[-1].evidence_ref != final_film_evidence_ref:
             raise GateError("final gate evidence reference does not match the approved final film")
-        if not final_acceptance_allowed(
-            human_director_acceptance=human_director_acceptance
-        ):
-            raise AuthorityError("final human acceptance is absent")
-        authorise_action("PUBLISH", {
-            "publishing_authorisation": publishing_authorisation
-        })
-        return validated.project_id, validated.project_version
-    except (EvidencePackError, AuthorityError, GateError, ValueError, TypeError) as exc:
-        raise YouTubeIntegrationError(
-            f"operation denied by RhemaScript governance: {exc}"
-        ) from None
-
+        expected = tuple({
+            "action": action, "project_id": validated.project_id,
+            "project_version": validated.project_version, "request_id": approval_request_id,
+        } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
+        approvals = approval_verifier.verify_many_and_consume(
+            approval_credentials, expected, require_distinct_actors=True,
+        )
+        return validated.project_id, validated.project_version, approvals, approval_request_id
+    except (EvidencePackError, ApprovalError, GateError, ValueError, TypeError) as exc:
+        raise YouTubeIntegrationError(f"operation denied by RhemaScript governance: {exc}") from None
 
 def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
     """Require a strict RFC3339 timestamp with offset and a future instant."""
@@ -251,6 +248,7 @@ class YouTubeClient:
         self._access_token: str | None = None
         self._last_upload_context: dict[str, str] | None = None
         self._verified_upload_context: dict[str, str] | None = None
+        self._gateway_request_id: str | None = None
 
     def _request(self, url: str, *, method: str = "GET", body: bytes | None = None,
                  headers: dict[str, str] | None = None) -> tuple[int, bytes, dict[str, str]]:
@@ -282,7 +280,8 @@ class YouTubeClient:
                     raise YouTubeIntegrationError("request has no approved IF-18 operation")
                 status, raw, response_headers = self._gateway.request(
                     YOUTUBE_INTERFACE_ID, operation, url, method=method,
-                    headers=headers or {}, body=body, request_id=str(uuid.uuid4()),
+                    headers=headers or {}, body=body,
+                    request_id=self._gateway_request_id or str(uuid.uuid4()),
                     project_id=self._gateway_project_id, source_version=self._gateway_source_version,
                     authority=self._gateway_authority,
                 )
@@ -432,22 +431,25 @@ class YouTubeClient:
     def upload_video(self, file_path: str, *, title: str, description: str,
                      evidence_pack: dict[str, Any],
                      final_film_evidence_ref: str,
-                     human_director_acceptance: bool,
+                     approval_verifier: Any,
+                     approval_credentials: tuple[object, ...],
+                     approval_request_id: str,
                      tags: list[str] | None = None, category_id: str = "22",
                      privacy_status: str = "private", publish_at: str | None = None,
                      made_for_kids: bool = False,
-                     publishing_authorisation: bool = False) -> dict[str, Any]:
+                     ) -> dict[str, Any]:
         """Resumable upload behind all six project gates and separate authorities.
 
         The caller must supply ordered, approved gate records for this project,
-        final-film evidence matching the last gate, final human acceptance, and
-        separate publishing authorisation. The safe default is private.
+        final-film evidence matching the last gate and two scoped signed approvals.
+        The safe default is private.
         """
-        project_id, project_version = _authorise_project_publish(
+        project_id, project_version, verified_approvals, request_id = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
-            human_director_acceptance=human_director_acceptance,
-            publishing_authorisation=publishing_authorisation,
+            approval_verifier=approval_verifier,
+            approval_credentials=approval_credentials,
+            approval_request_id=approval_request_id,
         )
         # Resolve the exact final-film association before any provider request.
         # Do not upload first and discover an invalid Evidence Pack afterwards.
@@ -469,7 +471,8 @@ class YouTubeClient:
             )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
+        self._gateway_authority = {"verified_approvals": verified_approvals}
+        self._gateway_request_id = request_id
         path = Path(file_path)
         if not path.is_file() or path.stat().st_size == 0:
             raise YouTubeIntegrationError("video file is missing or empty")
@@ -580,13 +583,15 @@ class YouTubeClient:
     def set_thumbnail(self, video_id: str, image_path: str, *,
                       evidence_pack: dict[str, Any],
                       final_film_evidence_ref: str,
-                      human_director_acceptance: bool,
-                      publishing_authorisation: bool = False) -> dict[str, Any]:
-        project_id, project_version = _authorise_project_publish(
+                      approval_verifier: Any,
+                      approval_credentials: tuple[object, ...],
+                      approval_request_id: str) -> dict[str, Any]:
+        project_id, project_version, verified_approvals, request_id = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
-            human_director_acceptance=human_director_acceptance,
-            publishing_authorisation=publishing_authorisation,
+            approval_verifier=approval_verifier,
+            approval_credentials=approval_credentials,
+            approval_request_id=approval_request_id,
         )
         evidence_project_id, evidence_project_version, evidence_film_artifact_id = _authorise_project_video(
             evidence_pack=evidence_pack,
@@ -605,7 +610,8 @@ class YouTubeClient:
             )
         self._gateway_project_id = project_id
         self._gateway_source_version = project_version
-        self._gateway_authority = {"publishing_authorisation": publishing_authorisation}
+        self._gateway_authority = {"verified_approvals": verified_approvals}
+        self._gateway_request_id = request_id
         path = Path(image_path)
         if not path.is_file():
             raise YouTubeIntegrationError("thumbnail file does not exist")
