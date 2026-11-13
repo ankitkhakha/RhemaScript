@@ -21,6 +21,12 @@ The result reports current and previous metric values, their aggregation method,
 
 The comparison also records period lengths and returned-row counts. It does not claim that every expected day or dimension bucket was returned. In particular, an absent recent daily row is not evidence of zero activity.
 
+## Daily coverage diagnostic
+
+For reports that include the `day` dimension, the coverage diagnostic lists expected dates, distinct dates represented by returned rows, and leading, internal, and trailing missing-date groups. For reports with additional dimensions (for example country), it counts distinct day labels rather than treating each dimension row as a separate day.
+
+The diagnostic is bound to the exact source snapshot and can be recomputed for verification. Missing dates remain unknown/not returned; the diagnostic does not infer reporting delay, zero activity, or the reason for missing data.
+
 ## Interpretation boundaries
 
 - These are observed totals over rows returned by the API, not a causal explanation.
@@ -31,7 +37,7 @@ The comparison also records period lengths and returned-row counts. It does not 
 
 ## Next governed stages
 
-1. Add completeness diagnostics for daily dimensions and known reporting delays.
+1. Add provider-grounded reporting-delay rules only after confirming the official API contract and observed account behaviour.
 2. Add explicitly defined rate and weighted-average calculations with metric-specific contracts.
 3. Store findings separately from raw snapshots and comparisons.
 4. Generate recommendations only as labelled hypotheses, then record implementation decisions and measured outcomes independently.
