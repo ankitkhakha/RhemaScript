@@ -190,14 +190,14 @@ class ReadinessRunRegistry:
     ) -> bool:
         """Append a finding capture bound to one consumed, verifier-issued V3 submitter approval."""
         from datetime import datetime, timezone
-        from rhemascript.core.approvals import is_verified_approval
+        from rhemascript.core.approvals import is_consumed_verified_approval
 
         if (not isinstance(event_id, str) or not event_id.strip() or event_id != event_id.strip()
                 or not isinstance(project_id, str) or not project_id.strip()
                 or not isinstance(project_version, str) or not project_version.strip()
                 or not isinstance(request_id, str) or not request_id.strip()):
             raise ValueError("authenticated finding capture scope must be non-empty and trimmed")
-        if not is_verified_approval(approval):
+        if not is_consumed_verified_approval(approval):
             raise ValueError("authenticated finding capture requires a verifier-issued approval")
         if (approval.credential_schema != "RhemaScript.ApprovalCredential.v3"
                 or approval.action != "FINDING_SUBMIT"
@@ -285,7 +285,7 @@ class ReadinessRunRegistry:
         the in-process verification capability, exact scope, expiry and distinct actors.
         """
         from datetime import datetime, timezone
-        from rhemascript.core.approvals import is_verified_approval
+        from rhemascript.core.approvals import is_consumed_verified_approval
 
         if event_type not in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("unsupported governed event type")
@@ -307,7 +307,7 @@ class ReadinessRunRegistry:
         )
         if expected_actions != required_actions:
             raise ValueError("governed event approval actions do not match the event policy")
-        if any(not is_verified_approval(item) for item in approvals):
+        if any(not is_consumed_verified_approval(item) for item in approvals):
             raise ValueError("governed events require verifier-issued, consumed approvals")
         actors = [item.actor_id for item in approvals]
         if (len(set(actors)) != 2
