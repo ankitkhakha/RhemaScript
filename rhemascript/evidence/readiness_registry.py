@@ -193,6 +193,36 @@ class ReadinessRunRegistry:
                     )
             db.commit()
 
+    @staticmethod
+    def _assert_approval_ids_unused(
+        db: sqlite3.Connection, approval_ids: tuple[str, ...],
+    ) -> None:
+        """Enforce durable one-event use across every authenticated activity event."""
+        requested = {value for value in approval_ids if isinstance(value, str) and value}
+        if not requested:
+            raise ReadinessReplayError("authenticated event requires non-empty approval IDs")
+        rows = db.execute("SELECT payload_json FROM activity_events").fetchall()
+        for (raw,) in rows:
+            payload = json.loads(raw)
+            authorizations = (
+                payload.get("authorization", {}),
+                payload.get("submitter_authorization", {}),
+            )
+            recorded = set()
+            for authorization in authorizations:
+                if not isinstance(authorization, dict):
+                    continue
+                single = authorization.get("approval_id")
+                if isinstance(single, str) and single:
+                    recorded.add(single)
+                multiple = authorization.get("approval_ids", [])
+                if isinstance(multiple, list):
+                    recorded.update(value for value in multiple if isinstance(value, str) and value)
+            if requested.intersection(recorded):
+                raise ReadinessReplayError(
+                    "approval ID has already authorized another authenticated event"
+                )
+
     def append_activity_event(
         self, event_id: str, event_type: str, payload: dict[str, Any],
         *, project_id: str | None = None, subject_id: str | None = None,
@@ -333,6 +363,7 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("event_id already exists with different authenticated finding data")
                 db.commit()
                 return False
+            self._assert_approval_ids_unused(db, (approval.approval_id,))
             supersedes = normalised.get("supersedes", [])
             if supersedes:
                 if (not isinstance(supersedes, list) or len(supersedes) != 1
@@ -563,6 +594,7 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("finding lifecycle event ID was replayed with different data")
                 db.commit()
                 return False
+            self._assert_approval_ids_unused(db, (approval.approval_id,))
             captured_rows = db.execute(
                 """SELECT payload_json FROM activity_events
                 WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?
@@ -788,6 +820,7 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("implementation event ID was replayed with different data")
                 db.commit()
                 return False
+            self._assert_approval_ids_unused(db, (approval.approval_id,))
             captured_rows = db.execute(
                 "SELECT payload_json FROM activity_events WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?",
                 (project_id, finding_id),
@@ -957,6 +990,7 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("effectiveness event ID was replayed with different data")
                 db.commit()
                 return False
+            self._assert_approval_ids_unused(db, (approval.approval_id,))
             rows = db.execute(
                 """SELECT event_id,event_type,payload_json FROM activity_events
                 WHERE project_id=? AND subject_id=? AND event_type IN
@@ -1148,29 +1182,10 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("event_id already exists with different governed review data")
                 db.commit()
                 return False
-            # A consumed capability remains recognizable in this process, so
-            # enforce its one-event use again at the durable history boundary.
-            # The query runs under BEGIN IMMEDIATE to serialize competing appends.
-            prior_governed = db.execute(
-                """SELECT payload_json FROM activity_events
-                WHERE event_type IN (
-                    'FINDING_DISPOSITIONED','FINDING_CLOSED',
-                    'FINDING_REOPENED','KNOWLEDGE_REVIEWED'
-                )"""
-            ).fetchall()
-            requested_approval_ids = {item.approval_id for item in approvals}
-            requested_approval_nonces = {item.nonce for item in approvals}
-            for prior_row in prior_governed:
-                prior_payload = json.loads(prior_row[0])
-                prior_authorization = prior_payload.get("authorization", {})
-                prior_ids = prior_authorization.get("approval_ids", [])
-                prior_nonces = prior_authorization.get("approval_nonces", [])
-                if (requested_approval_ids.intersection(prior_ids)
-                        or requested_approval_nonces.intersection(prior_nonces)):
-                    db.rollback()
-                    raise ReadinessReplayError(
-                        "governed approval ID or nonce has already authorized another event"
-                    )
+            # BEGIN IMMEDIATE serializes this durable one-event-use check.
+            self._assert_approval_ids_unused(
+                db, tuple(item.approval_id for item in approvals)
+            )
             if event_type == "FINDING_DISPOSITIONED":
                 captured = db.execute(
                     """SELECT payload_json FROM activity_events
