@@ -43,8 +43,10 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
 
     def test_tampered_archive_is_rejected(self):
         export_checkpoint_archive(self.store, self.archive, key=self.key)
-        content = self.archive.read_bytes().replace(b'"revoked":[]', b'"revoked":[[]]')
-        self.archive.write_bytes(content)
+        import json
+        envelope = json.loads(self.archive.read_text(encoding="utf-8"))
+        envelope["hmac_sha256"] = "0" * 64
+        self.archive.write_text(json.dumps(envelope), encoding="utf-8")
         with self.assertRaisesRegex(ApprovalStoreError, "authentication failed"):
             verify_checkpoint_archive(self.archive, key=self.key)
 
