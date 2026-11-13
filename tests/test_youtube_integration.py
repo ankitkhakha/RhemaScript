@@ -185,6 +185,15 @@ class YouTubeIntegrationTests(unittest.TestCase):
             verification_keys={"key-2026-01": public_key},
             consume_many_once=consume_once,
             clock=lambda: now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {
+                    "FINAL_ACCEPTANCE": ["director"],
+                    "PUBLISH": ["publisher"],
+                },
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
         request_id = "publish-request-001"
         final_artifact = next(item for item in artifacts if item["artifact_type"] == "EDITED_FILM")
@@ -197,7 +206,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
         def signed_credential(action, actor, suffix):
             payload = {
-                "schema": "RhemaScript.ApprovalCredential.v2",
+                "schema": "RhemaScript.ApprovalCredential.v3",
                 "approval_id": f"approval-{suffix}",
                 "issuer": "RhemaScript-Approval-Service",
                 "actor_id": actor,
@@ -213,6 +222,13 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 "artifact_version": artifact_binding["artifact_version"],
                 "artifact_sha256": artifact_binding["sha256"],
                 "artifact_size_bytes": artifact_binding["size_bytes"],
+                "subject_id": "subject-" + actor,
+                "actor_role": "director" if action == "FINAL_ACCEPTANCE" else "publisher",
+                "authn_context": "mfa",
+                "authenticated_at": now.isoformat(),
+                "identity_session_id": "session-" + actor,
+                "identity_policy_version": "identity-policy-v1",
+                "identity_provider_id": "test-idp",
             }
             payload["signature"] = private_key.sign(
                 json.dumps(payload, sort_keys=True, separators=(",", ":"),
