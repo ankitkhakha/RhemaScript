@@ -22,7 +22,7 @@ import tempfile
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
-from rhemascript.interfaces.external import ExternalIntegrationGateway, ProviderBinding
+from rhemascript.interfaces.external import ExternalIntegrationError, ExternalIntegrationGateway, ProviderBinding
 
 
 YOUTUBE_INTERFACE_ID = "IF-18"
@@ -356,13 +356,23 @@ class YouTubeClient:
                     operation = "VIDEO_READ"
                 else:
                     raise YouTubeIntegrationError("request has no approved IF-18 operation")
-                status, raw, response_headers = self._gateway.request(
-                    YOUTUBE_INTERFACE_ID, operation, url, method=method,
-                    headers=headers or {}, body=body,
-                    request_id=self._gateway_request_id or str(uuid.uuid4()),
-                    project_id=self._gateway_project_id, source_version=self._gateway_source_version,
-                    authority=self._gateway_authority,
-                )
+                try:
+                    status, raw, response_headers = self._gateway.request(
+                        YOUTUBE_INTERFACE_ID, operation, url, method=method,
+                        headers=headers or {}, body=body,
+                        request_id=self._gateway_request_id or str(uuid.uuid4()),
+                        project_id=self._gateway_project_id, source_version=self._gateway_source_version,
+                        authority=self._gateway_authority,
+                    )
+                except ExternalIntegrationError as exc:
+                    if exc.code == "INDETERMINATE_WRITE":
+                        raise YouTubeIntegrationError(
+                            "YouTube upload write outcome is indeterminate; reconcile the existing durable session before retrying.",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
+                    raise YouTubeIntegrationError(
+                        "IF-18 gateway denied the provider request"
+                    ) from None
             elif self._transport:
                 status, raw, response_headers = self._transport(req, self.config.timeout_seconds)
             else:
