@@ -201,10 +201,9 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         self.assertTrue(self.model.mark_indeterminate(
             second.lease_id, reason_code="LOST_RESPONSE",
         ))
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.model.reconcile_dispatch(
-                second.lease_id, provider_operation_id="provider-op-shared", outcome="SUCCEEDED",
-            )
+        self.assertFalse(self.model.reconcile_dispatch(
+            second.lease_id, provider_operation_id="provider-op-shared", outcome="SUCCEEDED",
+        ))
 
     def test_concurrent_acceptance_has_at_most_one_winner(self):
         lease = self.acquire()
