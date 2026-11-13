@@ -226,6 +226,24 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             )
         self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
 
+    def test_reproduction_requires_distinct_session_even_for_different_subject(self):
+        self._record_research()
+        report = self._reproduction_report()
+        raw, evidence = self._write_report("reproduction-shared-session.json", report, report["evidence_id"])
+        credential = self._credential(
+            "FINDING_REPRODUCE", evidence, subject_id="subject-reproducer-004",
+            actor_id="actor-reproducer-004", session_id="session-researcher-001",
+        )
+        with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent human subject and session"):
+            record_finding_reproduction(
+                self.registry, self.verifier, credential,
+                finding_id=self.finding_id, finding_version=self.finding_version,
+                project_id=self.project_id, project_version=self.project_version,
+                request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
+                evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
+            )
+        self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+
     def test_generic_append_cannot_forge_research_or_reproduction(self):
         with self.assertRaisesRegex(ValueError, "authenticated finding lifecycle"):
             self.registry.append_activity_event(
