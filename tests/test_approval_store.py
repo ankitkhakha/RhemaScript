@@ -222,7 +222,7 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         now = datetime.now(timezone.utc)
         payload = {
-            "schema": "RhemaScript.ApprovalCredential.v2",
+            "schema": "RhemaScript.ApprovalCredential.v3",
             "approval_id": "approval-v2-artifact-0001",
             "issuer": "trusted-approval-issuer",
             "actor_id": "director-0001",
@@ -238,6 +238,13 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             "artifact_version": "1",
             "artifact_sha256": "a" * 64,
             "artifact_size_bytes": 987654,
+            "subject_id": "subject-director-0001",
+            "actor_role": "publisher",
+            "authn_context": "mfa",
+            "authenticated_at": now.isoformat(),
+            "identity_session_id": "session-director-0001",
+            "identity_policy_version": "identity-policy-v1",
+            "identity_provider_id": "test-idp",
         }
         payload["signature"] = private_key.sign(
             json.dumps(payload, sort_keys=True, separators=(",", ":"),
@@ -247,6 +254,12 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             issuer="trusted-approval-issuer",
             verification_keys={"key-2026-01": public_key},
             consume_many_once=self.store.consume_many_once,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {"PUBLISH": ["publisher"]},
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
         binding = {
             "artifact_id": "ART-FINAL-001",
