@@ -820,6 +820,77 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "AWAITING_AUTHENTICATED_SUBMISSION",
         )
 
+    def test_registry_rejects_primary_evidence_reference_substitution(self):
+        raw, evidence = self._write_report(
+            "observation-evidence-reference.json",
+            {
+                "schema": FINDING_SCHEMA,
+                "finding_id": "RS-FND-EVIDENCE-REF-003",
+                "version": "1.0",
+                "project_id": self.project_id,
+                "title": "Evidence reference substitution attempt",
+                "raw_observation": "The primary reference and evidence_refs disagree.",
+                "affected_workflow": "video_generation",
+                "expected_behavior": "The approved primary artifact is the exact stored reference.",
+                "observed_behavior": "A different digest is substituted in the reference list.",
+                "impact": "Evidence lineage must remain exact.",
+                "reproduction_steps": ["Submit mismatched primary and evidence reference digests."],
+                "supporting_evidence": [],
+                "evidence_id": "EV-FND-EVIDENCE-REF-003",
+                "evidence_version": "1.0",
+                "created_at_utc": self.now.isoformat(),
+            },
+            "EV-FND-EVIDENCE-REF-003",
+        )
+        request_id = "request-FINDING-SUBMIT-EVIDENCE-REF-003"
+        token = self._credential(
+            "FINDING_SUBMIT", evidence, subject_id="subject-evidence-ref-submitter",
+            actor_id="actor-evidence-ref-submitter", session_id="session-evidence-ref-submitter",
+            request_id=request_id,
+        )
+        verified = self.verifier.verify_many_and_consume(
+            (token,),
+            ({
+                "action": "FINDING_SUBMIT",
+                "project_id": self.project_id,
+                "project_version": self.project_version,
+                "request_id": request_id,
+                "artifact_binding": {
+                    "artifact_id": evidence.evidence_id,
+                    "artifact_version": evidence.version,
+                    "sha256": evidence.sha256,
+                    "size_bytes": evidence.size_bytes,
+                },
+            },),
+        )[0]
+        primary = {
+            "evidence_id": evidence.evidence_id,
+            "relative_path": evidence.relative_path,
+            "version": evidence.version,
+            "sha256": evidence.sha256,
+            "size_bytes": evidence.size_bytes,
+        }
+        substituted = dict(primary)
+        substituted["sha256"] = "0" * 64
+        payload = {
+            "finding_id": "RS-FND-EVIDENCE-REF-003",
+            "version": "1.0",
+            "project_id": self.project_id,
+            "identity_authentication_status": "UNVERIFIED",
+            "observation_evidence": primary,
+            "evidence_refs": [substituted],
+            "supersedes": [],
+        }
+        before = len(self.registry.list_activity_events())
+        with self.assertRaisesRegex(ValueError, "exact approved primary artifact"):
+            self.registry.append_authenticated_finding_capture_event(
+                "FINDING:RS-FND-EVIDENCE-REF-003@1.0", payload,
+                project_id=self.project_id, project_version=self.project_version,
+                request_id=request_id, approval=verified,
+            )
+        self.assertEqual(len(self.registry.list_activity_events()), before)
+        self.assertTrue(self.registry.verify())
+
     def _inherit_closed_knowledge(self):
         events = {
             event["event_type"]: event
