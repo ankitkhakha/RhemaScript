@@ -50,13 +50,14 @@ class FakeSigningKeyProvider:
 class FakeIssuanceLedger:
     def __init__(self):
         self.entries = []
-    def reserve(self, approval_id, nonce, scope, subject_id):
+    def reserve(self, approval_id, nonce, scope, subject_id, identity_session_id):
         if any(row[2].request_id == scope.request_id and row[2].action != scope.action
-               and row[3] == subject_id for row in self.entries):
+               and (row[3] == subject_id or row[4] == identity_session_id)
+               for row in self.entries):
             return False
         if any(row[0] == approval_id or row[1] == nonce for row in self.entries):
             return False
-        self.entries.append((approval_id, nonce, scope, subject_id))
+        self.entries.append((approval_id, nonce, scope, subject_id, identity_session_id))
         return True
 
 
@@ -268,6 +269,40 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         self.assertEqual(signer.calls, [])
         self.assertEqual(ledger.entries, [])
         self.assertEqual(audit.events[-1]["event"], "approval_denied")
+
+    def test_synthetic_issuer_ledger_rejects_shared_session_for_different_subjects(self):
+        ledger = FakeIssuanceLedger()
+        final, publish = required_publish_scopes(
+            project_id="RS-PWW-001", project_version="3.2",
+            request_id="request-publish-shared-session",
+            artifact_binding={"artifact_id": "ART-FINAL-001", "artifact_version": "7",
+                              "sha256": "a" * 64, "size_bytes": 987654},
+        )
+        issuer_one, _, _, _, now = self.make_trusted_issuer(ledger=ledger)
+        issuer_one.request_approval(final)
+        second_identity = AuthenticatedIdentity(
+            identity_provider_id="test-idp", subject_id="subject-human-0002",
+            authn_context="mfa", authenticated_at=now,
+            identity_session_id="session-human-0001",
+        )
+        second_directory = DirectoryIdentity(
+            subject_id="subject-human-0002", actor_id="directory-actor-0002",
+            active=True, roles=frozenset({"publisher"}),
+            project_ids=frozenset({"RS-PWW-001"}),
+        )
+        issuer_two, signer_two, _, audit_two, _ = self.make_trusted_issuer(
+            identity=second_identity, directory=second_directory, ledger=ledger,
+            decision=ApprovalPolicyDecision(
+                allowed=True, identity_policy_version="identity-policy-v1",
+                identity_provider_id="test-idp", max_authentication_age_seconds=300,
+                clock_skew_seconds=30, actor_role="publisher",
+            ),
+        )
+        with self.assertRaisesRegex(ApprovalIssuerError, "subject separation"):
+            issuer_two.request_approval(publish)
+        self.assertEqual(signer_two.calls, [(signer_two.active_key_id(), signer_two.calls[0][1])] if signer_two.calls else [])
+        self.assertEqual(len(ledger.entries), 1)
+        self.assertEqual(audit_two.events[-1]["event"], "approval_denied")
 
     def test_synthetic_issuer_does_not_return_credential_if_audit_fails(self):
         audit = FakeAuditSink(fail=True)
