@@ -181,6 +181,9 @@ class ReadinessRunRegistryTests(unittest.TestCase):
             db.execute("DROP TRIGGER activity_events_no_delete")
             db.execute("DELETE FROM activity_events WHERE event_id=?",
                        ("FINDING:RS-FND-004@1.0",))
+            db.execute("""CREATE TRIGGER activity_events_no_delete
+                BEFORE DELETE ON activity_events
+                BEGIN SELECT RAISE(ABORT, 'activity events are append-only'); END""")
         self.assertTrue(self.registry.verify())
         self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
 
