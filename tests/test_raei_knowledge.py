@@ -170,6 +170,43 @@ class RAEIKnowledgeTests(unittest.TestCase):
         record_knowledge(self.registry, payload, evidence)
         self.assertEqual(len(search_knowledge(self.registry, "यीशु", include_pending=True)), 1)
 
+    def test_bwsf_bible_passage_record_uses_existing_pending_review_schema(self):
+        # Synthetic schema fixture only; it does not verify the Bible passage text or source authenticity.
+        payload, evidence = self.make_item(
+            knowledge_id="RS-BWSF-001", source_type="BIBLE"
+        )
+        payload.update({
+            "title": "BWSF-02 Bezalel and craftsmanship",
+            "domain": "biblical_wisdom",
+            "source_name": "HINOVBSI",
+            "source_version": "HINOVBSI-2012",
+            "source_reference": "Bible:Exodus 31:1-11",
+            "summary": "Contextual study record for the tabernacle artisans and their appointed work.",
+            "claims": [
+                "Exodus 31:1-11 describes Bezalel's appointment and the skilled collaboration for the tabernacle."
+            ],
+            "limitations": [
+                "This record does not establish that an AI system is Spirit-filled or spiritually authoritative."
+            ],
+            "tags": ["BWSF", "craftsmanship", "biblical-wisdom"],
+            "language": "hi",
+            "translation_version": "HINOVBSI",
+            "direct_scripture_quote": False,
+            "book": "Exodus",
+            "passage": "Exodus 31:1-11",
+        })
+        evidence = self.reverify(payload, evidence)
+        record_knowledge(self.registry, payload, evidence)
+
+        self.assertEqual(list_knowledge(self.registry)[0]["status"], "PENDING_REVIEW")
+        self.assertEqual(search_knowledge(self.registry, "biblical_wisdom"), [])
+        pending = search_knowledge(
+            self.registry, "biblical_wisdom", include_pending=True
+        )
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["translation_version"], "HINOVBSI")
+        self.assertEqual(pending[0]["passage"], "Exodus 31:1-11")
+
     def test_failure_lesson_requires_root_cause_remediation_and_regression_tests(self):
         payload, evidence = self.make_item(source_type="LESSON_FROM_FAILURE")
         changed = {**payload}
