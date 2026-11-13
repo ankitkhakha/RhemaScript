@@ -82,3 +82,12 @@ The database parent must already exist, be owner-controlled and private (POSIX m
 The RAEI curriculum is extended to `RAEI-CURRICULUM-1.1` with eight evidence-required thematic units (`BWSF-01` through `BWSF-08`) covering Solomon's discernment, Bezalel's craftsmanship, wisdom in trials, Proverbs' pursuit of wisdom, testing claims, stewardship, Nehemiah's prayerful planning, and Scripture's teaching/corrective role.
 
 These units follow the existing Bible-only ethics domain and precede RhemaScript capability mastery. The curriculum registry reports 154 units and remains `CURRICULUM_DEFINED_NOT_ASSESSED` until actual evidence-backed assessments are recorded. Historical `RAEI-CURRICULUM-1.0` assessment records remain readable for unchanged unit IDs; new attempts must use the current curriculum version. No existing assessment is upgraded or rewritten.
+
+
+## Versioned activity-history integration addendum — 2026-11-13
+
+The existing SQLite `ReadinessRunRegistry` now also persists the RAEI activity-event history in an append-only `activity_events` table in the same database. Readiness, knowledge and training records append a corresponding `READINESS_RUN_RECORDED` event in the same transaction. Field finding intake appends `FINDING_CAPTURED` events. Event IDs are idempotent only for identical content; changed replay is rejected.
+
+Each event binds canonical payload bytes, payload SHA-256, sequence, predecessor hash and event hash. Registry verification checks chain continuity and readiness-record/event correspondence. HMAC checkpoint V2 covers readiness records and the complete event-chain head. Older readiness-only records are explicitly imported through `LEGACY_READINESS_RECORD_IMPORTED` events. Existing V1 checkpoints remain verifiable only when no activity events exist.
+
+This extends the existing SQLite registry; it does not introduce a parallel JSON learning ledger. The earlier PR #38 JSON ledger remains a separate, draft, unmerged candidate and is not merged wholesale. The current event history is local persistence with independently retained HMAC checkpoints, not tamper-proof storage.
