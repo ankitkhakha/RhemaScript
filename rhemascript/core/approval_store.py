@@ -231,6 +231,13 @@ class SQLiteApprovalConsumptionStore:
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
+            # BEGIN IMMEDIATE may wait for another writer. Recheck expiry only
+            # after the write lock is acquired so a credential cannot expire
+            # while queued and then be consumed using the earlier timestamp.
+            transaction_now = datetime.now(timezone.utc)
+            if any(datetime.fromisoformat(item[9]) <= transaction_now for item in normalized):
+                db.execute("ROLLBACK")
+                return False
             for entry in normalized:
                 approval_id, nonce = entry[0], entry[1]
                 row = db.execute(
@@ -240,7 +247,7 @@ class SQLiteApprovalConsumptionStore:
                 if row:
                     db.execute("ROLLBACK")
                     return False
-            consumed_at = self._utc(now)
+            consumed_at = self._utc(transaction_now)
             db.executemany(
                 """INSERT INTO consumed_approvals(
                     approval_id, nonce, issuer, actor_id, action, project_id,
