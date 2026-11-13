@@ -52,6 +52,8 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                     "FINDING_PLAN": ["planner"],
                     "FINDING_IMPLEMENT": ["implementer"],
                     "FINDING_EFFECTIVENESS_ASSESS": ["assessor"],
+                    "FINDING_DISPOSITION_REVIEW": ["disposition-reviewer"],
+                    "FINDING_DISPOSITION_CONFIRM": ["disposition-approver"],
                     "FINDING_CLOSURE_REVIEW": ["closure-reviewer"],
                     "FINDING_CLOSURE_CONFIRM": ["closure-approver"],
                     "FINDING_REOPEN_REVIEW": ["reopen-reviewer"],
@@ -124,7 +126,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver", "FINDING_REOPEN_REVIEW": "reopen-reviewer", "FINDING_REOPEN_CONFIRM": "reopen-approver", "KNOWLEDGE_REVIEW": "knowledge-reviewer", "KNOWLEDGE_CONFIRM": "knowledge-approver", "FINDING_SUBMIT": "submitter"}[action],
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_DISPOSITION_REVIEW": "disposition-reviewer", "FINDING_DISPOSITION_CONFIRM": "disposition-approver", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver", "FINDING_REOPEN_REVIEW": "reopen-reviewer", "FINDING_REOPEN_CONFIRM": "reopen-approver", "KNOWLEDGE_REVIEW": "knowledge-reviewer", "KNOWLEDGE_CONFIRM": "knowledge-approver", "FINDING_SUBMIT": "submitter"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -183,25 +185,20 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         return result
 
 
-    def _v1_disposition_credential(self, action, actor, suffix):
-        token = {
-            "schema": "RhemaScript.ApprovalCredential.v1",
-            "approval_id": f"approval-{suffix}",
-            "issuer": "RhemaScript-Approval-Service",
-            "actor_id": actor,
-            "action": action,
-            "project_id": self.project_id,
-            "project_version": self.project_version,
-            "request_id": f"request-FINDING-DISPOSITION-{self.finding_id}",
-            "issued_at": self.now.isoformat(),
-            "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
-            "nonce": f"nonce-{suffix}",
-            "key_id": "key-2026-01",
-        }
-        token["signature"] = self.private_key.sign(
-            json.dumps(token, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-        ).hex()
-        return token
+    def _disposition_credentials(self, evidence, *, suffix="disposition"):
+        request_id = f"request-FINDING-DISPOSITION-{self.finding_id}"
+        return (
+            self._credential(
+                "FINDING_DISPOSITION_REVIEW", evidence,
+                subject_id=f"subject-reviewer-{suffix}", actor_id=f"actor-reviewer-{suffix}",
+                session_id=f"session-reviewer-{suffix}", request_id=request_id,
+            ),
+            self._credential(
+                "FINDING_DISPOSITION_CONFIRM", evidence,
+                subject_id=f"subject-approver-{suffix}", actor_id=f"actor-approver-{suffix}",
+                session_id=f"session-approver-{suffix}", request_id=request_id,
+            ),
+        )
 
     def _record_reproduction(self, *, subject_id="subject-reproducer-001", session_id="session-reproducer-001"):
         report = self._reproduction_report()
@@ -223,10 +220,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             self.evidence_root, "research.json",
             evidence_id="EV-FND-RESEARCH-001", version="1.0",
         )
-        credentials = (
-            self._v1_disposition_credential("FINDING_DISPOSITION_REVIEW", "reviewer-001", "review-001"),
-            self._v1_disposition_credential("FINDING_DISPOSITION_CONFIRM", "approver-001", "confirm-001"),
-        )
+        credentials = self._disposition_credentials(research_evidence)
         return record_finding_disposition(
             self.registry, self.verifier, credentials,
             finding_id=self.finding_id, finding_version=self.finding_version,
@@ -1310,10 +1304,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         _, unrelated_evidence = self._write_report(
             "unrelated.json", unrelated_payload, "EV-FND-UNRELATED-001",
         )
-        credentials = (
-            self._v1_disposition_credential("FINDING_DISPOSITION_REVIEW", "reviewer-001", "unrelated-review-001"),
-            self._v1_disposition_credential("FINDING_DISPOSITION_CONFIRM", "approver-001", "unrelated-confirm-001"),
-        )
+        credentials = self._disposition_credentials(unrelated_evidence, suffix="unrelated")
         with self.assertRaisesRegex(ValueError, "prior authenticated research/reproduction"):
             record_finding_disposition(
                 self.registry, self.verifier, credentials,
