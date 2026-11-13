@@ -635,6 +635,171 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         ))
         self.assertTrue(self.registry.verify())
 
+    def test_registry_rejects_forked_resumed_version_even_with_fresh_v3_approval(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        self._record_reopening()
+        self._capture_resumed_finding()
+        prior_event = next(
+            event for event in self.registry.list_activity_events()
+            if event["event_type"] == "FINDING_CAPTURED"
+            and event["payload"].get("version") == "1.1"
+        )
+        second_payload = dict(prior_event["payload"])
+        second_payload["version"] = "1.2"
+        second_payload["supersedes"] = [f"{self.finding_id}@1.0"]
+        raw, evidence = self._write_report(
+            "observation-v1.2.json",
+            {
+                "schema": FINDING_SCHEMA,
+                "finding_id": self.finding_id,
+                "version": "1.2",
+                "project_id": self.project_id,
+                "title": "Portrait clip rendered in landscape — fork attempt",
+                "raw_observation": "A second branch attempts to supersede the same closed version.",
+                "affected_workflow": "video_generation",
+                "expected_behavior": "Output should remain 9:16 portrait.",
+                "observed_behavior": "A second candidate path still emitted landscape output.",
+                "impact": "A competing version branch must be rejected.",
+                "reproduction_steps": ["Repeat the controlled generation request."],
+                "supporting_evidence": [],
+                "evidence_id": "EV-FND-OBS-003",
+                "evidence_version": "1.0",
+                "created_at_utc": self.now.isoformat(),
+                "supersedes": [f"{self.finding_id}@1.0"],
+            },
+            "EV-FND-OBS-003",
+        )
+        second_payload["observation_evidence"] = {
+            "evidence_id": evidence.evidence_id,
+            "relative_path": evidence.relative_path,
+            "version": evidence.version,
+            "sha256": evidence.sha256,
+            "size_bytes": evidence.size_bytes,
+            "description": "Competing resumed finding submission",
+        }
+        second_payload["evidence_refs"] = [second_payload["observation_evidence"]]
+        second_payload["observation_sha256"] = evidence.sha256
+        second_payload["identity_authentication_status"] = "UNVERIFIED"
+        second_payload.pop("submitter_identity", None)
+        second_payload.pop("submitter_authorization", None)
+        request_id = f"request-FINDING-SUBMIT-FORK-{self.finding_id}-1.2"
+        token = self._credential(
+            "FINDING_SUBMIT", evidence, subject_id="subject-fork-submitter",
+            actor_id="actor-fork-submitter", session_id="session-fork-submitter",
+            request_id=request_id,
+        )
+        verified = self.verifier.verify_many_and_consume(
+            (token,),
+            ({
+                "action": "FINDING_SUBMIT",
+                "project_id": self.project_id,
+                "project_version": self.project_version,
+                "request_id": request_id,
+                "artifact_binding": {
+                    "artifact_id": evidence.evidence_id,
+                    "artifact_version": evidence.version,
+                    "sha256": evidence.sha256,
+                    "size_bytes": evidence.size_bytes,
+                },
+            },),
+        )[0]
+        before = len(self.registry.list_activity_events())
+        with self.assertRaisesRegex(ValueError, "does not match the exact prior closure and reopening project scope"):
+            self.registry.append_authenticated_finding_capture_event(
+                f"FINDING:{self.finding_id}@1.2", second_payload,
+                project_id=self.project_id, project_version=self.project_version,
+                request_id=request_id, approval=verified,
+            )
+        self.assertEqual(len(self.registry.list_activity_events()), before)
+        self.assertTrue(self.registry.verify())
+
+    def test_registry_rejects_resumed_capture_in_another_project(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        self._record_reopening()
+        self._capture_resumed_finding()
+        raw, evidence = self._write_report(
+            "observation-cross-project.json",
+            {
+                "schema": FINDING_SCHEMA,
+                "finding_id": self.finding_id,
+                "version": "1.1",
+                "project_id": "RS-PWW-OTHER",
+                "title": "Cross-project resumed finding attempt",
+                "raw_observation": "A finding attempts to cross project boundaries.",
+                "affected_workflow": "video_generation",
+                "expected_behavior": "Finding remains bound to its source project.",
+                "observed_behavior": "Payload attempts to use another project ID.",
+                "impact": "Cross-project lineage substitution must be rejected.",
+                "reproduction_steps": ["Attempt to reuse the closed finding ID in another project."],
+                "supporting_evidence": [],
+                "evidence_id": "EV-FND-CROSS-PROJECT",
+                "evidence_version": "1.0",
+                "created_at_utc": self.now.isoformat(),
+                "supersedes": [f"{self.finding_id}@1.0"],
+            },
+            "EV-FND-CROSS-PROJECT",
+        )
+        request_id = f"request-FINDING-SUBMIT-CROSS-PROJECT-{self.finding_id}"
+        token = self._credential(
+            "FINDING_SUBMIT", evidence, subject_id="subject-cross-project-submitter",
+            actor_id="actor-cross-project-submitter", session_id="session-cross-project-submitter",
+            request_id=request_id,
+        )
+        token["project_id"] = "RS-PWW-OTHER"
+        token.pop("signature")
+        token["signature"] = self.private_key.sign(
+            json.dumps(token, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hex()
+        verified = self.verifier.verify_many_and_consume(
+            (token,),
+            ({
+                "action": "FINDING_SUBMIT",
+                "project_id": "RS-PWW-OTHER",
+                "project_version": self.project_version,
+                "request_id": request_id,
+                "artifact_binding": {
+                    "artifact_id": evidence.evidence_id,
+                    "artifact_version": evidence.version,
+                    "sha256": evidence.sha256,
+                    "size_bytes": evidence.size_bytes,
+                },
+            },),
+        )[0]
+        payload = {
+            "finding_id": self.finding_id,
+            "version": "1.1",
+            "project_id": "RS-PWW-OTHER",
+            "identity_authentication_status": "UNVERIFIED",
+            "observation_evidence": {
+                "evidence_id": evidence.evidence_id,
+                "version": evidence.version,
+                "sha256": evidence.sha256,
+                "size_bytes": evidence.size_bytes,
+            },
+            "supersedes": [f"{self.finding_id}@1.0"],
+        }
+        before = len(self.registry.list_activity_events())
+        with self.assertRaisesRegex(ValueError, "exactly one prior closure and reopening in this project"):
+            self.registry.append_authenticated_finding_capture_event(
+                f"FINDING:{self.finding_id}@1.1", payload,
+                project_id="RS-PWW-OTHER", project_version=self.project_version,
+                request_id=request_id, approval=verified,
+            )
+        self.assertEqual(len(self.registry.list_activity_events()), before)
+        self.assertTrue(self.registry.verify())
+
     def _inherit_closed_knowledge(self):
         events = {
             event["event_type"]: event
