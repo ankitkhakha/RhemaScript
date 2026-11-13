@@ -76,9 +76,9 @@ The architecture is designed for a later owner-approved implementation. No provi
 | Audit omission | Independent durable audit sink; fail closed on required audit failure | Outage, integrity and reconciliation tests |
 | IdP/directory outage | No fallback or manual identity bypass | Fault injection and outage drill |
 
-## 7. Interfaces to implement after owner approval
+## 7. Adapter interfaces and implementation boundary
 
-Keep adapters narrow and vendor-neutral:
+The following vendor-neutral adapter protocols and orchestration boundary are implemented in the candidate code. They do not supply concrete identity, directory, policy, signing, ledger or audit integrations. Keep concrete adapters narrow:
 
 - IdentityProtocolAdapter: starts authorization, validates callback and returns a normalized authentication event.
 - SubjectDirectoryAdapter: resolves immutable subject, active status, roles and project assignments.
@@ -87,7 +87,7 @@ Keep adapters narrow and vendor-neutral:
 - IssuanceLedger: enforces idempotency, one-time transactions, approval ID/nonce uniqueness and audit linkage.
 - IssuerAuditSink: stores issuance/denial evidence with retention and integrity guarantees.
 
-These are interface boundaries, not implemented production services. Do not add a concrete provider SDK, credentials, endpoint, deployment manifest or real identity policy until the owner has approved provider, directory, roles, assurance semantics, data residency, operational owner and key custody.
+These are implemented interface boundaries and synthetic orchestration, not production services. Do not add a concrete provider SDK, credentials, endpoint, deployment manifest or real identity policy until the owner has approved provider, directory, roles, assurance semantics, data residency, operational owner and key custody.
 
 ## 8. Owner decisions required before implementation
 
@@ -107,7 +107,7 @@ Until these are approved, keep the architecture vendor-neutral and use synthetic
 
 - **Gate A — Architecture review:** confirm trust boundaries, interfaces and threat model. No provider selected.
 - **Gate B — Owner policy approval:** obtain explicit decisions in Section 8. Stop if any are missing.
-- **Gate C — Synthetic issuer prototype:** implement adapters against deterministic fakes only; no production credentials or external connections. This remains the next code-only workstream after current V3 and archive hardening.
+- **Gate C — Synthetic issuer prototype:** vendor-neutral coordinator and deterministic fake adapters are implemented in the candidate; continue conformance and adversarial testing only. No production credentials or external connections.
 - **Gate D — Independent security review:** review protocol validation, subject mapping, key custody, audit and failure behavior.
 - **Gate E — Staging integration:** requires separate explicit approval and staging-only credentials.
 - **Gate F — Production readiness:** requires signed owner authorization, operational runbooks, monitoring, key lifecycle evidence and rollback/recovery proof.
