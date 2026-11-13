@@ -365,14 +365,26 @@ class ExternalIntegrationGateway:
             except AuthorityError:
                 raise ExternalIntegrationError("consequential operation lacks explicit authority") from None
 
-        # Bind the query without persisting it: Google read and resumable
-        # endpoints use query parameters that can materially change the request.
-        # Hashing prevents secrets or opaque upload IDs from entering audit logs.
+        caller_headers = headers or {}
+        if not isinstance(caller_headers, dict) or any(
+            not isinstance(k, str) or not isinstance(v, str)
+            for k, v in caller_headers.items()
+        ):
+            raise ExternalIntegrationError("request headers are invalid")
+        # Bind query and caller headers without persisting their values. Headers
+        # such as Content-Range alter upload semantics; credentials and opaque
+        # values must never be copied into the audit event.
         query_digest = sha256(parsed.query.encode("utf-8")).digest()
+        canonical_headers = sorted(
+            (key.casefold(), value) for key, value in caller_headers.items()
+        )
+        header_digest = sha256(json.dumps(
+            canonical_headers, ensure_ascii=False, separators=(",", ":")
+        ).encode("utf-8")).digest()
         fingerprint = sha256(
             interface_id.encode() + b":" + operation.upper().encode() + b":" +
             method.upper().encode() + b":" + parsed.hostname.encode() + b":" +
-            parsed.path.encode() + b":" + query_digest + b":" +
+            parsed.path.encode() + b":" + query_digest + b":" + header_digest + b":" +
             sha256(body or b"").digest()
         ).hexdigest()
         event = {"interface_id": interface_id, "provider": binding.provider_name,
