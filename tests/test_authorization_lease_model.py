@@ -53,13 +53,18 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
 
     def test_newer_lease_supersedes_older_generation(self):
         old = self.acquire(nonce="dispatch-old")
-        newer = self.acquire(nonce="dispatch-new")
+        newer = self.model.acquire(
+            resource_id="youtube:channel-1:publish",
+            approval_ids=("approval-next-director", "approval-next-publisher"),
+            dispatch_nonce="dispatch-new",
+            request_fingerprint="b" * 64, expires_at=self.expiry,
+        )
         self.assertGreater(newer.generation, old.generation)
         self.assertFalse(self.model.accept_dispatch(
             old, request_fingerprint="a" * 64,
         ))
         self.assertTrue(self.model.accept_dispatch(
-            newer, request_fingerprint="a" * 64,
+            newer, request_fingerprint="b" * 64,
         ))
 
     def test_request_fingerprint_mismatch_is_rejected(self):
