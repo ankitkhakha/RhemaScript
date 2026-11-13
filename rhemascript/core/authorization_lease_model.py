@@ -488,16 +488,21 @@ class SQLiteLeaseStateModel:
 
     def verify_recovery_checkpoint(self, checkpoint: dict[str, object]) -> bool:
         """Verify integrity and freshness against the separate local anchor."""
-        if not isinstance(checkpoint, dict) or checkpoint.get("schema_version") != 1:
+        if (not isinstance(checkpoint, dict)
+                or type(checkpoint.get("schema_version")) is not int
+                or checkpoint.get("schema_version") != 1):
             return False
         state = checkpoint.get("state")
         generation = checkpoint.get("generation_high_water")
         event_sequence = checkpoint.get("event_sequence_high_water")
         sequence = checkpoint.get("sequence")
         digest = checkpoint.get("sha256")
-        if (not isinstance(state, dict) or not isinstance(generation, int)
-                or not isinstance(event_sequence, int) or not isinstance(sequence, int)
-                or not isinstance(digest, str)):
+        if (not isinstance(state, dict)
+                or type(generation) is not int or generation < 0
+                or type(event_sequence) is not int or event_sequence < 0
+                or type(sequence) is not int or sequence < 1
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)):
             return False
         canonical = json.dumps(
             {"schema_version": 1, "generation_high_water": generation, "state": state},
