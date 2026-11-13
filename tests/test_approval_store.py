@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pathlib import Path
 
-from rhemascript.core.approvals import ApprovalVerifier, VerifiedApproval
+from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, VerifiedApproval
 from rhemascript.core.approval_store import (
     ApprovalStoreError, SQLiteApprovalConsumptionStore,
 )
@@ -271,13 +271,20 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row, ("ART-FINAL-001", "1", "a" * 64, 987654))
         persisted = self.store.list_consumed_approval_records()[0]
-        audit = verifier.verify_persisted_record(persisted)
+        # A new verifier instance models a process restart: signature audit uses
+        # the retained public key and persisted signed payload, not in-memory tokens.
+        auditor = ApprovalVerifier(
+            issuer="trusted-approval-issuer",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=lambda entries: True,
+        )
+        audit = auditor.verify_persisted_record(persisted)
         self.assertTrue(audit["signature_valid"])
         self.assertEqual(audit["artifact_sha256"], "a" * 64)
         tampered = dict(persisted)
         tampered["artifact_sha256"] = "b" * 64
-        with self.assertRaisesRegex(Exception, "persisted approval signature is invalid"):
-            verifier.verify_persisted_record(tampered)
+        with self.assertRaisesRegex(ApprovalError, "persisted approval signature is invalid"):
+            auditor.verify_persisted_record(tampered)
 
 if __name__ == "__main__":
     unittest.main()
