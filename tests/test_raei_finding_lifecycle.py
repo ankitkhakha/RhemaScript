@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
-from raei.governance import record_finding_disposition, record_finding_closure, record_finding_reopening
+from raei.governance import RAEIGovernanceError, record_finding_disposition, record_finding_closure, record_finding_reopening
 from raei.knowledge import inherit_closed_finding_as_knowledge, list_knowledge
 from raei.finding_lifecycle import (
     RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation, record_finding_effectiveness,
