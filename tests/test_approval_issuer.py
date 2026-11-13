@@ -10,7 +10,7 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
     def test_publish_scopes_require_distinct_actions_and_same_exact_request(self):
         final, publish = required_publish_scopes(
             project_id="RS-PWW-001", project_version="3.2",
-            request_id="request-publish-001",
+            request_id="request-publish-001", artifact_binding={"artifact_id": "ART-FINAL-001", "artifact_version": "7", "sha256": "a" * 64, "size_bytes": 987654},
         )
         self.assertEqual(final.action, "FINAL_ACCEPTANCE")
         self.assertEqual(publish.action, "PUBLISH")
@@ -45,7 +45,7 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         issuer = TestIssuer()
         final, publish = request_publish_approval_credentials(
             issuer, project_id="RS-PWW-001", project_version="3.2",
-            request_id="request-publish-001",
+            request_id="request-publish-001", artifact_binding={"artifact_id": "ART-FINAL-001", "artifact_version": "7", "sha256": "a" * 64, "size_bytes": 987654},
         )
         self.assertEqual(final["action"], "FINAL_ACCEPTANCE")
         self.assertEqual(publish["action"], "PUBLISH")
@@ -61,6 +61,7 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
             request_publish_approval_credentials(
                 InvalidIssuer(), project_id="RS-PWW-001",
                 project_version="3.2", request_id="request-publish-001",
+                artifact_binding={"artifact_id": "ART-FINAL-001", "artifact_version": "7", "sha256": "a" * 64, "size_bytes": 987654},
             )
 
 
