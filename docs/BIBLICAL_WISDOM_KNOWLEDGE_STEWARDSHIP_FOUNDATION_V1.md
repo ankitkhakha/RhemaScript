@@ -30,6 +30,9 @@ For every material passage or claim:
    - **STRONG_INFERENCE** — strongly supported by context and canonical evidence;
    - **PLAUSIBLE_INTERPRETATION** — defensible but not certain;
    - **DISPUTED** — meaningful interpretive disagreement remains;
+   - **HISTORICAL_RECONSTRUCTION** — a proposed historical detail not directly stated in the biblical text;
+   - **CREATIVE_RECONSTRUCTION** — a narrative or visual addition used for storytelling but not stated in the text;
+   - **MODERN_APPLICATION** — a present-day application or analogy, not a biblical event or direct command;
    - **UNKNOWN** — evidence is insufficient.
 8. State the spiritual principle, the proposed modern application and the limits of that application separately.
 9. Preserve unresolved material issues as HOLD / SPECIALIST REVIEW REQUIRED. Never silently resolve disputed doctrine or rewrite an approved script.
