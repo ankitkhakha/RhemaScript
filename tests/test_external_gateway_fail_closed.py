@@ -208,7 +208,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             ),), transport=transport, audit_sink=lambda event: None, enabled=True,
         )
         with self.assertRaisesRegex(
-            ExternalIntegrationError, "signed external-write authority",
+            ExternalIntegrationError, "signed operation authority",
         ):
             gateway.request(
                 "IF-18", "CUSTOM_MUTATION",
