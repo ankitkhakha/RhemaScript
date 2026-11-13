@@ -187,3 +187,8 @@ These controls provide local transaction consistency and tamper evidence only re
 `verify_event_history()` additionally compares the current local event rows against the event-history prefix retained in the latest local recovery checkpoint. This detects deletion, reordering or rewriting of events that were included in that checkpoint, while allowing later legitimate events to extend the chain. It does not detect deletion of events appended after the latest checkpoint until a subsequent checkpoint anchors them. It also cannot resist an attacker who can rewrite both the state database and the local anchor database. The test suite covers deletion of a checkpointed event and verifies that checkpoint-byte integrity and current-history integrity are distinct checks.
 
 A durable checkpoint is JSON-serialized: SQLite row tuples are represented as JSON arrays on retrieval. Consumers should compare canonical serialized values rather than relying on Python tuple/list identity.
+
+
+### Transaction and concurrent checkpoint fault-injection coverage
+
+Additional synthetic tests force the event-history insert to fail during lease acquisition and verify that the lease row, resource-fence advance and event append all roll back together. Concurrent checkpoint creation is also exercised with four simultaneous callers; the separate local anchor serializes sequence advancement and each committed checkpoint receives a distinct monotonically increasing sequence. These tests establish SQLite-local transaction behavior only, not a distributed transaction across an independent audit service or production lease coordinator.
