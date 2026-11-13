@@ -27,7 +27,7 @@ _ACTIVITY_EVENT_TYPES = {
     "FINDING_CAPTURED", "FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED",
     "FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED", "DECISION_RECORDED", "REQUIREMENT_RECORDED",
     "CHANGE_RECORDED", "TASK_RECORDED", "IMPLEMENTATION_RECORDED",
-    "FINDING_IMPLEMENTED",
+    "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED",
     "TEST_RECORDED", "DEFECT_RECORDED", "LESSON_RECORDED",
     "HANDOVER_RECORDED",
 }
@@ -155,7 +155,7 @@ class ReadinessRunRegistry:
             raise ValueError("unsupported external activity event type")
         if event_type in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("governed review events require append_governed_activity_event")
-        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED"}:
+        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED"}:
             raise ValueError("authenticated finding lifecycle events require append_authenticated_finding_lifecycle_event")
         for name, value in (("project_id", project_id), ("subject_id", subject_id)):
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -708,6 +708,156 @@ class ReadinessRunRegistry:
                     db.rollback()
                     raise ValueError("implementation requires an independent implementer in the same trusted identity domain")
             self._append_event_tx(db, event_id, "FINDING_IMPLEMENTED", normalised, project_id, finding_id)
+            db.commit()
+        return True
+
+    def append_authenticated_finding_effectiveness_event(
+        self, event_id: str, payload: dict[str, Any], *,
+        project_id: str, project_version: str, request_id: str, approval: Any,
+    ) -> bool:
+        """Append an independent outcome assessment bound to the exact implementation."""
+        from datetime import datetime, timezone
+        from rhemascript.core.approvals import is_consumed_verified_approval
+
+        if not is_consumed_verified_approval(approval):
+            raise ValueError("effectiveness assessment requires a verifier-issued, consumed approval")
+        if (approval.credential_schema != "RhemaScript.ApprovalCredential.v3"
+                or approval.action != "FINDING_EFFECTIVENESS_ASSESS"
+                or approval.project_id != project_id or approval.project_version != project_version
+                or approval.request_id != request_id or approval.expires_at <= datetime.now(timezone.utc)):
+            raise ValueError("effectiveness approval schema, action, scope or expiry is invalid")
+        for name, value in (("event_id", event_id), ("project_id", project_id),
+                            ("project_version", project_version), ("request_id", request_id)):
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"{name} must be non-empty trimmed text")
+        if not isinstance(payload, dict) or "authorization" in payload:
+            raise ValueError("effectiveness payload must be an object without caller authorization")
+        required = {
+            "schema", "finding_id", "finding_version", "implementation_event_id",
+            "implementation_evidence_binding", "outcome", "criteria_results", "observed_outcomes",
+            "residual_risks", "evidence_id", "evidence_version", "evidence_binding",
+            "evidence_refs", "created_at_utc",
+        }
+        if set(payload) != required or payload.get("schema") != "raei-finding-effectiveness-v1":
+            raise ValueError("effectiveness report has an invalid field set or schema")
+        for field in ("finding_id", "finding_version", "implementation_event_id",
+                      "evidence_id", "evidence_version", "created_at_utc"):
+            if not isinstance(payload.get(field), str) or not payload[field].strip():
+                raise ValueError(f"{field} must be non-empty text")
+        if payload.get("outcome") not in {"EFFECTIVE", "INEFFECTIVE", "INCONCLUSIVE"}:
+            raise ValueError("effectiveness outcome is unsupported")
+        for field in ("criteria_results", "observed_outcomes"):
+            if (not isinstance(payload.get(field), list) or not payload[field]
+                    or any(not isinstance(item, str) or not item.strip() for item in payload[field])):
+                raise ValueError(f"{field} must be a non-empty list of non-empty strings")
+        risks = payload.get("residual_risks")
+        if not isinstance(risks, list) or any(not isinstance(item, str) or not item.strip() for item in risks):
+            raise ValueError("residual_risks must be a list of non-empty strings")
+        binding = payload.get("evidence_binding")
+        implementation_binding = payload.get("implementation_evidence_binding")
+        if (not isinstance(binding, dict) or set(binding) != {"evidence_id", "evidence_version", "sha256", "size_bytes"}
+                or not isinstance(implementation_binding, dict)
+                or set(implementation_binding) != {"evidence_id", "evidence_version", "sha256", "size_bytes"}):
+            raise ValueError("effectiveness requires exact assessment and implementation evidence bindings")
+        for item in (binding, implementation_binding):
+            if (not isinstance(item.get("evidence_id"), str) or not item["evidence_id"].strip()
+                    or not isinstance(item.get("evidence_version"), str) or not item["evidence_version"].strip()
+                    or not isinstance(item.get("sha256"), str) or len(item["sha256"]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in item["sha256"])
+                    or not isinstance(item.get("size_bytes"), int) or isinstance(item.get("size_bytes"), bool)
+                    or item["size_bytes"] < 0):
+                raise ValueError("effectiveness evidence binding is malformed")
+        refs = payload.get("evidence_refs")
+        if (payload.get("evidence_id") != binding["evidence_id"]
+                or payload.get("evidence_version") != binding["evidence_version"]
+                or not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict)
+                or any(refs[0].get(k) != binding[v] for k, v in (
+                    ("evidence_id", "evidence_id"), ("version", "evidence_version"),
+                    ("sha256", "sha256"), ("size_bytes", "size_bytes")))
+                or not isinstance(refs[0].get("relative_path"), str) or not refs[0]["relative_path"].strip()):
+            raise ValueError("effectiveness evidence reference does not match its exact binding")
+        if (approval.artifact_id != binding["evidence_id"]
+                or approval.artifact_version != binding["evidence_version"]
+                or approval.artifact_sha256 != binding["sha256"]
+                or approval.artifact_size_bytes != binding["size_bytes"]
+                or not all((approval.subject_id, approval.actor_id, approval.actor_role,
+                            approval.authn_context, approval.identity_session_id,
+                            approval.identity_policy_version, approval.identity_provider_id,
+                            approval.authenticated_at))):
+            raise ValueError("effectiveness approval is not bound to evidence or identity claims")
+        finding_id, finding_version = payload["finding_id"], payload["finding_version"]
+        if event_id != f"FINDING_EFFECTIVENESS_ASSESSED:{finding_id}@{finding_version}:{request_id}":
+            raise ValueError("effectiveness event ID is invalid")
+        enriched = dict(payload)
+        enriched["authorization"] = {
+            "issuer": approval.issuer, "approval_id": approval.approval_id,
+            "actor_id": approval.actor_id, "subject_id": approval.subject_id,
+            "actor_role": approval.actor_role, "action": approval.action,
+            "identity_provider_id": approval.identity_provider_id,
+            "identity_policy_version": approval.identity_policy_version,
+            "identity_session_id": approval.identity_session_id,
+            "authenticated_at_utc": approval.authenticated_at.isoformat(),
+            "project_id": project_id, "project_version": project_version,
+            "request_id": request_id, "artifact_sha256": binding["sha256"],
+            "artifact_size_bytes": binding["size_bytes"],
+            "signature_sha256": hashlib.sha256((approval.signature or "").encode("ascii")).hexdigest(),
+        }
+        normalised = self._normalise(enriched)
+        encoded = self._canonical(normalised)
+        if not self.verify():
+            raise ValueError("cannot append to an invalid activity history")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT event_type,project_id,subject_id,payload_json FROM activity_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if existing:
+                if existing != ("FINDING_EFFECTIVENESS_ASSESSED", project_id, finding_id, encoded):
+                    db.rollback()
+                    raise ReadinessReplayError("effectiveness event ID was replayed with different data")
+                db.commit()
+                return False
+            rows = db.execute(
+                """SELECT event_id,event_type,payload_json FROM activity_events
+                WHERE project_id=? AND subject_id=? AND event_type IN
+                ('FINDING_RESEARCHED','FINDING_REPRODUCED','FINDING_PLANNED','FINDING_IMPLEMENTED',
+                 'FINDING_EFFECTIVENESS_ASSESSED') ORDER BY sequence""",
+                (project_id, finding_id),
+            ).fetchall()
+            same_version = [(eid, kind, json.loads(raw)) for eid, kind, raw in rows
+                            if json.loads(raw).get("finding_version") == finding_version]
+            implementations = [(eid, item) for eid, kind, item in same_version if kind == "FINDING_IMPLEMENTED"]
+            if len(implementations) != 1:
+                db.rollback()
+                raise ValueError("effectiveness requires exactly one prior implementation")
+            impl_event_id, impl_payload = implementations[0]
+            if (payload["implementation_event_id"] != impl_event_id
+                    or payload["implementation_evidence_binding"] != impl_payload.get("evidence_binding")
+                    or impl_payload.get("authorization", {}).get("project_version") != project_version):
+                db.rollback()
+                raise ValueError("effectiveness assessment does not bind the exact implementation event and evidence")
+            if any(kind == "FINDING_EFFECTIVENESS_ASSESSED" for _, kind, _ in same_version):
+                db.rollback()
+                raise ValueError("effectiveness assessment is already recorded for this finding version")
+            prior_auth = [item.get("authorization", {}) for _, kind, item in same_version
+                          if kind in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED"}]
+            captured_rows = db.execute(
+                "SELECT payload_json FROM activity_events WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?",
+                (project_id, finding_id),
+            ).fetchall()
+            captured = next((json.loads(raw) for (raw,) in captured_rows
+                             if json.loads(raw).get("version") == finding_version), {})
+            if captured.get("submitter_identity"):
+                prior_auth.append(captured["submitter_identity"])
+            for prior in prior_auth:
+                if (approval.subject_id == prior.get("subject_id")
+                        or approval.identity_session_id == prior.get("identity_session_id")
+                        or approval.identity_provider_id != prior.get("identity_provider_id")
+                        or approval.identity_policy_version != prior.get("identity_policy_version")):
+                    db.rollback()
+                    raise ValueError("effectiveness requires an independent assessor in the same trusted identity domain")
+            self._append_event_tx(db, event_id, "FINDING_EFFECTIVENESS_ASSESSED", normalised, project_id, finding_id)
             db.commit()
         return True
 
