@@ -201,6 +201,83 @@ class ApprovalVerifierTests(unittest.TestCase):
             )
         self.assertEqual(registry.calls, 2)
 
+    def test_live_key_registry_outage_fails_closed(self):
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                raise OSError("registry unavailable")
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "registry is unavailable"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+
+    def test_live_key_registry_rejects_public_key_substitution_before_consumption(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        replacement_key = Ed25519PrivateKey.from_private_bytes(bytes(range(33, 65))).public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw,
+        )
+
+        class Registry:
+            calls = 0
+
+            def resolve_key(inner, key_id, *, issuer, environment):
+                inner.calls += 1
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="ACTIVE",
+                    public_key=self.key if inner.calls == 1 else replacement_key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision=f"registry-revision-{inner.calls:03d}",
+                    resolved_at=self.now,
+                )
+
+        registry = Registry()
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=registry,
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {"PUBLISH": ["publisher"]},
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
+        )
+        with self.assertRaisesRegex(ApprovalError, "changed or was revoked"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+        self.assertEqual(registry.calls, 2)
+
+    def test_live_key_registry_rejects_environment_mismatch(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment="staging",
+                    status="ACTIVE", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision="registry-revision-006",
+                    resolved_at=self.now,
+                )
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "mismatched key record"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+
     def test_live_key_registry_preserves_historical_signature_audit_for_verify_only_key(self):
         from rhemascript.core.verification_keys import VerificationKeyRecord
 
