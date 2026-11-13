@@ -1,6 +1,6 @@
 # RAEI Field Intelligence & Continuous R&D Engine V1.0
 
-**Status:** Working implementation candidate on the PR #45 feature branch. Exact head `b01dbfd8247b207afcf92bc4fa48b66897e46bf9` passed the full contract/synthetic CI suite and IF-18 read-only validation (GitHub Actions run 43360742484).  
+**Status:** Working implementation candidate on the PR #45 feature branch. Current implementation candidate includes the optional V3 authenticated submitter capture path and consumed-approval capability enforcement; exact-head CI run #1363 passed on code/test head `4af72f8812b291c2530f2471a5f5fd9c933dde29`. Production identity adapters remain unimplemented.  
 **Purpose:** Preserve creator observations, investigate them with evidence, and connect findings to research, decisions, requirements, implementation, tests and learning.  
 **Authority:** No new approval gate. The Human Director retains existing decision and execution authority.
 
@@ -81,9 +81,9 @@ These are intake suggestions only. They do not prove the observation is true, th
 
 ### Current status and authority boundary
 
-Only `SUBMITTED` is implemented as a finding status. Investigation, reproduction, research, recommendation, decision, approval, implementation and closure are subsequent controlled events, not automatic transitions.
+The default local CLI capture remains unverified unless a trusted V3 submitter credential is supplied through the authenticated capture API. The authenticated API requires a V3 `FINDING_SUBMIT` credential bound to the exact observation evidence ID/version/SHA-256/size, project version and request ID. The registry records actor ID from the verified directory-derived approval, issuer-scoped subject, role, authentication context/time, session, policy/provider IDs and approval fingerprint. Generic event append cannot forge the verified identity fields. The approval must have passed atomic replay consumption before the registry accepts it.
 
-No actor identity is authenticated by the current local CLI. A submitted-by label, if supplied, is operator-asserted and remains `UNVERIFIED`. This intake does not approve a requirement, authorize a code change, consume credits, connect a Google account, generate media, upload or publish.
+The default CLI still records `UNVERIFIED` submitter identity. Investigation, reproduction, research, recommendation, decision, planning, implementation, effectiveness assessment and closure are subsequent controlled events, not automatic transitions. Source authentication and claim relevance remain separately unassessed. This intake does not approve a requirement, authorize a code change, consume credits, connect a Google account, generate media, upload or publish.
 
 ## 5. Operator commands
 
