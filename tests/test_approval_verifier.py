@@ -73,7 +73,7 @@ class ApprovalVerifierTests(unittest.TestCase):
                 "subject_id": "subject-" + payload["actor_id"],
                 "actor_role": "director" if action == "FINAL_ACCEPTANCE" else "publisher",
                 "authn_context": "mfa",
-                "authenticated_at": self.now.isoformat(),
+                "authenticated_at": payload["issued_at"],
                 "identity_session_id": "session-" + payload["actor_id"],
                 "identity_policy_version": "identity-policy-v1",
                 "identity_provider_id": "test-idp",
