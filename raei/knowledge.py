@@ -90,6 +90,8 @@ def _validate_payload(payload: dict[str, Any], evidence: EvidenceVersion) -> Non
     supersedes = _string_list(payload, "supersedes")
     if any(not re.fullmatch(r"[A-Z0-9][A-Z0-9._:-]{2,127}@[0-9]+\.[0-9]+(?:\.[0-9]+)?", item) for item in supersedes):
         raise RAEIKnowledgeError("supersedes entries must use knowledge_id@version format")
+    if len(set(supersedes)) != len(supersedes):
+        raise RAEIKnowledgeError("supersedes entries must be unique")
     if payload["evidence_id"] != evidence.evidence_id or payload["evidence_version"] != evidence.version:
         raise RAEIKnowledgeError("knowledge artifact does not identify the verified evidence version")
     created_at = payload["created_at_utc"]
