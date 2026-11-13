@@ -90,10 +90,23 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                            ensure_ascii=False, allow_nan=False).encode()
             ).hex()
             credentials.append(payload)
+        class SyntheticSnapshotConsumptionStore:
+            """In-memory test double; never a production consumption ledger."""
+            def __init__(self):
+                self.entries = set()
+
+            def consume_many_once(self, entries):
+                self.entries.update((item.approval_id, item.nonce) for item in entries)
+                return True
+
+            def read_consumption_state(self, approval_id, nonce):
+                return ((approval_id, nonce) in self.entries, False)
+
+        synthetic_store = SyntheticSnapshotConsumptionStore()
         verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
             verification_keys={"key-2026-01": public_key},
-            consume_many_once=lambda entries: True,
+            consume_many_once=synthetic_store.consume_many_once,
             clock=lambda: now,
             identity_policies={"identity-policy-v1": {
                 "provider_id": "test-idp",
