@@ -33,11 +33,11 @@ class ApprovalScope:
         values = (self.artifact_id, self.artifact_version, self.artifact_sha256, self.artifact_size_bytes)
         if any(value is not None for value in values):
             if (not isinstance(self.artifact_id, str) or not _ID.fullmatch(self.artifact_id)
-                    or not isinstance(self.artifact_version, str) or not _ID.fullmatch(self.artifact_version)
+                    or not isinstance(self.artifact_version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", self.artifact_version)
                     or not isinstance(self.artifact_sha256, str)
                     or not re.fullmatch(r"[0-9a-f]{64}", self.artifact_sha256)
                     or not isinstance(self.artifact_size_bytes, int)
-                    or isinstance(self.artifact_size_bytes, bool) or self.artifact_size_bytes < 0):
+                    or isinstance(self.artifact_size_bytes, bool) or self.artifact_size_bytes <= 0):
                 raise ValueError("artifact-bound approval requires artifact ID/version/SHA-256/size")
 
 
