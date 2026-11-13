@@ -202,8 +202,8 @@ class RAEITrainingTests(unittest.TestCase):
                 "UPDATE readiness_runs SET payload_sha256=?, payload_json=? WHERE run_id=?",
                 (digest, encoded, "ATT-1"),
             )
-        self.assertTrue(self.registry.verify())
-        with self.assertRaisesRegex(RAEITrainingError, "cannot grant"):
+        self.assertFalse(self.registry.verify())
+        with self.assertRaisesRegex(ValueError, "integrity verification failed"):
             get_progress(self.registry)
 
     def test_external_checkpoint_protects_learning_history(self):
