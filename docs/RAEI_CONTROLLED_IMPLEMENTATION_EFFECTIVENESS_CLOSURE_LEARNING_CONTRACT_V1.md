@@ -1,6 +1,6 @@
 # RAEI Controlled Implementation, Effectiveness, Closure & Learning Contract V1.0
 
-**Status:** Governance contract and evidence templates only. The implementation, effectiveness, closure and knowledge-inheritance transitions described here are proposed until their typed APIs, registry enforcement, projections and adversarial tests are merged and pass exact-head CI.
+**Status:** Candidate implementation transition is implemented and synthetic integration CI passed on `5a34e7110d04f7693f50a6d559120e491d27698a` (run #1446). Effectiveness, closure and knowledge-inheritance transitions remain proposed until their typed APIs, registry enforcement, projections and adversarial tests pass exact-head CI.
 **Authority:** A recorded plan is not permission to execute it. The Human Director retains existing decision and execution authority. No new approval gate is silently activated by this document.
 **Scope:** Candidate-only design for the remaining RAEI finding lifecycle. This document does not authorize live project changes, production deployment, provider writes, media generation, upload or publishing.
 
@@ -20,6 +20,8 @@ The intended version-bound sequence is:
 A plan, an implementation record, a test result, an effectiveness assessment and a closure decision are different claims. None may be inferred from another.
 
 ## 2. Implementation transition contract
+
+**Candidate implementation status:** `record_finding_implementation` and the registry's transactional `FINDING_IMPLEMENTED` event are implemented. The report binds the exact prior plan event and plan evidence tuple; the registry enforces consumed V3 approval, project/version scope, identity-domain consistency, independent implementer separation and replay protection. The finding projection validates and exposes `IMPLEMENTED`. Synthetic tests cover the successful transition and planner-identity reuse rejection. CI run #1446 passed on the exact implementation/test head above.
 
 Proposed action: `FINDING_IMPLEMENT`.
 
