@@ -979,7 +979,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_closure()
         events = self.registry.list_activity_events()
         for event in events:
-            if event["event_type"] == "FINDING_RESEARCHED":
+            if event["event_type"] == "FINDING_PLANNED":
                 event["project_id"] = "RS-PWW-OTHER"
         with patch.object(self.registry, "list_activity_events", return_value=events):
             with self.assertRaisesRegex(RAEIKnowledgeError, "project or project-version lifecycle scope"):
