@@ -201,6 +201,7 @@ def export_composite_checkpoint_manifest(
             or archive_after.get("snapshot_sha256") != archive.get("snapshot_sha256")
             or archive_after.get("matches_current_state") is not True):
         raise CompositeCheckpointError("approval archive changed during composite checkpoint capture")
+    archive_file_digest = hashlib.sha256(archive_raw).hexdigest()
     checkpoint_digest = hashlib.sha256(_canonical(readiness_before)).hexdigest()
     body = {
         "schema": SCHEMA,
