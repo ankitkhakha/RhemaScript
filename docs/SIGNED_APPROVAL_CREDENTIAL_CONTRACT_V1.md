@@ -67,7 +67,7 @@ The method-aware gateway now requires a durable `SQLitePublishSessionRegistry` b
 - enforces monotonic acknowledged byte offsets, one in-flight operation, bounded lease recovery after process interruption, terminal completion and duplicate-session rejection;
 - records indeterminate outcomes and includes session state in the V4 approval-state HMAC checkpoint.
 
-The gateway fails closed if no durable registry is supplied. This is a local SQLite candidate implementation, not a production deployment. It must receive independent review and operational validation of database custody, checkpoint retention, backup/restore, process-restart recovery and concurrency before any production provider write can be enabled.
+The gateway fails closed if no durable registry is supplied. This is a local SQLite candidate implementation, not a production deployment. It must receive independent review and operational validation of database custody, checkpoint retention, backup/restore, process-restart recovery and concurrency before any production provider write can be enabled. The registry emits V4 checkpoints covering approvals, revocations and publish sessions; approval-only V3 checkpoints are deliberately not accepted by the registry verifier. Create and retain a fresh V4 checkpoint outside the database before enabling the registry.
 
 ## Remaining prerequisites
 
