@@ -242,19 +242,14 @@ class RAEIKnowledgeTests(unittest.TestCase):
             record_knowledge(self.registry, second, evidence2)
 
     def test_supersedes_requires_strictly_older_version(self):
-        first, evidence1 = self.make_item()
+        first, evidence1 = self.make_item(version="2.0")
         record_knowledge(self.registry, first, evidence1)
-        for version in ("1.0", "0.9"):
-            second, evidence2 = self.make_item(version="2.0")
-            second["supersedes"] = [f"RS-KNOW-001@{version}"]
-            evidence2 = self.reverify(second, evidence2)
-            if version == "1.0":
-                with self.assertRaisesRegex(RAEIKnowledgeError, "strictly older"):
-                    record_knowledge(self.registry, second, evidence2)
-            else:
-                # The referenced version must exist before chronology can be evaluated.
-                with self.assertRaisesRegex(RAEIKnowledgeError, "does not exist"):
-                    record_knowledge(self.registry, second, evidence2)
+        for candidate_version in ("2.0", "1.0"):
+            candidate, evidence = self.make_item(version=candidate_version)
+            candidate["supersedes"] = ["RS-KNOW-001@2.0"]
+            evidence = self.reverify(candidate, evidence)
+            with self.assertRaisesRegex(RAEIKnowledgeError, "strictly older"):
+                record_knowledge(self.registry, candidate, evidence)
 
     def test_supersedes_rejects_duplicate_targets(self):
         payload, evidence = self.make_item()
