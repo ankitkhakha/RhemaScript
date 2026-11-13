@@ -528,9 +528,10 @@ class ExternalIntegrationGateway:
 
         session_context = None
         if operation.upper() in {"UPLOAD_SESSION", "UPLOAD_CHUNK"}:
-            if self.publish_session_registry is None:
+            from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+            if not isinstance(self.publish_session_registry, SQLitePublishSessionRegistry):
                 raise ExternalIntegrationError(
-                    "durable publish-session registry is required before YouTube provider writes"
+                    "a durable SQLitePublishSessionRegistry is required before YouTube provider writes"
                 )
             approval_fingerprint = _publish_approval_fingerprint(approvals)
             session_identity = {
