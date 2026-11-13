@@ -36,11 +36,11 @@ _INTERNAL_EVENT_TYPES = {"READINESS_RUN_RECORDED", "LEGACY_READINESS_RECORD_IMPO
 
 class ReadinessRunRegistry:
     def __init__(self, database: str | Path):
+        if os.name != "posix":
+            raise ValueError("readiness registry requires POSIX file-permission controls")
         self.database = Path(database).expanduser()
-        if self.database.exists() and self.database.is_symlink():
-            raise ValueError("readiness database must not be a symlink")
-        if not self.database.parent.is_dir():
-            raise ValueError("readiness database parent directory must exist")
+        self._validate_database_parent()
+        self._prepare_database()
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS readiness_runs (
                 run_id TEXT PRIMARY KEY,
@@ -68,11 +68,60 @@ class ReadinessRunRegistry:
                 BEGIN SELECT RAISE(ABORT, 'activity events are append-only'); END""")
         self._migrate_legacy_readiness_records()
 
+    def _validate_database_parent(self) -> None:
+        absolute = self.database.absolute()
+        current = Path(absolute.anchor)
+        try:
+            for component in absolute.parts[1:-1]:
+                current = current / component
+                info = current.lstat()
+                if stat.S_ISLNK(info.st_mode):
+                    raise ValueError("readiness database path must not contain symlinked directories")
+            parent_info = self.database.parent.lstat()
+            parent_stat = self.database.parent.stat()
+        except ValueError:
+            raise
+        except OSError:
+            raise ValueError("readiness database parent directory must already exist") from None
+        if stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
+            raise ValueError("readiness database parent must be a real directory")
+        if parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) & 0o077:
+            raise ValueError("readiness database parent must be owner-owned and private (0700 or stricter)")
+
+    def _prepare_database(self) -> None:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(self.database, flags, 0o600)
+            os.fchmod(fd, 0o600)
+            os.close(fd)
+        except FileExistsError:
+            try:
+                info = self.database.lstat()
+            except OSError:
+                raise ValueError("readiness database is inaccessible") from None
+            if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077):
+                raise ValueError("readiness database must be an owner-owned private regular file (0600 or stricter)")
+        except OSError:
+            raise ValueError("readiness database could not be created safely") from None
+
     def _connect(self):
-        db = sqlite3.connect(self.database, timeout=10, isolation_level=None)
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute("PRAGMA synchronous=FULL")
-        return db
+        self._validate_database_parent()
+        try:
+            info = self.database.lstat()
+        except OSError:
+            raise ValueError("readiness database is missing or inaccessible") from None
+        if (stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ValueError("readiness database permissions or file type are unsafe")
+        try:
+            db = sqlite3.connect(self.database, timeout=10, isolation_level=None)
+            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=FULL")
+            os.chmod(self.database, 0o600)
+            return db
+        except (OSError, sqlite3.Error):
+            raise ValueError("readiness database could not be opened safely") from None
 
     @staticmethod
     def _canonical(value: Any) -> str:
