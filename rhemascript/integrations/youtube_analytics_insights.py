@@ -49,25 +49,41 @@ def _period_days(query: dict[str, Any]) -> int:
     return (end - start).days + 1
 
 
-def _metric_totals(snapshot: dict[str, Any]) -> dict[str, str] | None:
+_ADDITIVE_METRICS = {
+    "views", "estimatedMinutesWatched", "subscribersGained", "subscribersLost",
+    "likes", "dislikes", "comments", "shares", "videosAddedToPlaylists",
+    "videosRemovedFromPlaylists", "playlistStarts",
+}
+
+
+def _metric_values(snapshot: dict[str, Any]) -> dict[str, tuple[Decimal | None, str]] | None:
     report = snapshot["response"]
     rows = report.get("rows")
     if not rows:
         return None
     headers = report["columnHeaders"]
-    metric_positions: list[tuple[str, int, str]] = []
+    positions: dict[str, tuple[int, str]] = {}
     for index, header in enumerate(headers):
         if header["columnType"] != "METRIC":
             continue
+        name = header["name"]
         dtype = header["dataType"].upper()
         if dtype not in {"INTEGER", "FLOAT", "CURRENCY"}:
             raise YouTubeAnalyticsInsightError(
-                f"metric {header['name']} has unsupported numeric data type {dtype}"
+                f"metric {name} has unsupported numeric data type {dtype}"
             )
-        metric_positions.append((header["name"], index, dtype))
-    totals: dict[str, Decimal] = {name: Decimal(0) for name, _, _ in metric_positions}
-    for row_number, row in enumerate(rows):
-        for name, index, dtype in metric_positions:
+        if name != "averageViewDuration" and name not in _ADDITIVE_METRICS:
+            raise YouTubeAnalyticsInsightError(
+                f"metric {name} has no V1 aggregation contract"
+            )
+        positions[name] = (index, dtype)
+
+    totals: dict[str, Decimal] = {}
+    for name, (index, dtype) in positions.items():
+        if name == "averageViewDuration":
+            continue
+        total = Decimal(0)
+        for row_number, row in enumerate(rows):
             value = row[index]
             if isinstance(value, bool) or not isinstance(value, (int, float, str)):
                 raise YouTubeAnalyticsInsightError(
@@ -87,8 +103,25 @@ def _metric_totals(snapshot: dict[str, Any]) -> dict[str, str] | None:
                 raise YouTubeAnalyticsInsightError(
                     f"integer metric {name} contains a fractional value"
                 )
-            totals[name] += number
-    return {name: _decimal_text(value) for name, value in totals.items()}
+            total += number
+        totals[name] = total
+
+    values: dict[str, tuple[Decimal | None, str]] = {
+        name: (value, "SUM") for name, value in totals.items()
+    }
+    if "averageViewDuration" in positions:
+        if not {"views", "estimatedMinutesWatched"}.issubset(totals):
+            raise YouTubeAnalyticsInsightError(
+                "averageViewDuration requires views and estimatedMinutesWatched "
+                "in the same query for a weighted period average"
+            )
+        views = totals["views"]
+        average = (
+            None if views == 0
+            else totals["estimatedMinutesWatched"] * Decimal(60) / views
+        )
+        values["averageViewDuration"] = (average, "WEIGHTED_AVERAGE_SECONDS")
+    return values
 
 
 def _query_identity(query: dict[str, Any]) -> dict[str, Any]:
@@ -124,16 +157,22 @@ def compare_analytics_periods(
             "periods must have equal inclusive date-range lengths"
         )
 
-    current_totals = _metric_totals(current_snapshot)
-    previous_totals = _metric_totals(previous_snapshot)
+    current_values = _metric_values(current_snapshot)
+    previous_values = _metric_values(previous_snapshot)
     metrics: dict[str, Any] = {}
-    names = set(current_totals or {}) | set(previous_totals or {})
+    names = set(current_values or {}) | set(previous_values or {})
     for name in sorted(names):
-        current_value = Decimal(current_totals[name]) if current_totals is not None else None
-        previous_value = Decimal(previous_totals[name]) if previous_totals is not None else None
-        if current_value is None or previous_value is None:
+        current_entry = current_values.get(name) if current_values is not None else None
+        previous_entry = previous_values.get(name) if previous_values is not None else None
+        aggregation = (current_entry or previous_entry)[1]
+        current_value = current_entry[0] if current_entry is not None else None
+        previous_value = previous_entry[0] if previous_entry is not None else None
+        if current_values is None or previous_values is None:
             delta = change_pct = None
             status = "INSUFFICIENT_DATA"
+        elif current_value is None or previous_value is None:
+            delta = change_pct = None
+            status = "ZERO_DENOMINATOR"
         else:
             delta_value = current_value - previous_value
             delta = _decimal_text(delta_value)
@@ -144,8 +183,9 @@ def compare_analytics_periods(
                 change_pct = _decimal_text(delta_value / abs(previous_value) * 100)
                 status = "COMPARABLE"
         metrics[name] = {
-            "current_total": None if current_value is None else _decimal_text(current_value),
-            "previous_total": None if previous_value is None else _decimal_text(previous_value),
+            "aggregation": aggregation,
+            "current_value": None if current_value is None else _decimal_text(current_value),
+            "previous_value": None if previous_value is None else _decimal_text(previous_value),
             "absolute_change": delta,
             "percentage_change": change_pct,
             "status": status,
@@ -161,14 +201,14 @@ def compare_analytics_periods(
             "end_date": current_query["endDate"],
             "days": current_days,
             "returned_rows": current_snapshot["row_count"],
-            "data_status": "NO_DATA" if current_totals is None else "DATA_RETURNED",
+            "data_status": "NO_DATA" if current_values is None else "DATA_RETURNED",
         },
         "previous_period": {
             "start_date": previous_query["startDate"],
             "end_date": previous_query["endDate"],
             "days": previous_days,
             "returned_rows": previous_snapshot["row_count"],
-            "data_status": "NO_DATA" if previous_totals is None else "DATA_RETURNED",
+            "data_status": "NO_DATA" if previous_values is None else "DATA_RETURNED",
         },
         "metrics": metrics,
         "interpretation": (
@@ -204,13 +244,13 @@ def verify_analytics_period_comparison(comparison: dict[str, Any]) -> bool:
     for name, metric in comparison["metrics"].items():
         if not isinstance(name, str) or not isinstance(metric, dict):
             raise YouTubeAnalyticsInsightError("comparison metric entry is malformed")
-        if metric.get("status") not in {"COMPARABLE", "ZERO_BASELINE", "INSUFFICIENT_DATA"}:
+        if metric.get("status") not in {"COMPARABLE", "ZERO_BASELINE", "INSUFFICIENT_DATA", "ZERO_DENOMINATOR"}:
             raise YouTubeAnalyticsInsightError("comparison metric status is invalid")
         if metric["status"] == "INSUFFICIENT_DATA" and (
             metric.get("absolute_change") is not None
             or metric.get("percentage_change") is not None
         ):
             raise YouTubeAnalyticsInsightError("insufficient-data metric cannot report a change")
-        if metric["status"] == "ZERO_BASELINE" and metric.get("percentage_change") is not None:
-            raise YouTubeAnalyticsInsightError("zero-baseline metric cannot report percentage change")
+        if metric["status"] in {"ZERO_BASELINE", "ZERO_DENOMINATOR"} and metric.get("percentage_change") is not None:
+            raise YouTubeAnalyticsInsightError("undefined percentage metric cannot report percentage change")
     return True
