@@ -239,3 +239,55 @@ At this checkpoint:
 The CI workflow now pins the three external GitHub Actions to immutable commit SHAs, disables persisted checkout credentials, limits repository permissions to read-only contents, and pins the runner image to Ubuntu 24.04. Exact-head CI #1580 passed on `781bd27d6fc7357ee98f4d1c7c91a95ea8f00426`.
 
 This does not lock Python package dependencies and does not constitute production security certification.
+
+## 12. Exact-head CI evidence and observed dependency resolution — 13 November 2026
+
+### Repository and pull-request state
+
+- Candidate branch: `feat/ieif-raei-integration`.
+- Exact candidate SHA: `940ca85ef6dc209e23cdad35dc223a4a427eef5c`.
+- Main/base SHA: `c44d8e9c0847bd220167945b967db74fcf12635f`.
+- Compare result: 453 commits ahead, 0 behind.
+- PR #62: open, draft, unmerged; GitHub reports mergeable and clean at this observation.
+- No merge, deployment, live Google authorization or YouTube write was performed.
+
+### Exact-head CI run #1583
+
+- Run: `43398267178`.
+- Job: `131794446565`, “Full contract and synthetic integration CI”.
+- Run head SHA exactly matches the candidate SHA above.
+- Run conclusion: success. Setup, checkout, Python setup, dependency installation, full local CI suite and report upload all completed successfully.
+- Python runtime observed: CPython `3.12.16`.
+- Exact dependency versions resolved in this run:
+  - `cryptography==47.0.0`
+  - `cffi==2.1.1`
+  - `pycparser==3.12`
+  - local editable project `rhemascript-new-system==0.1.0`
+- These versions are an observed snapshot from this CI run only. They are not a dependency lock, do not establish artifact hashes for every dependency, and do not guarantee future resolver output.
+
+### Retained IF-18 report
+
+The workflow uploaded artifact `if18-read-only-validation-report` (artifact ID `14023079856`, 659-byte ZIP; 14-day retention configured).
+
+The archived JSON report was downloaded and inspected. Its SHA-256 is:
+
+`a7b11a7e5130fe1c99ac925ed32663772a1325ff328ff7a0952ab3140d43e7c6`
+
+The report records:
+- overall status `PASS`;
+- full contract and synthetic test suite exit code 0;
+- IF-18 allowlist limited to `CHANNEL_READ` and `OAUTH_TOKEN`;
+- no publishing operations in the allowlist;
+- `publishing_enabled=false`;
+- `live_google_connection_attempted=false`;
+- validation mode `SYNTHETIC_ONLY`.
+
+The report explicitly states that it does not prove live OAuth consent, account access or channel identity, and that the channel owner must run the separate read-only connection command locally. The report is evidence of the CI validation mode and result, not proof of live account connectivity.
+
+### Dependency reproducibility disposition
+
+The previously missing observation of resolved package versions is now captured above. The dependency reproducibility issue remains open: the repository still declares version ranges and installs with `pip install -e .`; no hash-locked dependency manifest has been introduced or tested. Do not convert this single-run snapshot into pins without a deliberate lock-generation and clean-install validation task.
+
+### Remaining boundary
+
+This exact-head pass validates the repository's local contracts and synthetic tests. It does not close P1 evidence/history assurance, complete the clean-session human handover test, provide production identity/key custody, establish live YouTube authorization, or authorize merge, deployment or publishing.
