@@ -8,8 +8,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
+from raei.governance import record_finding_disposition
 from raei.finding_lifecycle import (
-    RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction,
+    RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan,
 )
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.evidence.artifact_verification import verify_artifact
@@ -46,6 +47,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 "allowed_roles_by_action": {
                     "FINDING_RESEARCH": ["researcher"],
                     "FINDING_REPRODUCE": ["reproducer"],
+                    "FINDING_PLAN": ["planner"],
                 },
                 "allowed_authn_contexts": ["mfa"],
                 "max_authentication_age_seconds": 300,
@@ -111,7 +113,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": "researcher" if action == "FINDING_RESEARCH" else "reproducer",
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -168,6 +170,93 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
         )
         return result
+
+
+    def _v1_disposition_credential(self, action, actor, suffix):
+        token = {
+            "schema": "RhemaScript.ApprovalCredential.v1",
+            "approval_id": f"approval-{suffix}",
+            "issuer": "RhemaScript-Approval-Service",
+            "actor_id": actor,
+            "action": action,
+            "project_id": self.project_id,
+            "project_version": self.project_version,
+            "request_id": f"request-FINDING-DISPOSITION-{self.finding_id}",
+            "issued_at": self.now.isoformat(),
+            "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
+            "nonce": f"nonce-{suffix}",
+            "key_id": "key-2026-01",
+        }
+        token["signature"] = self.private_key.sign(
+            json.dumps(token, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hex()
+        return token
+
+    def _record_reproduction(self, *, subject_id="subject-reproducer-001", session_id="session-reproducer-001"):
+        report = self._reproduction_report()
+        raw, evidence = self._write_report("reproduction.json", report, report["evidence_id"])
+        credential = self._credential(
+            "FINDING_REPRODUCE", evidence, subject_id=subject_id,
+            actor_id="actor-reproducer-001", session_id=session_id,
+        )
+        return record_finding_reproduction(
+            self.registry, self.verifier, credential,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            project_id=self.project_id, project_version=self.project_version,
+            request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
+            evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
+        )
+
+    def _record_accepted_disposition(self):
+        research_evidence = verify_artifact(
+            self.evidence_root, "research.json",
+            evidence_id="EV-FND-RESEARCH-001", version="1.0",
+        )
+        credentials = (
+            self._v1_disposition_credential("FINDING_DISPOSITION_REVIEW", "reviewer-001", "review-001"),
+            self._v1_disposition_credential("FINDING_DISPOSITION_CONFIRM", "approver-001", "confirm-001"),
+        )
+        return record_finding_disposition(
+            self.registry, self.verifier, credentials,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            project_id=self.project_id, project_version=self.project_version,
+            request_id=f"request-FINDING-DISPOSITION-{self.finding_id}",
+            disposition="ACCEPTED", rationale="Research and reproduction evidence independently reviewed.",
+            evidence_root=str(self.evidence_root), evidence=research_evidence,
+        )
+
+    def _plan_report(self):
+        return {
+            "schema": "raei-finding-plan-v1",
+            "finding_id": self.finding_id,
+            "finding_version": self.finding_version,
+            "plan_objective": "Correct the portrait aspect-ratio propagation and prove it remains stable.",
+            "scope": "Update the prompt-to-generation aspect-ratio contract and its tests.",
+            "tasks": ["Trace ratio field propagation.", "Implement validated mapping.", "Add regression tests."],
+            "milestones": ["Contract fixed.", "Regression suite passes."],
+            "acceptance_criteria": ["9:16 remains 9:16 through generation request construction."],
+            "dependencies": ["Approved implementation scope."],
+            "risks": ["Potential regressions in landscape workflows."],
+            "rollback_plan": "Revert the scoped commit and restore the prior validated mapping.",
+            "evidence_id": "EV-FND-PLAN-001",
+            "evidence_version": "1.0",
+            "created_at_utc": self.now.isoformat(),
+        }
+
+    def _record_plan(self, *, subject_id="subject-planner-001", session_id="session-planner-001"):
+        report = self._plan_report()
+        raw, evidence = self._write_report("plan.json", report, report["evidence_id"])
+        credential = self._credential(
+            "FINDING_PLAN", evidence, subject_id=subject_id,
+            actor_id="actor-planner-001", session_id=session_id,
+        )
+        return record_finding_plan(
+            self.registry, self.verifier, credential,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            project_id=self.project_id, project_version=self.project_version,
+            request_id=f"request-FINDING_PLAN-{self.finding_id}",
+            evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
+        )
 
     def test_research_then_independent_reproduction_projects_status(self):
         research = self._record_research()
@@ -243,6 +332,25 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
             )
         self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+
+
+    def test_plan_requires_research_reproduction_and_accepted_disposition(self):
+        self._record_research()
+        self._record_reproduction()
+        with self.assertRaisesRegex(RAEIFindingLifecycleError, "accepted governed disposition"):
+            self._record_plan()
+        self._record_accepted_disposition()
+        result = self._record_plan(subject_id="subject-planner-retry-001", session_id="session-planner-retry-001")
+        self.assertEqual(result["status"], "PLANNED")
+        self.assertEqual(list_findings(self.registry)[0]["status"], "PLANNED")
+
+    def test_plan_rejects_same_human_as_reproducer(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent planner"):
+            self._record_plan(subject_id="subject-reproducer-001", session_id="session-planner-other")
+        self.assertEqual(list_findings(self.registry)[0]["status"], "ACCEPTED")
 
     def test_generic_append_cannot_forge_research_or_reproduction(self):
         with self.assertRaisesRegex(ValueError, "authenticated finding lifecycle"):
