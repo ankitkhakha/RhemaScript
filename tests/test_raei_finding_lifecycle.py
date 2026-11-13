@@ -56,6 +56,8 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                     "FINDING_CLOSURE_CONFIRM": ["closure-approver"],
                     "FINDING_REOPEN_REVIEW": ["reopen-reviewer"],
                     "FINDING_REOPEN_CONFIRM": ["reopen-approver"],
+                    "KNOWLEDGE_REVIEW": ["knowledge-reviewer"],
+                    "KNOWLEDGE_CONFIRM": ["knowledge-approver"],
                     "FINDING_SUBMIT": ["submitter"],
                 },
                 "allowed_authn_contexts": ["mfa"],
@@ -122,7 +124,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver", "FINDING_REOPEN_REVIEW": "reopen-reviewer", "FINDING_REOPEN_CONFIRM": "reopen-approver", "FINDING_SUBMIT": "submitter"}[action],
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver", "FINDING_REOPEN_REVIEW": "reopen-reviewer", "FINDING_REOPEN_CONFIRM": "reopen-approver", "KNOWLEDGE_REVIEW": "knowledge-reviewer", "KNOWLEDGE_CONFIRM": "knowledge-approver", "FINDING_SUBMIT": "submitter"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -607,6 +609,76 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         ]
         self.assertEqual(len(after), 1)
         self.assertEqual(after[0]["event_id"], first["event_id"])
+        self.assertTrue(self.registry.verify())
+
+    def test_consumed_governed_approvals_cannot_authorize_a_second_event(self):
+        evidence = self.finding_evidence
+        request_id = "request-knowledge-approval-reuse-001"
+        actions = ("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM")
+        credentials = (
+            self._credential(
+                actions[0], evidence, subject_id="subject-knowledge-reviewer-001",
+                actor_id="actor-knowledge-reviewer-001",
+                session_id="session-knowledge-reviewer-001", request_id=request_id,
+            ),
+            self._credential(
+                actions[1], evidence, subject_id="subject-knowledge-approver-001",
+                actor_id="actor-knowledge-approver-001",
+                session_id="session-knowledge-approver-001", request_id=request_id,
+            ),
+        )
+        artifact_binding = {
+            "artifact_id": evidence.evidence_id,
+            "artifact_version": evidence.version,
+            "sha256": evidence.sha256,
+            "size_bytes": evidence.size_bytes,
+        }
+        expectations = tuple({
+            "action": action,
+            "project_id": self.project_id,
+            "project_version": self.project_version,
+            "request_id": request_id,
+            "artifact_binding": artifact_binding,
+        } for action in actions)
+        approvals = self.verifier.verify_many_and_consume(
+            credentials, expectations, require_distinct_actors=True,
+        )
+        first_payload = {
+            "knowledge_id": "RS-KNW-APPROVAL-REUSE-001",
+            "knowledge_version": "1.0",
+            "decision": "APPROVED",
+            "rationale": "First governed knowledge review.",
+            "evidence_binding": {
+                "evidence_id": evidence.evidence_id,
+                "evidence_version": evidence.version,
+                "sha256": evidence.sha256,
+                "size_bytes": evidence.size_bytes,
+            },
+        }
+        self.registry.append_governed_activity_event(
+            "KNOWLEDGE_REVIEWED:RS-KNW-APPROVAL-REUSE-001@1.0",
+            "KNOWLEDGE_REVIEWED", first_payload,
+            project_id=self.project_id, project_version=self.project_version,
+            subject_id=first_payload["knowledge_id"], request_id=request_id,
+            approvals=approvals, expected_actions=actions,
+        )
+        second_payload = dict(first_payload)
+        second_payload["knowledge_id"] = "RS-KNW-APPROVAL-REUSE-002"
+        second_payload["rationale"] = "Attempt to reuse the same consumed approvals."
+        with self.assertRaisesRegex(Exception, "already authorized another event"):
+            self.registry.append_governed_activity_event(
+                "KNOWLEDGE_REVIEWED:RS-KNW-APPROVAL-REUSE-002@1.0",
+                "KNOWLEDGE_REVIEWED", second_payload,
+                project_id=self.project_id, project_version=self.project_version,
+                subject_id=second_payload["knowledge_id"], request_id=request_id,
+                approvals=approvals, expected_actions=actions,
+            )
+        reviews = [
+            event for event in self.registry.list_activity_events()
+            if event["event_type"] == "KNOWLEDGE_REVIEWED"
+        ]
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["subject_id"], first_payload["knowledge_id"])
         self.assertTrue(self.registry.verify())
 
     def test_reopening_rejects_project_version_different_from_prior_closure(self):
