@@ -147,7 +147,8 @@ class RAEIGovernanceTests(unittest.TestCase):
         reviews = list_governed_reviews(
             self.registry, event_type="FINDING_DISPOSITIONED",
             subject_id="RS-FND-001",
-        , evidence_root=self.evidence_root)
+            evidence_root=self.evidence_root,
+        )
         self.assertEqual(len(reviews), 1)
         self.assertEqual(reviews[0]["payload"]["authorization"]["actor_ids"],
                          ["reviewer-001", "approver-001"])
@@ -167,7 +168,8 @@ class RAEIGovernanceTests(unittest.TestCase):
         reviews = list_governed_reviews(
             self.registry, event_type="KNOWLEDGE_REVIEWED",
             subject_id="BWSF-01",
-        , evidence_root=self.evidence_root)
+            evidence_root=self.evidence_root,
+        )
         self.assertEqual(reviews[0]["payload"]["decision"], "APPROVED")
 
     def test_registry_rejects_signature_verified_but_unconsumed_review_objects(self):

@@ -6,6 +6,7 @@ atomically consumes them before the registry records a decision.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
