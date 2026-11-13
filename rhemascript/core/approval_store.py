@@ -736,6 +736,8 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         if (not isinstance(status, int) or isinstance(status, bool)
                 or not 100 <= status <= 599):
             raise ValueError("provider status must be an HTTP status integer")
+        if range_header is not None and not isinstance(range_header, str):
+            raise ValueError("provider Range header must be a string")
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
