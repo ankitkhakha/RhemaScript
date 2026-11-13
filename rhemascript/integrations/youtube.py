@@ -70,7 +70,7 @@ def _analytics_identifiers(value: Any, name: str, *, required: bool) -> list[str
 
 
 def _validate_analytics_request(params: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Validate the report-query shape; Google remains authoritative for report compatibility."""
+    """Validate query syntax only; Google's report-specific matrix remains authoritative."""
     if not isinstance(params, dict):
         raise YouTubeIntegrationError("Analytics query parameters must be an object")
     metrics = _analytics_identifiers(params.get("metrics"), "metrics", required=True)
