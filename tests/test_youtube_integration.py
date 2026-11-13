@@ -716,6 +716,61 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     client.upload_video(video.name, title="Test", description="Test",
                                         **self.publish_context(final_film_bytes=b"x" * chunk_size))
 
+
+    def test_publish_rejects_changed_final_film_bytes_before_provider_network(self):
+        calls = []
+        context = self.publish_context()
+        final_artifact = next(
+            item for item in context["evidence_pack"]["artifacts"]
+            if item["artifact_type"] == "EDITED_FILM"
+        )
+        with open(os.path.join(context["evidence_root"], final_artifact["local_path"]), "wb") as stream:
+            stream.write(b"tampered-final-film")
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with self.assertRaisesRegex(YouTubeIntegrationError, "content does not match declared SHA-256"):
+                client.upload_video(video.name, title="Approved", description="Test", **context)
+        self.assertEqual(calls, [])
+
+    def test_publish_rejects_upload_file_not_matching_signed_final_film(self):
+        calls = []
+        context = self.publish_context(final_film_bytes=b"approved-final-film")
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"different-upload-bytes")
+            video.flush()
+            with self.assertRaisesRegex(YouTubeIntegrationError, "do not match the signed final-film artifact digest"):
+                client.upload_video(video.name, title="Approved", description="Test", **context)
+        self.assertEqual(calls, [])
+
+    def test_publish_rejects_one_approval_with_different_final_film_digest(self):
+        calls = []
+        context = self.publish_context()
+        token = context["approval_credentials"][1]
+        token["artifact_sha256"] = "b" * 64
+        payload = {key: value for key, value in token.items() if key != "signature"}
+        token["signature"] = self._sign_test_approval(context, payload)
+        client = YouTubeClient(self.config(), transport=lambda *args: calls.append(args))
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with self.assertRaisesRegex(YouTubeIntegrationError, "binding does not match verified bytes"):
+                client.upload_video(video.name, title="Approved", description="Test", **context)
+        self.assertEqual(calls, [])
+
+    def _sign_test_approval(self, context, payload):
+        # The fixture deliberately keeps its private key out of the production API.
+        # This helper re-signs a deliberately altered test credential for a valid
+        # signature over the wrong artifact digest.
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+        return key.sign(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False, allow_nan=False).encode()
+        ).hex()
+
     def test_upload_requires_existing_nonempty_file(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "missing or cannot be opened safely"):
