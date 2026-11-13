@@ -159,8 +159,7 @@ class ApprovalVerifier:
         consumption_store = getattr(consume_many_once, "__self__", None)
         self._consumption_state = (
             consumption_store
-            if callable(getattr(consumption_store, "is_consumed", None))
-            and callable(getattr(consumption_store, "is_revoked", None))
+            if callable(getattr(consumption_store, "read_consumption_state", None))
             else None
         )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -572,10 +571,7 @@ class ApprovalVerifier:
             raise ApprovalError("approval expired before provider transport")
         if self._consumption_state is not None:
             try:
-                still_consumed = self._consumption_state.is_consumed(
-                    approval.approval_id, approval.nonce,
-                )
-                revoked = self._consumption_state.is_revoked(
+                still_consumed, revoked = self._consumption_state.read_consumption_state(
                     approval.approval_id, approval.nonce,
                 )
             except Exception:
