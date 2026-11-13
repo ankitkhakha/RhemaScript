@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
 from raei.governance import record_finding_disposition
 from raei.finding_lifecycle import (
-    RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan,
+    RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation,
 )
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.evidence.artifact_verification import verify_artifact
@@ -48,6 +48,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                     "FINDING_RESEARCH": ["researcher"],
                     "FINDING_REPRODUCE": ["reproducer"],
                     "FINDING_PLAN": ["planner"],
+                    "FINDING_IMPLEMENT": ["implementer"],
                 },
                 "allowed_authn_contexts": ["mfa"],
                 "max_authentication_age_seconds": 300,
@@ -113,7 +114,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner"}[action],
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -257,6 +258,68 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             request_id=f"request-FINDING_PLAN-{self.finding_id}",
             evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
         )
+
+    def _implementation_report(self):
+        plan_event = next(
+            event for event in self.registry.list_activity_events()
+            if event["event_type"] == "FINDING_PLANNED"
+            and event["payload"].get("finding_version") == self.finding_version
+        )
+        return {
+            "schema": "raei-finding-implementation-v1",
+            "finding_id": self.finding_id,
+            "finding_version": self.finding_version,
+            "plan_event_id": plan_event["event_id"],
+            "plan_evidence_binding": plan_event["payload"]["evidence_binding"],
+            "implementation_summary": "Applied the approved bounded aspect-ratio correction in the isolated candidate.",
+            "changes": ["Changed the ratio mapping and added a focused regression assertion."],
+            "test_results": ["Synthetic regression test passed in the isolated test environment."],
+            "deviations": [],
+            "rollback_reference": "Revert the isolated candidate commit containing the scoped mapping change.",
+            "evidence_id": "EV-FND-IMPLEMENTATION-001",
+            "evidence_version": "1.0",
+            "created_at_utc": self.now.isoformat(),
+        }
+
+    def _record_implementation(self, *, subject_id="subject-implementer-001", session_id="session-implementer-001"):
+        report = self._implementation_report()
+        raw, evidence = self._write_report("implementation.json", report, report["evidence_id"])
+        credential = self._credential(
+            "FINDING_IMPLEMENT", evidence, subject_id=subject_id,
+            actor_id="actor-implementer-001", session_id=session_id,
+        )
+        return record_finding_implementation(
+            self.registry, self.verifier, credential,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            project_id=self.project_id, project_version=self.project_version,
+            request_id=f"request-FINDING_IMPLEMENT-{self.finding_id}",
+            evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
+        )
+
+    def test_implementation_requires_exact_plan_and_projects_implemented(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        plan = self._record_plan()
+        result = self._record_implementation()
+        self.assertEqual(result["status"], "IMPLEMENTED")
+        finding = list_findings(self.registry)[0]
+        self.assertEqual(finding["status"], "IMPLEMENTED")
+        self.assertEqual(finding["plan_event_id"], plan["event_id"])
+        self.assertEqual(finding["implementation_event_id"], result["event_id"])
+
+    def test_implementation_rejects_planner_reuse(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent implementer"):
+            self._record_implementation(subject_id="subject-planner-001", session_id="session-implementer-new")
+        self.assertEqual(list_findings(self.registry)[0]["status"], "PLANNED")
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_IMPLEMENTED"
+            for event in self.registry.list_activity_events()
+        ))
 
     def test_research_then_independent_reproduction_projects_status(self):
         research = self._record_research()
