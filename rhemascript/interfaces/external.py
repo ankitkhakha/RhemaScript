@@ -623,6 +623,11 @@ class ExternalIntegrationGateway:
             owner_id = self._session_owner_id
             lease_seconds = min(600.0, max(60.0, binding.timeout_seconds * 4))
             if operation.upper() == "UPLOAD_SESSION":
+                from rhemascript.core.approvals import is_resumed_verified_approval
+                if any(is_resumed_verified_approval(item) for item in approvals):
+                    raise ExternalIntegrationError(
+                        "resume-only consumed approvals cannot create a replacement upload session"
+                    )
                 try:
                     reserved = self.publish_session_registry.reserve_publish_session(
                         **session_identity, owner_id=owner_id, lease_seconds=lease_seconds,
