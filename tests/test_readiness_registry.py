@@ -306,6 +306,10 @@ class ReadinessRunRegistryTests(unittest.TestCase):
             )""")
             db.execute("INSERT INTO readiness_runs(run_id,payload_sha256,payload_json) VALUES(?,?,?)",
                        ("LEGACY-RUN", digest, encoded))
+        # Legacy content is migratable only when its existing file permissions
+        # already satisfy the registry's private-storage requirement.
+        import os
+        os.chmod(legacy_path, 0o600)
         migrated = ReadinessRunRegistry(legacy_path)
         events = migrated.list_activity_events()
         self.assertEqual(len(events), 1)
