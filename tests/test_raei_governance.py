@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
-from rhemascript.core.raei_governance import (
+from raei.governance import (
     RAEIGovernanceError, record_finding_disposition, record_knowledge_review,
     list_governed_reviews,
 )
