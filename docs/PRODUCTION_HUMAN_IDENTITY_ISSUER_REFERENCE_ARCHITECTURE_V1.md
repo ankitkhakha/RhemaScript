@@ -58,6 +58,7 @@ The architecture is designed for a later owner-approved implementation. No provi
 - Treat acr/amr or provider-specific MFA fields as provider-specific evidence, not universally equivalent labels. Document and test the mapping to RhemaScript controlled authn_context values.
 - Do not put bearer tokens, email addresses, display names, raw IdP tokens, passwords, secrets or private keys in V3 claims.
 - Signed identity_policy_version must map to an immutable, owner-approved relying-party policy. Unknown or retired versions fail closed for new high-risk actions.
+- **Policy consistency invariant:** the issuer policy engine and relying-party verifier must resolve the same immutable policy definition for a given identity_policy_version, including provider ID, action-to-role mapping, accepted authentication contexts, maximum authentication age and clock-skew allowance. A version string must never be reused for changed policy semantics. Production deployment should pin and audit the policy-bundle digest on both sides.
 - Key discovery must be pinned or integrity-protected; signing-key rotation, overlap, revocation and historical verification must be explicit.
 
 ## 6. Threat-to-control matrix
