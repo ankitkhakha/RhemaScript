@@ -116,6 +116,35 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             )
         self.assertFalse(self.model.verify_event_history())
 
+    def test_lifecycle_state_rolls_back_if_event_append_fails(self):
+        with sqlite3.connect(self.model.path) as db:
+            db.execute("""
+                CREATE TRIGGER reject_event_history BEFORE INSERT ON event_history
+                BEGIN SELECT RAISE(ABORT, 'synthetic event sink failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.acquire(nonce="dispatch-event-write-failure")
+        with sqlite3.connect(self.model.path) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM leases").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM resource_fences").fetchone()[0], 0)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM event_history").fetchone()[0], 0)
+
+    def test_concurrent_checkpoint_creation_advances_anchor_once_per_commit(self):
+        self.acquire(nonce="dispatch-concurrent-checkpoint")
+        barrier = threading.Barrier(4)
+
+        def create():
+            barrier.wait()
+            return self.model.create_recovery_checkpoint()
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            checkpoints = list(pool.map(lambda _: create(), range(4)))
+        sequences = sorted(item["sequence"] for item in checkpoints)
+        self.assertEqual(sequences, [1, 2, 3, 4])
+        latest = self.model.get_latest_recovery_checkpoint()
+        self.assertEqual(latest["sequence"], 4)
+        self.assertTrue(self.model.verify_recovery_checkpoint(latest))
+
     def test_event_history_detects_deletion_of_checkpointed_events(self):
         self.acquire(nonce="dispatch-checkpointed-event-history")
         checkpoint = self.model.create_recovery_checkpoint()
