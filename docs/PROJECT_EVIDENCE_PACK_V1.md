@@ -61,3 +61,16 @@ This is evidence resolution only. It does not change the six existing project ga
 The runtime graph validator now checks the ordered chain per final-film artifact, rather than accepting independent pairwise reachability across unrelated branches. Every EDITED_FILM must be the terminal node of a single directed path that visits every required artifact type in order. Adversarial tests reject (1) an orphan second final film when another film has a valid chain and (2) a chain assembled from disconnected source/script/narration segments. These checks establish structural path continuity only; they do not authenticate source publishers or prove that a claimed derivation is semantically genuine.
 
 Exact implementation/test head `4886efd07d13ef71d57d048979de1075d094fbe5` passed full contract and synthetic integration CI run #1692: https://github.com/ankitkhakha/RhemaScript/actions/runs/43417414768. The first run exposed a stale test assertion expecting the prior generic “disconnected” error; the assertion was aligned with the stricter per-film error and the exact-head run passed.
+
+
+## YouTube Analytics evidence artifacts — 13 November 2026
+
+The V1 artifact catalog now accepts `YOUTUBE_ANALYTICS_SNAPSHOT` and `YOUTUBE_ANALYTICS_COMPARISON` records.
+
+- A snapshot artifact must carry its internal `snapshot_sha256`.
+- A comparison artifact must carry its `comparison_sha256` and the distinct artifact IDs of its current and previous snapshot sources.
+- Both source IDs must resolve to artifacts of type `YOUTUBE_ANALYTICS_SNAPSHOT` in the same project and project version.
+- The normal evidence-pack provenance graph can link each source snapshot to its derived comparison.
+- When an analytics artifact is marked VERIFIED/APPROVED/ACCEPTED or is referenced by capability evidence, the existing byte-verification path additionally requires its `local_path` and file-byte `sha256`; the internal snapshot/comparison digest and the file-byte digest are separate identities.
+
+These catalog additions do not write files, fetch provider data, establish source authenticity, or mark artifacts verified. Snapshot creation remains offline and synthetic until the owner performs an authorized read-only provider retrieval. The JSON Schema and runtime validator both enforce the Analytics artifact metadata shape; runtime checks also resolve comparison source IDs to actual snapshot artifacts.
