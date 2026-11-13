@@ -386,7 +386,7 @@ def list_findings(
                     or auth.get("identity_policy_version") != research_auth.get("identity_policy_version")):
                 raise RAEIFindingError("finding reproduction is not independently authenticated")
             latest_reproduction[key] = event
-        else:
+        elif event["event_type"] == "FINDING_PLANNED":
             if (key not in latest_research or key not in latest_reproduction or key in latest_plan
                     or latest_reproduction[key]["payload"].get("outcome") != "REPRODUCED"):
                 raise RAEIFindingError("finding plan is missing prior research/reproduction or is duplicated")
