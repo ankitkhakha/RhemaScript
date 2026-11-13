@@ -1438,7 +1438,11 @@ class ReadinessRunRegistry:
         return len(rows), hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _snapshot_digest(self) -> tuple[int, int, str, str]:
+        # Both tables must come from one SQLite read snapshot. In WAL mode a
+        # concurrent writer may commit between SELECTs unless a read transaction
+        # is explicitly held, producing a checkpoint for a state that never existed.
         with self._connect() as db:
+            db.execute("BEGIN")
             readiness_rows = db.execute(
                 "SELECT run_id,payload_sha256,payload_json FROM readiness_runs ORDER BY run_id"
             ).fetchall()
@@ -1447,6 +1451,7 @@ class ReadinessRunRegistry:
                 payload_sha256,previous_hash,event_hash,recorded_at_utc
                 FROM activity_events ORDER BY sequence"""
             ).fetchall()
+            db.execute("COMMIT")
         readiness = [
             {"run_id": run_id, "payload_sha256": digest, "payload_json": encoded}
             for run_id, digest, encoded in readiness_rows
@@ -1465,6 +1470,9 @@ class ReadinessRunRegistry:
     def verify(self) -> bool:
         try:
             with self._connect() as db:
+                # Keep readiness rows, event rows and append-only trigger metadata
+                # on one WAL snapshot while another process may append concurrently.
+                db.execute("BEGIN")
                 readiness_rows = db.execute(
                     "SELECT run_id,payload_sha256,payload_json FROM readiness_runs ORDER BY created_at,rowid"
                 ).fetchall()
@@ -1478,6 +1486,7 @@ class ReadinessRunRegistry:
                         "SELECT name FROM sqlite_master WHERE type='trigger'"
                     ).fetchall()
                 }
+                db.execute("COMMIT")
         except sqlite3.Error:
             return False
 
