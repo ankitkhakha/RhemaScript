@@ -279,6 +279,49 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             second.lease_id, provider_operation_id="provider-op-shared", outcome="SUCCEEDED",
         ))
 
+    def test_concurrent_revocation_and_acceptance_have_one_serialized_order(self):
+        lease = self.acquire(nonce="dispatch-revoke-race")
+        barrier = threading.Barrier(2)
+
+        def accept():
+            barrier.wait()
+            return self.model.accept_dispatch(
+                lease, request_fingerprint="a" * 64,
+            )
+
+        def revoke():
+            barrier.wait()
+            self.model.revoke("approval-publisher")
+            return True
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            accept_future = pool.submit(accept)
+            revoke_future = pool.submit(revoke)
+            accepted = accept_future.result(timeout=5)
+            self.assertTrue(revoke_future.result(timeout=5))
+
+        with sqlite3.connect(self.model.path) as db:
+            accepted_row = db.execute(
+                "SELECT COUNT(*) FROM accepted_dispatches WHERE dispatch_nonce=?",
+                (lease.dispatch_nonce,),
+            ).fetchone()[0]
+            lease_state = db.execute(
+                "SELECT state FROM leases WHERE lease_id=?", (lease.lease_id,),
+            ).fetchone()[0]
+            revoked = db.execute(
+                "SELECT COUNT(*) FROM revoked_approvals WHERE approval_id=?",
+                ("approval-publisher",),
+            ).fetchone()[0]
+        # If acceptance serialized first it is recorded once; if revocation
+        # serialized first, acceptance rejects. Either way the final ledger
+        # records revocation and the lease cannot be used again.
+        self.assertEqual(accepted_row, 1 if accepted else 0)
+        self.assertEqual(lease_state, "REVOKED")
+        self.assertEqual(revoked, 1)
+        self.assertFalse(self.model.accept_dispatch(
+            lease, request_fingerprint="a" * 64,
+        ))
+
     def test_concurrent_acceptance_has_at_most_one_winner(self):
         lease = self.acquire()
         with ThreadPoolExecutor(max_workers=8) as pool:
