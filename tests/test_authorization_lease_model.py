@@ -138,6 +138,33 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         self.assertIsInstance(outcome[0], LeaseStateError)
         self.assertIn("expired while waiting", str(outcome[0]))
 
+    def test_acceptance_rechecks_expiry_after_waiting_for_dispatch_lock(self):
+        expiry = datetime.now(timezone.utc) + timedelta(seconds=0.25)
+        lease = self.model.acquire(
+            resource_id="youtube:channel-1:publish",
+            approval_ids=("approval-dispatch-director", "approval-dispatch-publisher"),
+            dispatch_nonce="dispatch-lock-expiry-accept",
+            request_fingerprint="f" * 64,
+            expires_at=expiry,
+        )
+        lock = sqlite3.connect(self.model.path, isolation_level=None)
+        lock.execute("BEGIN IMMEDIATE")
+        outcome = []
+
+        def accept():
+            outcome.append(self.model.accept_dispatch(
+                lease, request_fingerprint="f" * 64,
+            ))
+
+        worker = threading.Thread(target=accept)
+        worker.start()
+        time.sleep(0.4)
+        lock.execute("ROLLBACK")
+        lock.close()
+        worker.join(timeout=3)
+        self.assertFalse(worker.is_alive(), "dispatch worker did not finish")
+        self.assertEqual(outcome, [False])
+
     def test_concurrent_acceptance_has_at_most_one_winner(self):
         lease = self.acquire()
         with ThreadPoolExecutor(max_workers=8) as pool:
