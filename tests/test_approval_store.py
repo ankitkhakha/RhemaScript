@@ -387,6 +387,16 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         audit = auditor.verify_persisted_record(persisted)
         self.assertTrue(audit["signature_valid"])
 
+        # Revocation after successful consumption must invalidate the exact
+        # in-process capability before it can cross the provider-write boundary.
+        self.store.revoke(
+            verified.approval_id, verified.nonce,
+            revoked_by="security-operator-0001", reason="emergency test revocation",
+        )
+        with self.assertRaisesRegex(ApprovalError, "revoked"):
+            from rhemascript.core.approvals import revalidate_consumed_verified_approval
+            revalidate_consumed_verified_approval(verified)
+
         # During key rotation, retain the old public key for historical audit.
         next_private_key = Ed25519PrivateKey.generate()
         next_public_key = next_private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
