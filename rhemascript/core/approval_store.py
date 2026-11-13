@@ -346,6 +346,10 @@ class SQLiteApprovalConsumptionStore:
     def _snapshot_bytes(self) -> bytes:
         db = self._connect()
         try:
+            # Read both state tables from one database snapshot. Without an
+            # explicit transaction a concurrent consume/revoke can commit
+            # between SELECTs and create a checkpoint for a mixed state.
+            db.execute("BEGIN")
             consumed = db.execute(
                 """SELECT approval_id, nonce, issuer, actor_id, action, project_id,
                           project_version, request_id, issued_at, expires_at, key_id,
@@ -358,7 +362,13 @@ class SQLiteApprovalConsumptionStore:
                 """SELECT approval_id, nonce, revoked_at, reason, revoked_by
                    FROM revoked_approvals ORDER BY approval_id"""
             ).fetchall()
+            db.execute("COMMIT")
         except sqlite3.Error:
+            if db.in_transaction:
+                try:
+                    db.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise ApprovalStoreError("approval state snapshot could not be read") from None
         finally:
             db.close()
