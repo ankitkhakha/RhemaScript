@@ -95,8 +95,10 @@ def advance_checkpoint_anchor(
         raise ValueError("independent checkpoint anchor refused or failed to persist the generation")
     latest = anchor.read_latest()
     if (not isinstance(latest, CheckpointAnchorRecord)
-            or latest != result or latest.generation != generation
-            or latest.snapshot_sha256 != archive_result["snapshot_sha256"]):
+            or latest.generation != generation
+            or latest.snapshot_sha256 != archive_result["snapshot_sha256"]
+            or latest.record_id != result.record_id
+            or latest.recorded_at != result.recorded_at):
         raise ValueError("independent checkpoint anchor read-back does not match the archive")
     now = recorded_at or datetime.now(timezone.utc)
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
