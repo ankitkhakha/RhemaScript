@@ -325,6 +325,7 @@ def list_findings(
             item.get("payload", {})
         for item in reviews
     }
+    finding_by_version = {(entry["finding_id"], entry["version"]): entry for entry in results}
     lifecycle_events = [
         event for event in registry.list_activity_events()
         if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED"}
@@ -394,8 +395,9 @@ def list_findings(
                 latest_research[key]["payload"]["authorization"],
                 latest_reproduction[key]["payload"]["authorization"],
             ]
-            if item.get("submitter_identity"):
-                prior_auth.append(item["submitter_identity"])
+            captured_finding = finding_by_version.get(key, {})
+            if captured_finding.get("submitter_identity"):
+                prior_auth.append(captured_finding["submitter_identity"])
             if any(
                 auth.get("subject_id") == prior.get("subject_id")
                 or auth.get("identity_session_id") == prior.get("identity_session_id")
