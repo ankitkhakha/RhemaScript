@@ -4,7 +4,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from rhemascript.core.approvals import ApprovalError, ApprovalVerifier
+from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, is_verified_approval, is_consumed_verified_approval
 
 
 class ApprovalVerifierTests(unittest.TestCase):
@@ -164,6 +164,33 @@ class ApprovalVerifierTests(unittest.TestCase):
         token["subject_id"] = "subject-attacker-01"
         with self.assertRaisesRegex(ApprovalError, "signature is invalid"):
             self.verify(token)
+
+    def test_verifier_object_is_not_authorized_until_atomic_consumption_succeeds(self):
+        captured = []
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": self.key},
+            consume_many_once=lambda entries: (captured.extend(entries) or False),
+            clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {"PUBLISH": ["publisher"]},
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
+        )
+        with self.assertRaisesRegex(ApprovalError, "could not be consumed atomically"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+        self.assertEqual(len(captured), 1)
+        self.assertTrue(is_verified_approval(captured[0]))
+        self.assertFalse(is_consumed_verified_approval(captured[0]))
+
+    def test_successfully_consumed_approval_has_consumed_capability(self):
+        verified = self.verify(self.credential())
+        self.assertTrue(is_verified_approval(verified))
+        self.assertTrue(is_consumed_verified_approval(verified))
 
     def test_accepts_valid_signed_scoped_approval_once(self):
         result = self.verify(self.credential())
