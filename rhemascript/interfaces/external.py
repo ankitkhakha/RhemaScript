@@ -401,6 +401,71 @@ class ExternalIntegrationGateway:
                 self._inflight.pop(key, None)
                 flight["event"].set()
 
+    def recover_publish_session_url(
+        self,
+        *,
+        project_id: str,
+        project_version: str,
+        request_id: str,
+        verified_approvals: tuple[object, ...],
+        artifact_binding: Mapping[str, object],
+    ) -> str:
+        """Recover the exact bearer URL for a previously claimed session.
+
+        The approvals must already have been reverified as resume-only by the
+        ApprovalVerifier. This method never creates or replaces a provider session.
+        """
+        from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+        from rhemascript.integrations.session_url_vault import (
+            SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
+        )
+        if not isinstance(self.publish_session_registry, SQLitePublishSessionRegistry):
+            raise ExternalIntegrationError("durable publish-session registry is unavailable")
+        if not isinstance(self.session_url_vault, SQLiteEncryptedSessionUrlVault):
+            raise ExternalIntegrationError("encrypted publish-session URL vault is unavailable")
+        if not isinstance(artifact_binding, Mapping):
+            raise ExternalIntegrationError("publish-session artifact binding is invalid")
+        try:
+            approval_fingerprint = _publish_approval_fingerprint(verified_approvals)
+            record = self.publish_session_registry.get_publish_session(
+                project_id=project_id, project_version=project_version, request_id=request_id,
+            )
+            if record is None:
+                raise ExternalIntegrationError("no existing publish session is available to resume")
+            if not hmac.compare_digest(
+                str(record.get("approval_fingerprint", "")), approval_fingerprint,
+            ):
+                raise ExternalIntegrationError("resume approvals do not match the existing publish session")
+            for field in ("artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes"):
+                if record.get(field) != artifact_binding.get(field):
+                    raise ExternalIntegrationError("resume artifact does not match the existing publish session")
+            if record.get("state") not in {
+                "ACTIVE", "INDETERMINATE", "CHUNK_IN_FLIGHT", "RECONCILING", "COMPLETE",
+            }:
+                raise ExternalIntegrationError("publish session is not in a recoverable state")
+            digest = record.get("session_url_sha256")
+            if not isinstance(digest, str) or len(digest) != 64:
+                raise ExternalIntegrationError("publish session has no durable provider URL digest")
+            identity = {
+                "project_id": project_id,
+                "project_version": project_version,
+                "request_id": request_id,
+                "approval_fingerprint": approval_fingerprint,
+                "artifact_id": artifact_binding["artifact_id"],
+                "artifact_version": artifact_binding["artifact_version"],
+                "artifact_sha256": artifact_binding["artifact_sha256"],
+                "artifact_size_bytes": artifact_binding["artifact_size_bytes"],
+            }
+            reference = publish_session_vault_reference(identity)
+            location = self.session_url_vault.retrieve(reference, expected_sha256=digest)
+            if not hmac.compare_digest(sha256(location.encode("utf-8")).hexdigest(), digest):
+                raise ExternalIntegrationError("recovered provider URL does not match the registry digest")
+            return location
+        except ExternalIntegrationError:
+            raise
+        except Exception:
+            raise ExternalIntegrationError("existing publish session could not be recovered safely") from None
+
     def request(self, interface_id: str, operation: str, url: str, *,
                 method: str, headers: dict[str, str] | None = None,
                 body: bytes | None = None, request_id: str,
