@@ -327,14 +327,19 @@ def list_findings(
     }
     lifecycle_events = [
         event for event in registry.list_activity_events()
-        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED"}
+        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED"}
     ]
     latest_research = {}
     latest_reproduction = {}
+    latest_plan = {}
     for event in lifecycle_events:
         payload = event.get("payload", {})
         key = (event.get("subject_id"), payload.get("finding_version"))
-        expected_action = "FINDING_RESEARCH" if event["event_type"] == "FINDING_RESEARCHED" else "FINDING_REPRODUCE"
+        expected_action = {
+            "FINDING_RESEARCHED": "FINDING_RESEARCH",
+            "FINDING_REPRODUCED": "FINDING_REPRODUCE",
+            "FINDING_PLANNED": "FINDING_PLAN",
+        }[event["event_type"]]
         auth = payload.get("authorization")
         binding = payload.get("evidence_binding")
         refs = payload.get("evidence_refs")
@@ -365,11 +370,11 @@ def list_findings(
             if parsed.tzinfo is None or parsed.utcoffset() is None:
                 raise RAEIFindingError("stored lifecycle timestamp must include a timezone")
         if event["event_type"] == "FINDING_RESEARCHED":
-            if key in latest_research or key in latest_reproduction:
+            if key in latest_research or key in latest_reproduction or key in latest_plan:
                 raise RAEIFindingError("finding research history contains a duplicate or out-of-order event")
             latest_research[key] = event
-        else:
-            if key not in latest_research or key in latest_reproduction:
+        elif event["event_type"] == "FINDING_REPRODUCED":
+            if key not in latest_research or key in latest_reproduction or key in latest_plan:
                 raise RAEIFindingError("finding reproduction history is missing research or is duplicated")
             research_auth = latest_research[key]["payload"]["authorization"]
             if (auth.get("subject_id") == research_auth.get("subject_id")
@@ -378,12 +383,39 @@ def list_findings(
                     or auth.get("identity_policy_version") != research_auth.get("identity_policy_version")):
                 raise RAEIFindingError("finding reproduction is not independently authenticated")
             latest_reproduction[key] = event
+        else:
+            if (key not in latest_research or key not in latest_reproduction or key in latest_plan
+                    or latest_reproduction[key]["payload"].get("outcome") != "REPRODUCED"):
+                raise RAEIFindingError("finding plan is missing prior research/reproduction or is duplicated")
+            disposition = latest_by_version.get(key)
+            if not disposition or disposition.get("disposition") != "ACCEPTED":
+                raise RAEIFindingError("finding plan requires an accepted governed disposition")
+            prior_auth = [
+                latest_research[key]["payload"]["authorization"],
+                latest_reproduction[key]["payload"]["authorization"],
+            ]
+            if item.get("submitter_identity"):
+                prior_auth.append(item["submitter_identity"])
+            if any(
+                auth.get("subject_id") == prior.get("subject_id")
+                or auth.get("identity_session_id") == prior.get("identity_session_id")
+                or auth.get("identity_provider_id") != prior.get("identity_provider_id")
+                or auth.get("identity_policy_version") != prior.get("identity_policy_version")
+                for prior in prior_auth
+            ):
+                raise RAEIFindingError("finding plan is not independently authenticated")
+            latest_plan[key] = event
     for item in results:
         key = (item["finding_id"], item["version"])
         disposition = latest_by_version.get(key)
         research = latest_research.get(key)
         reproduction = latest_reproduction.get(key)
-        if disposition:
+        plan = latest_plan.get(key)
+        if plan:
+            item["status"] = "PLANNED"
+            item["plan_event_id"] = plan["event_id"]
+            item["plan_evidence_binding"] = plan["payload"].get("evidence_binding")
+        elif disposition:
             item["status"] = disposition.get("disposition")
             item["disposition_event_id"] = disposition.get("event_id")
             item["disposition_rationale"] = disposition.get("rationale")
