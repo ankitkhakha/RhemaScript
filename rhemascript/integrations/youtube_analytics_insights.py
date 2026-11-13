@@ -151,10 +151,19 @@ def _metric_values(snapshot: dict[str, Any]) -> dict[str, tuple[Decimal | None, 
 def _daily_coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Report returned day keys and unobserved calendar dates without imputing values."""
     query = snapshot["query"]
-    if query.get("dimensions") != "day":
-        raise YouTubeAnalyticsInsightError(
-            "V1 completeness diagnostics require the single day dimension"
-        )
+    dimensions = query.get("dimensions", "").split(",") if query.get("dimensions") else []
+    if "day" not in dimensions:
+        return {
+            "status": "NOT_APPLICABLE",
+            "expected_calendar_days": None,
+            "observed_days": [],
+            "unobserved_days": [],
+            "unobserved_day_count": None,
+            "interpretation": (
+                "The report does not include the day dimension; calendar-day coverage "
+                "cannot be assessed from this query."
+            ),
+        }
     start = date.fromisoformat(query["startDate"])
     end = date.fromisoformat(query["endDate"])
     headers = snapshot["response"]["columnHeaders"]
@@ -186,7 +195,7 @@ def _daily_coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
             raise YouTubeAnalyticsInsightError(
                 f"day dimension in row {row_number} is outside the requested range"
             )
-        if parsed in observed:
+        if len(dimensions) == 1 and parsed in observed:
             raise YouTubeAnalyticsInsightError(
                 f"duplicate day dimension value: {value}"
             )
