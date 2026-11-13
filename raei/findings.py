@@ -328,12 +328,13 @@ def list_findings(
     finding_by_version = {(entry["finding_id"], entry["version"]): entry for entry in results}
     lifecycle_events = [
         event for event in registry.list_activity_events()
-        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED"}
+        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED"}
     ]
     latest_research = {}
     latest_reproduction = {}
     latest_plan = {}
     latest_implementation = {}
+    latest_effectiveness = {}
     for event in lifecycle_events:
         payload = event.get("payload", {})
         key = (event.get("subject_id"), payload.get("finding_version"))
@@ -342,6 +343,7 @@ def list_findings(
             "FINDING_REPRODUCED": "FINDING_REPRODUCE",
             "FINDING_PLANNED": "FINDING_PLAN",
             "FINDING_IMPLEMENTED": "FINDING_IMPLEMENT",
+            "FINDING_EFFECTIVENESS_ASSESSED": "FINDING_EFFECTIVENESS_ASSESS",
         }[event["event_type"]]
         auth = payload.get("authorization")
         binding = payload.get("evidence_binding")
@@ -409,7 +411,7 @@ def list_findings(
             ):
                 raise RAEIFindingError("finding plan is not independently authenticated")
             latest_plan[key] = event
-        else:
+        elif event["event_type"] == "FINDING_IMPLEMENTED":
             if key not in latest_plan or key in latest_implementation:
                 raise RAEIFindingError("finding implementation is missing an approved plan or is duplicated")
             plan_payload = latest_plan[key]["payload"]
@@ -443,6 +445,38 @@ def list_findings(
             ):
                 raise RAEIFindingError("finding implementation is not independently authenticated")
             latest_implementation[key] = event
+        else:
+            if key not in latest_implementation or key in latest_effectiveness:
+                raise RAEIFindingError("effectiveness assessment is missing implementation or is duplicated")
+            implementation = latest_implementation[key]
+            if (payload.get("implementation_event_id") != implementation["event_id"]
+                    or payload.get("implementation_evidence_binding") != implementation["payload"].get("evidence_binding")
+                    or payload.get("outcome") not in {"EFFECTIVE", "INEFFECTIVE", "INCONCLUSIVE"}):
+                raise RAEIFindingError("effectiveness assessment does not bind the exact implementation or has an invalid outcome")
+            criteria = payload.get("criteria_results")
+            outcomes = payload.get("observed_outcomes")
+            if (not isinstance(criteria, list) or not criteria
+                    or not isinstance(outcomes, list) or not outcomes
+                    or any(not isinstance(value, str) or not value.strip() for value in criteria + outcomes)):
+                raise RAEIFindingError("effectiveness assessment is missing criterion results or observed outcomes")
+            prior_auth = [
+                latest_research[key]["payload"]["authorization"],
+                latest_reproduction[key]["payload"]["authorization"],
+                latest_plan[key]["payload"]["authorization"],
+                implementation["payload"]["authorization"],
+            ]
+            captured_finding = finding_by_version.get(key, {})
+            if captured_finding.get("submitter_identity"):
+                prior_auth.append(captured_finding["submitter_identity"])
+            if any(
+                auth.get("subject_id") == prior.get("subject_id")
+                or auth.get("identity_session_id") == prior.get("identity_session_id")
+                or auth.get("identity_provider_id") != prior.get("identity_provider_id")
+                or auth.get("identity_policy_version") != prior.get("identity_policy_version")
+                for prior in prior_auth
+            ):
+                raise RAEIFindingError("effectiveness assessor is not independently authenticated")
+            latest_effectiveness[key] = event
     for item in results:
         key = (item["finding_id"], item["version"])
         disposition = latest_by_version.get(key)
@@ -450,7 +484,13 @@ def list_findings(
         reproduction = latest_reproduction.get(key)
         plan = latest_plan.get(key)
         implementation = latest_implementation.get(key)
-        if implementation:
+        effectiveness = latest_effectiveness.get(key)
+        if effectiveness:
+            item["status"] = effectiveness["payload"]["outcome"]
+            item["effectiveness_event_id"] = effectiveness["event_id"]
+            item["effectiveness_evidence_binding"] = effectiveness["payload"].get("evidence_binding")
+            item["implementation_event_id"] = effectiveness["payload"].get("implementation_event_id")
+        elif implementation:
             item["status"] = "IMPLEMENTED"
             item["implementation_event_id"] = implementation["event_id"]
             item["implementation_evidence_binding"] = implementation["payload"].get("evidence_binding")
