@@ -382,6 +382,10 @@ class ExternalIntegrationGateway:
                     or any(not is_verified_approval(item) for item in approvals)):
                 raise ExternalIntegrationError("provider write requires verifier-issued signed approvals")
             first, second = approvals
+            artifact_binding = (
+                first.artifact_id, first.artifact_version,
+                first.artifact_sha256, first.artifact_size_bytes,
+            )
             if (first.action != "FINAL_ACCEPTANCE" or second.action != "PUBLISH"
                     or first.actor_id == second.actor_id
                     or first.approval_id == second.approval_id
@@ -390,8 +394,19 @@ class ExternalIntegrationGateway:
                     or first.project_version != source_version
                     or second.project_version != source_version
                     or first.request_id != request_id or second.request_id != request_id
-                    or first.expires_at <= now or second.expires_at <= now):
-                raise ExternalIntegrationError("provider write approval scope or actor separation is invalid")
+                    or first.expires_at <= now or second.expires_at <= now
+                    or any(value is None for value in artifact_binding)
+                    or artifact_binding != (
+                        second.artifact_id, second.artifact_version,
+                        second.artifact_sha256, second.artifact_size_bytes,
+                    )
+                    or not isinstance(first.artifact_sha256, str)
+                    or len(first.artifact_sha256) != 64
+                    or any(ch not in "0123456789abcdef" for ch in first.artifact_sha256)
+                    or not isinstance(first.artifact_size_bytes, int)
+                    or isinstance(first.artifact_size_bytes, bool)
+                    or first.artifact_size_bytes <= 0):
+                raise ExternalIntegrationError("provider write approval scope, final-artifact binding or actor separation is invalid")
         elif authority_operation in self.CONSEQUENT_OPERATIONS:
             try:
                 authorise_action(authority_operation, authority or {})
