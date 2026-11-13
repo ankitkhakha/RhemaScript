@@ -309,6 +309,10 @@ class SQLiteLeaseStateModel:
             db.execute("UPDATE leases SET state=? WHERE lease_id=?", (terminal, lease_id))
             db.execute("COMMIT")
             return True
+        except sqlite3.IntegrityError:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            return False
         except sqlite3.Error:
             if db.in_transaction:
                 db.execute("ROLLBACK")
