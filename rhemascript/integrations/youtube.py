@@ -13,9 +13,12 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+import hashlib
 import json
 import os
 import re
+import stat
+import tempfile
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
 
@@ -50,12 +53,56 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 
+def _verified_video_stream(path: str | Path, binding: dict[str, Any]):
+    """Copy the exact approved video bytes into a private spool before any provider request."""
+    if not isinstance(binding, dict):
+        raise YouTubeIntegrationError("final-film artifact binding is required")
+    expected_digest = binding.get("sha256")
+    expected_size = binding.get("size_bytes")
+    if (not isinstance(expected_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_digest)
+            or not isinstance(expected_size, int) or isinstance(expected_size, bool) or expected_size <= 0):
+        raise YouTubeIntegrationError("final-film byte binding is invalid")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        source_fd = os.open(path, flags)
+    except OSError:
+        raise YouTubeIntegrationError("video file is missing or cannot be opened safely") from None
+    spool = tempfile.TemporaryFile(mode="w+b")
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(source_fd, "rb", closefd=True) as source:
+            before = os.fstat(source.fileno())
+            if not stat.S_ISREG(before.st_mode):
+                raise YouTubeIntegrationError("video upload source must be a regular file")
+            while True:
+                chunk = source.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                spool.write(chunk)
+                size += len(chunk)
+            after = os.fstat(source.fileno())
+            if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+                after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+            ):
+                raise YouTubeIntegrationError("video file changed while preparing the approved upload")
+        if size != expected_size or digest.hexdigest() != expected_digest:
+            raise YouTubeIntegrationError("upload bytes do not match the signed final-film artifact digest")
+        spool.seek(0)
+        return spool
+    except Exception:
+        spool.close()
+        raise
+
+
 def _authorise_project_publish(
     *, evidence_pack: dict[str, Any], final_film_evidence_ref: str,
     evidence_root: str,
     approval_verifier: Any, approval_credentials: tuple[object, ...],
     approval_request_id: str,
-) -> tuple[str, str, tuple[Any, ...], str, dict[str, Any]]:
+    upload_file_path: str | None = None,
+) -> tuple[str, str, tuple[Any, ...], str, dict[str, Any], Any | None]:
     """Byte-verify the final film, then consume approvals signed for its exact digest."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
     from rhemascript.evidence.evidence_pack_integrity import (
@@ -64,6 +111,7 @@ def _authorise_project_publish(
     from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
     from rhemascript.core.gates import GateDecision, GateError, GateRecord, ProjectGateState
 
+    upload_stream = None
     try:
         if not isinstance(approval_verifier, ApprovalVerifier):
             raise ApprovalError("trusted ApprovalVerifier is required")
@@ -113,6 +161,8 @@ def _authorise_project_publish(
             raise GateError("all six project gates must be approved")
         if state.records[-1].evidence_ref != final_film_evidence_ref:
             raise GateError("final gate evidence reference does not match the approved final film")
+        if upload_file_path is not None:
+            upload_stream = _verified_video_stream(upload_file_path, artifact_binding)
         expected = tuple({
             "action": action, "project_id": validated.project_id,
             "project_version": validated.project_version, "request_id": approval_request_id,
@@ -121,9 +171,15 @@ def _authorise_project_publish(
         approvals = approval_verifier.verify_many_and_consume(
             approval_credentials, expected, require_distinct_actors=True,
         )
-        return validated.project_id, validated.project_version, approvals, approval_request_id, artifact_binding
-    except (EvidencePackError, EvidencePackIntegrityError, ApprovalError, GateError, ValueError, TypeError) as exc:
+        return validated.project_id, validated.project_version, approvals, approval_request_id, artifact_binding, upload_stream
+    except (EvidencePackError, EvidencePackIntegrityError, ApprovalError, GateError, ValueError, TypeError, OSError) as exc:
+        if upload_stream is not None:
+            upload_stream.close()
         raise YouTubeIntegrationError(f"operation denied by RhemaScript governance: {exc}") from None
+    except Exception:
+        if upload_stream is not None:
+            upload_stream.close()
+        raise
 
 def _validate_publish_at(value: str, *, now: datetime | None = None) -> str:
     """Require a strict RFC3339 timestamp with offset and a future instant."""
@@ -465,10 +521,11 @@ class YouTubeClient:
         The credentials must be externally issued, independently authenticated,
         project/version/request-bound, distinct-actor approvals. The safe default is private.
         """
-        project_id, project_version, verified_approvals, request_id, artifact_binding = _authorise_project_publish(
+        project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
             evidence_root=evidence_root,
+            upload_file_path=file_path,
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
@@ -496,9 +553,6 @@ class YouTubeClient:
         self._gateway_authority = {"verified_approvals": verified_approvals}
         self._gateway_request_id = request_id
         self._gateway_artifact_binding = artifact_binding
-        path = Path(file_path)
-        if not path.is_file() or path.stat().st_size == 0:
-            raise YouTubeIntegrationError("video file is missing or empty")
         if not isinstance(title, str) or not title.strip() or len(title) > 100:
             raise YouTubeIntegrationError("title must contain 1 to 100 characters")
         if not isinstance(description, str) or len(description) > 5000:
@@ -547,10 +601,10 @@ class YouTubeClient:
                 or parsed.fragment):
             raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
 
-        total = path.stat().st_size
+        total = artifact_binding["size_bytes"]
         offset = 0
         final_raw = b""
-        with path.open("rb") as video:
+        with verified_video_stream as video:
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
                 end = offset + len(chunk) - 1
@@ -610,7 +664,7 @@ class YouTubeClient:
                       approval_verifier: Any,
                       approval_credentials: tuple[object, ...],
                       approval_request_id: str) -> dict[str, Any]:
-        project_id, project_version, verified_approvals, request_id, artifact_binding = _authorise_project_publish(
+        project_id, project_version, verified_approvals, request_id, artifact_binding, _unused_stream = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
             evidence_root=evidence_root,
