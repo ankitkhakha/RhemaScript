@@ -1,7 +1,8 @@
 """Versioned RAEI mastery curriculum; registry definition is not proof of competence."""
 from __future__ import annotations
 
-CURRICULUM_VERSION = "RAEI-CURRICULUM-1.0"
+CURRICULUM_VERSION = "RAEI-CURRICULUM-1.1"
+SUPPORTED_CURRICULUM_VERSIONS = {"RAEI-CURRICULUM-1.0", CURRICULUM_VERSION}
 
 BIBLE_BOOKS = [
     "Genesis", "Exodus", "Leviticus", "Numbers", "Deuteronomy", "Joshua", "Judges", "Ruth",
@@ -50,6 +51,73 @@ ETHICS_CASES = [
     ("ETH-DECEPTION", "Deception, manipulation and false claims"),
     ("ETH-HARM", "Foreseeable harm and protection of neighbour"),
     ("ETH-TECH", "Responsible use of technology under biblical principles"),
+]
+
+BIBLICAL_WISDOM_UNITS = [
+    (
+        "BWSF-01", "Solomon: a listening heart and discerning judgement",
+        ["1 Kings 3:5-15", "1 Kings 1-4", "2 Chronicles 1:7-12", "Proverbs 2:1-11"],
+        ["Explain the listening-heart request in its kingship and justice context",
+         "Distinguish discernment for service from knowledge sought for status",
+         "Consider Solomon's later failures when evaluating his example"],
+        "Prepare a contextual study of Solomon's request; apply listening, evidence discrimination and justice to a RhemaScript decision without treating the narrative as a software manual.",
+    ),
+    (
+        "BWSF-02", "Bezalel, Oholiab and God-enabled craftsmanship",
+        ["Exodus 31:1-11", "Exodus 35:30-36:7", "Exodus 25-40"],
+        ["Explain the tabernacle construction context and the named artisans' roles",
+         "Connect wisdom, understanding, knowledge, design, craft and collaboration",
+         "Distinguish the human artisan narrative from claims about AI spiritual identity"],
+        "Analyse the artisans' task and produce a practical craftsmanship/collaboration case with explicit limits on applying the passage to AI tools.",
+    ),
+    (
+        "BWSF-03", "Wisdom requested in trials and tested in conduct",
+        ["James 1:2-8", "James 3:13-18"],
+        ["Explain the connection between trials, perseverance, maturity and asking for wisdom",
+         "Identify the character of wisdom from above in James 3",
+         "Evaluate proposed solutions by both reasoning and their ethical character"],
+        "Analyse a RhemaScript production or engineering failure using James in context; propose a patient, truthful and peaceable response and document uncertainty.",
+    ),
+    (
+        "BWSF-04", "Seeking knowledge and understanding",
+        ["Proverbs 1-4", "Proverbs 2:1-11", "Proverbs 3:5-7", "Proverbs 4:5-9", "Psalm 111:10"],
+        ["Explain the relationship between seeking wisdom, knowledge, understanding and reverence for God",
+         "Recognise genre and proverbial patterns rather than treating every saying as an unconditional formula",
+         "Demonstrate source-based learning and contextual explanation"],
+        "Create a study record that compares an initial assumption with source-supported understanding and explains the limits of a proverb-based application.",
+    ),
+    (
+        "BWSF-05", "Testing, examining and holding to what is good",
+        ["1 Thessalonians 5:12-24", "Acts 17:10-12", "1 John 4:1-6"],
+        ["Explain the immediate contexts of prophetic testing and examining the received message",
+         "Distinguish biblical testing principles from modern technical QA analogies",
+         "Apply disciplined verification to claims, sources and model outputs"],
+        "Investigate a disputed technical or biblical claim; preserve the original observation, verify evidence and classify the result without claiming the passages directly prescribe software testing.",
+    ),
+    (
+        "BWSF-06", "Faithful stewardship and accountability",
+        ["1 Corinthians 4:1-5", "1 Peter 4:7-11", "Matthew 25:14-30"],
+        ["Explain stewardship and faithfulness in each passage's distinct context",
+         "Connect entrusted responsibility with service and accountability",
+         "Avoid reducing the parable of the talents to a simplistic productivity or profit formula"],
+        "Prepare an evidence-backed stewardship case covering assets, knowledge, costs, rights, truthful reporting and accountability.",
+    ),
+    (
+        "BWSF-07", "Prayerful planning, organisation and perseverance",
+        ["Nehemiah 1-6", "Proverbs 15:22", "Luke 14:25-33"],
+        ["Trace Nehemiah's response from report and prayer through inspection, organisation and perseverance",
+         "Recognise opposition and internal injustice within the narrative",
+         "Preserve Luke 14's primary discipleship context when discussing the cost-counting analogy"],
+        "Develop a project recovery plan that begins with state recovery and evidence, then maps resources, dependencies, risks, people and next actions; label modern project-management applications as analogies.",
+    ),
+    (
+        "BWSF-08", "Scripture, teaching, correction and good work",
+        ["2 Timothy 3:10-17", "Psalm 119", "Hebrews 4:12"],
+        ["Explain the formative and corrective role of Scripture in the context of 2 Timothy",
+         "Distinguish biblical instruction from modern technical details not explicitly addressed in Scripture",
+         "Apply correction without claiming AI spiritual or pastoral authority"],
+        "Audit a RhemaScript claim or workflow against its biblical sources; record the correction, evidence, remaining uncertainty and human decision boundary.",
+    ),
 ]
 
 RHEMA_CAPABILITIES = [(f"CAP-{n:02d}", f"RhemaScript capability CAP-{n:02d}") for n in range(1, 16)]
@@ -116,6 +184,10 @@ def build_registry() -> list[dict]:
             ["Biblical text; relevant passages selected and justified in the case record"],
             "Resolve a concrete RhemaScript/RAEI scenario using contextual biblical reasoning; document alternatives and risks.",
         ))
+    for uid, title, source_refs, objectives, practice_prompt in BIBLICAL_WISDOM_UNITS:
+        units.append(_unit(
+            uid, title, "biblical_wisdom", objectives, source_refs, practice_prompt,
+        ))
     for uid, title in RHEMA_CAPABILITIES + RHEMA_INTERFACES + RHEMA_SPECIALISTS:
         units.append(_unit(
             uid, title, "rhemascript",
@@ -166,6 +238,7 @@ def registry_summary() -> dict:
         "by_domain": counts,
         "bible_book_count": len(BIBLE_BOOKS),
         "ethics_case_count": len(ETHICS_CASES),
+        "biblical_wisdom_count": counts.get("biblical_wisdom", 0),
         "capability_count": len(RHEMA_CAPABILITIES),
         "interface_count": len(RHEMA_INTERFACES),
         "specialist_count": len(RHEMA_SPECIALISTS),
