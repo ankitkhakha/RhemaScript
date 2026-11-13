@@ -134,7 +134,7 @@ class ApprovalVerifier:
             roles_by_action = {}
             for action, roles in policy["allowed_roles_by_action"].items():
                 if (not isinstance(action, str) or not _ID.fullmatch(action)
-                        or not isinstance(roles, (tuple, list, set))
+                        or not isinstance(roles, (tuple, list, set, frozenset))
                         or not roles
                         or any(not isinstance(role, str) or not _ID.fullmatch(role) for role in roles)):
                     raise ValueError("identity policy role mapping is invalid")
