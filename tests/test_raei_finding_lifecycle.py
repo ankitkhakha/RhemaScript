@@ -980,9 +980,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         events = self.registry.list_activity_events()
         for event in events:
             if event["event_type"] == "FINDING_RESEARCHED":
-                event["payload"] = dict(event["payload"])
-                event["payload"]["authorization"] = dict(event["payload"]["authorization"])
-                event["payload"]["authorization"]["project_version"] = "9.9"
+                event["project_id"] = "RS-PWW-OTHER"
         with patch.object(self.registry, "list_activity_events", return_value=events):
             with self.assertRaisesRegex(RAEIKnowledgeError, "project or project-version lifecycle scope"):
                 self._inherit_closed_knowledge()
