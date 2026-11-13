@@ -602,7 +602,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 UPDATE publish_sessions
-                   SET session_url_sha256=?, state='ACTIVE', inflight_owner=NULL,
+                   SET session_url_sha256=?, state='ACTIVE',
                        lease_expires_at=NULL, updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
                    AND approval_fingerprint=? AND artifact_id=? AND artifact_version=?
@@ -770,13 +770,14 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                 new_state = "FAILED"
             elif status >= 500:
                 new_state = "INDETERMINATE"
+            retained_owner = None if new_state == "INDETERMINATE" else owner_id
             db.execute("""
                 UPDATE publish_sessions
                    SET state=?, acknowledged_offset=?, inflight_start=NULL,
-                       inflight_end=NULL, inflight_owner=NULL, lease_expires_at=NULL,
+                       inflight_end=NULL, inflight_owner=?, lease_expires_at=NULL,
                        updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
-            """, (new_state, new_offset, self._utc(datetime.now(timezone.utc)),
+            """, (new_state, new_offset, retained_owner, self._utc(datetime.now(timezone.utc)),
                   project_id, project_version, request_id))
             db.execute("COMMIT")
             return new_state != "INDETERMINATE"
@@ -798,7 +799,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                    SET state='INDETERMINATE', inflight_owner=NULL,
                        lease_expires_at=NULL, updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
-                   AND inflight_owner=? AND state IN ('CREATING','CHUNK_IN_FLIGHT','RECONCILING')
+                   AND inflight_owner=? AND state IN ('CREATING','ACTIVE','CHUNK_IN_FLIGHT','RECONCILING')
             """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
                   request_id, owner_id))
             db.execute("COMMIT")
@@ -807,6 +808,29 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             if db.in_transaction:
                 db.execute("ROLLBACK")
             raise ApprovalStoreError("publish-session indeterminate state could not be recorded") from None
+        finally:
+            db.close()
+
+    def finalize_publish_session_operation(self, *, project_id: str,
+                                            project_version: str, request_id: str,
+                                            owner_id: str) -> bool:
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute("""
+                UPDATE publish_sessions
+                   SET inflight_owner=NULL, lease_expires_at=NULL,
+                       updated_at=?
+                 WHERE project_id=? AND project_version=? AND request_id=?
+                   AND inflight_owner=? AND state IN ('ACTIVE','COMPLETE','FAILED')
+            """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
+                  request_id, owner_id))
+            db.execute("COMMIT")
+            return cursor.rowcount == 1
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise ApprovalStoreError("publish-session operation finalization failed") from None
         finally:
             db.close()
 
