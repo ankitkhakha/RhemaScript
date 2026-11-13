@@ -112,9 +112,20 @@ class SQLiteApprovalConsumptionStore:
                     issued_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
                     key_id TEXT NOT NULL,
-                    consumed_at TEXT NOT NULL
+                    consumed_at TEXT NOT NULL,
+                    artifact_id TEXT,
+                    artifact_version TEXT,
+                    artifact_sha256 TEXT,
+                    artifact_size_bytes INTEGER
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(consumed_approvals)")}
+            for name, sql_type in (
+                ("artifact_id", "TEXT"), ("artifact_version", "TEXT"),
+                ("artifact_sha256", "TEXT"), ("artifact_size_bytes", "INTEGER"),
+            ):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE consumed_approvals ADD COLUMN {name} {sql_type}")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS revoked_approvals (
                     approval_id TEXT PRIMARY KEY,
@@ -165,10 +176,19 @@ class SQLiteApprovalConsumptionStore:
                 expires_at = self._utc(item.expires_at)
             except ValueError:
                 return False
+            artifact_values = (
+                item.artifact_id, item.artifact_version,
+                item.artifact_sha256, item.artifact_size_bytes,
+            )
+            if any(value is not None for value in artifact_values):
+                if (not all(isinstance(value, str) and value.strip() for value in artifact_values[:3])
+                        or not isinstance(artifact_values[3], int)
+                        or isinstance(artifact_values[3], bool) or artifact_values[3] < 0):
+                    return False
             normalized.append((
                 item.approval_id, item.nonce, item.issuer, item.actor_id, item.action,
                 item.project_id, item.project_version, item.request_id, issued_at,
-                expires_at, item.key_id,
+                expires_at, item.key_id, *artifact_values,
             ))
         if (len({item[0] for item in normalized}) != len(normalized)
                 or len({item[1] for item in normalized}) != len(normalized)):
@@ -194,9 +214,10 @@ class SQLiteApprovalConsumptionStore:
                 """INSERT INTO consumed_approvals(
                     approval_id, nonce, issuer, actor_id, action, project_id,
                     project_version, request_id, issued_at, expires_at, key_id,
-                    consumed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [(*entry, consumed_at) for entry in normalized],
+                    consumed_at, artifact_id, artifact_version, artifact_sha256,
+                    artifact_size_bytes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [( *entry[:11], consumed_at, *entry[11:] ) for entry in normalized],
             )
             db.execute("COMMIT")
             os.chmod(self.path, 0o600)
