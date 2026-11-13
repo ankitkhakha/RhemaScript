@@ -10,6 +10,9 @@ from typing import Any, Mapping, Sequence
 
 from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
+from rhemascript.evidence.artifact_verification import (
+    EvidenceVersion, is_verified_evidence_version, verify_artifact,
+)
 
 
 class RAEIGovernanceError(ValueError):
@@ -30,7 +33,8 @@ def _record_review(
     decision_field: str,
     decision: str,
     rationale: str,
-    evidence_binding: Mapping[str, Any],
+    evidence_root: str,
+    evidence: EvidenceVersion,
 ) -> dict[str, Any]:
     if not isinstance(registry, ReadinessRunRegistry):
         raise RAEIGovernanceError("ReadinessRunRegistry is required")
@@ -45,8 +49,23 @@ def _record_review(
     ):
         if not isinstance(value, str) or not value.strip():
             raise RAEIGovernanceError(f"{name} must be non-empty text")
-    if not isinstance(evidence_binding, Mapping):
-        raise RAEIGovernanceError("exact evidence binding is required")
+    if not is_verified_evidence_version(evidence):
+        raise RAEIGovernanceError("review requires an EvidenceVersion issued by verify_artifact")
+    try:
+        current = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+    except (OSError, ValueError) as exc:
+        raise RAEIGovernanceError(f"review evidence could not be reverified: {exc}") from exc
+    if (current.sha256 != evidence.sha256 or current.size_bytes != evidence.size_bytes):
+        raise RAEIGovernanceError("review evidence bytes changed after verification")
+    evidence_binding = {
+        "evidence_id": current.evidence_id,
+        "evidence_version": current.version,
+        "sha256": current.sha256,
+        "size_bytes": current.size_bytes,
+    }
     actions = (
         ("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
         if event_type == "FINDING_DISPOSITIONED"
@@ -62,6 +81,12 @@ def _record_review(
         approvals = verifier.verify_many_and_consume(
             tuple(credentials), expectations, require_distinct_actors=True,
         )
+        latest = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+        if latest.sha256 != evidence.sha256 or latest.size_bytes != evidence.size_bytes:
+            raise RAEIGovernanceError("review evidence bytes changed during approval")
         if event_type == "FINDING_DISPOSITIONED":
             payload = {
                 "finding_id": subject_id,
@@ -110,9 +135,10 @@ def record_finding_disposition(
     request_id: str,
     disposition: str,
     rationale: str,
-    evidence_binding: Mapping[str, Any],
+    evidence_root: str,
+    evidence: EvidenceVersion,
 ) -> dict[str, Any]:
-    """Record a finding disposition only after two distinct signed approvals."""
+    """Record a finding disposition only after two distinct signed approvals and byte verification."""
     if disposition not in {"ACCEPTED", "REJECTED", "DUPLICATE", "DEFERRED", "WITHDRAWN"}:
         raise RAEIGovernanceError("unsupported finding disposition")
     return _record_review(
@@ -121,7 +147,7 @@ def record_finding_disposition(
         project_id=project_id, project_version=project_version,
         subject_version=finding_version, request_id=request_id,
         decision_field="disposition", decision=disposition,
-        rationale=rationale, evidence_binding=evidence_binding,
+        rationale=rationale, evidence_root=evidence_root, evidence=evidence,
     )
 
 
@@ -137,9 +163,10 @@ def record_knowledge_review(
     request_id: str,
     decision: str,
     rationale: str,
-    evidence_binding: Mapping[str, Any],
+    evidence_root: str,
+    evidence: EvidenceVersion,
 ) -> dict[str, Any]:
-    """Approve or reject knowledge only after two distinct signed approvals."""
+    """Approve or reject knowledge only after two distinct signed approvals and byte verification."""
     if decision not in {"APPROVED", "REJECTED"}:
         raise RAEIGovernanceError("knowledge decision must be APPROVED or REJECTED")
     return _record_review(
@@ -148,7 +175,7 @@ def record_knowledge_review(
         project_id=project_id, project_version=project_version,
         subject_version=knowledge_version, request_id=request_id,
         decision_field="decision", decision=decision,
-        rationale=rationale, evidence_binding=evidence_binding,
+        rationale=rationale, evidence_root=evidence_root, evidence=evidence,
     )
 
 
