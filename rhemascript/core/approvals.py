@@ -16,6 +16,7 @@ import re
 import threading
 import weakref
 from typing import Callable, Mapping, Sequence
+from types import MappingProxyType
 
 
 class ApprovalError(PermissionError):
@@ -118,17 +119,37 @@ class ApprovalVerifier:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_lifetime = max_lifetime
         self._clock_skew = clock_skew
-        self._identity_policies = dict(identity_policies or {})
-        for version, policy in self._identity_policies.items():
+        normalized_policies = {}
+        for version, policy in dict(identity_policies or {}).items():
             if (not isinstance(version, str) or not _VERSION.fullmatch(version)
                     or not isinstance(policy, Mapping)
                     or not isinstance(policy.get("provider_id"), str)
+                    or not _ID.fullmatch(policy["provider_id"])
                     or not isinstance(policy.get("allowed_roles_by_action"), Mapping)
                     or not isinstance(policy.get("allowed_authn_contexts"), (tuple, list, set))
                     or not isinstance(policy.get("max_authentication_age_seconds"), int)
                     or isinstance(policy.get("max_authentication_age_seconds"), bool)
                     or not 1 <= policy["max_authentication_age_seconds"] <= 3600):
                 raise ValueError("identity policy registry contains an invalid policy")
+            roles_by_action = {}
+            for action, roles in policy["allowed_roles_by_action"].items():
+                if (not isinstance(action, str) or not _ID.fullmatch(action)
+                        or not isinstance(roles, (tuple, list, set))
+                        or not roles
+                        or any(not isinstance(role, str) or not _ID.fullmatch(role) for role in roles)):
+                    raise ValueError("identity policy role mapping is invalid")
+                roles_by_action[action] = frozenset(roles)
+            contexts = policy["allowed_authn_contexts"]
+            if (not contexts or any(not isinstance(value, str) or not _ID.fullmatch(value)
+                                    for value in contexts)):
+                raise ValueError("identity policy authentication contexts are invalid")
+            normalized_policies[version] = MappingProxyType({
+                "provider_id": policy["provider_id"],
+                "allowed_roles_by_action": MappingProxyType(roles_by_action),
+                "allowed_authn_contexts": frozenset(contexts),
+                "max_authentication_age_seconds": policy["max_authentication_age_seconds"],
+            })
+        self._identity_policies = MappingProxyType(normalized_policies)
 
     @staticmethod
     def _canonical(payload: dict) -> bytes:
