@@ -95,6 +95,12 @@ class YouTubeAnalyticsEvidenceTests(unittest.TestCase):
                 with self.assertRaisesRegex(YouTubeAnalyticsEvidenceError, "snapshot digest"):
                     verify_analytics_evidence_snapshot(altered)
 
+    def test_verifier_rejects_non_string_timestamp_without_leaking_runtime_error(self):
+        snapshot = self.build()
+        snapshot["retrieved_at"] = 123
+        with self.assertRaises(YouTubeAnalyticsEvidenceError):
+            verify_analytics_evidence_snapshot(snapshot)
+
     def test_verifier_rejects_unsupported_fields_and_wrong_row_metadata(self):
         snapshot = self.build()
         altered = deepcopy(snapshot)
