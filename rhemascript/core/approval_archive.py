@@ -20,7 +20,8 @@ import stat
 from rhemascript.core.approval_store import ApprovalStoreError, SQLiteApprovalConsumptionStore
 
 
-ARCHIVE_SCHEMA = "RhemaScript.ApprovalCheckpointArchive.v1"
+ARCHIVE_SCHEMA_V1 = "RhemaScript.ApprovalCheckpointArchive.v1"
+ARCHIVE_SCHEMA_V2 = "RhemaScript.ApprovalCheckpointArchive.v2"
 MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
 
 
@@ -62,11 +63,16 @@ def export_checkpoint_archive(
     destination: str | os.PathLike[str],
     *,
     key: bytes,
+    generation: int | None = None,
 ) -> Path:
-    """Write a one-time, owner-only authenticated snapshot outside the DB directory."""
+    """Write a one-time authenticated snapshot; V2 binds a monotonic generation."""
     if not isinstance(store, SQLiteApprovalConsumptionStore):
         raise TypeError("store must be a SQLiteApprovalConsumptionStore")
     _validate_key(key)
+    if generation is not None and (
+        not isinstance(generation, int) or isinstance(generation, bool) or generation < 1
+    ):
+        raise ValueError("checkpoint generation must be a positive integer")
     target = Path(destination).expanduser()
     _private_directory(target.parent)
     if target.parent.resolve() == store.path.parent.resolve():
@@ -78,11 +84,13 @@ def export_checkpoint_archive(
     digest = hashlib.sha256(snapshot).hexdigest()
     created = datetime.now(timezone.utc).isoformat()
     signed_fields = {
-        "schema": ARCHIVE_SCHEMA,
+        "schema": ARCHIVE_SCHEMA_V2 if generation is not None else ARCHIVE_SCHEMA_V1,
         "created_at": created,
         "snapshot_sha256": digest,
         "snapshot_b64": base64.b64encode(snapshot).decode("ascii"),
     }
+    if generation is not None:
+        signed_fields["generation"] = generation
     envelope = dict(signed_fields)
     envelope["hmac_sha256"] = hmac.new(key, _canonical(signed_fields), hashlib.sha256).hexdigest()
     encoded = _canonical(envelope)
@@ -148,13 +156,24 @@ def verify_checkpoint_archive(
         os.close(fd)
     try:
         envelope = json.loads(raw.decode("utf-8"))
-        expected = {"schema", "created_at", "snapshot_sha256", "snapshot_b64", "hmac_sha256"}
-        if not isinstance(envelope, dict) or set(envelope) != expected:
+        if not isinstance(envelope, dict):
             raise ValueError
-        signed_fields = {name: envelope[name] for name in (
-            "schema", "created_at", "snapshot_sha256", "snapshot_b64"
-        )}
-        if envelope["schema"] != ARCHIVE_SCHEMA or not isinstance(envelope["created_at"], str):
+        if envelope.get("schema") == ARCHIVE_SCHEMA_V1:
+            expected = {"schema", "created_at", "snapshot_sha256", "snapshot_b64", "hmac_sha256"}
+        elif envelope.get("schema") == ARCHIVE_SCHEMA_V2:
+            expected = {"schema", "created_at", "snapshot_sha256", "snapshot_b64", "generation", "hmac_sha256"}
+        else:
+            raise ValueError
+        if set(envelope) != expected:
+            raise ValueError
+        signed_fields = {name: envelope[name] for name in expected if name != "hmac_sha256"}
+        if not isinstance(envelope["created_at"], str):
+            raise ValueError
+        if envelope["schema"] == ARCHIVE_SCHEMA_V2 and (
+            not isinstance(envelope["generation"], int)
+            or isinstance(envelope["generation"], bool)
+            or envelope["generation"] < 1
+        ):
             raise ValueError
         created_at = datetime.fromisoformat(envelope["created_at"])
         if created_at.tzinfo is None or created_at.utcoffset() is None:
@@ -188,8 +207,9 @@ def verify_checkpoint_archive(
         matches_current = hmac.compare_digest(snapshot, current_store._snapshot_bytes())
     return {
         "archive_valid": True,
-        "schema": ARCHIVE_SCHEMA,
+        "schema": envelope["schema"],
         "created_at": envelope["created_at"],
+        "generation": envelope.get("generation"),
         "snapshot_sha256": digest,
         "consumed_count": len(payload["consumed"]),
         "revoked_count": len(payload["revoked"]),
