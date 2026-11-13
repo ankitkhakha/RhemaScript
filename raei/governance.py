@@ -179,6 +179,105 @@ def record_knowledge_review(
     )
 
 
+def record_finding_closure(
+    registry: ReadinessRunRegistry,
+    verifier: ApprovalVerifier,
+    credentials: Sequence[object],
+    *,
+    finding_id: str,
+    finding_version: str,
+    project_id: str,
+    project_version: str,
+    request_id: str,
+    rationale: str,
+    evidence_root: str,
+    evidence: EvidenceVersion,
+) -> dict[str, Any]:
+    """Close an effective finding using two independent V3 approvals and exact lifecycle lineage."""
+    if not isinstance(registry, ReadinessRunRegistry) or not isinstance(verifier, ApprovalVerifier):
+        raise RAEIGovernanceError("ReadinessRunRegistry and ApprovalVerifier are required")
+    if not isinstance(credentials, (tuple, list)) or len(credentials) != 2:
+        raise RAEIGovernanceError("two signed closure approvals are required")
+    if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 4000:
+        raise RAEIGovernanceError("closure rationale must be non-empty and at most 4000 characters")
+    if not is_verified_evidence_version(evidence):
+        raise RAEIGovernanceError("closure requires an EvidenceVersion issued by verify_artifact")
+    try:
+        current = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+    except (OSError, ValueError) as exc:
+        raise RAEIGovernanceError(f"closure evidence could not be reverified: {exc}") from exc
+    if current.sha256 != evidence.sha256 or current.size_bytes != evidence.size_bytes:
+        raise RAEIGovernanceError("closure evidence bytes changed after verification")
+    events = [
+        event for event in registry.list_activity_events()
+        if event.get("project_id") == project_id and event.get("subject_id") == finding_id
+        and event.get("payload", {}).get("finding_version") == finding_version
+    ]
+    by_type = {event["event_type"]: event for event in events
+               if event["event_type"] in {"FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED"}}
+    if set(by_type) != {"FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED"}:
+        raise RAEIGovernanceError("closure requires plan, implementation and effectiveness events")
+    plan, implementation, effectiveness = (
+        by_type["FINDING_PLANNED"], by_type["FINDING_IMPLEMENTED"], by_type["FINDING_EFFECTIVENESS_ASSESSED"]
+    )
+    if effectiveness["payload"].get("outcome") != "EFFECTIVE":
+        raise RAEIGovernanceError("only an EFFECTIVE assessment is eligible for closure")
+    expected_binding = effectiveness["payload"].get("evidence_binding")
+    evidence_binding = {
+        "evidence_id": current.evidence_id,
+        "evidence_version": current.version,
+        "sha256": current.sha256,
+        "size_bytes": current.size_bytes,
+    }
+    if evidence_binding != expected_binding:
+        raise RAEIGovernanceError("closure evidence must be the exact effectiveness assessment artifact")
+    actions = ("FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM")
+    expectations = tuple({
+        "action": action, "project_id": project_id,
+        "project_version": project_version, "request_id": request_id,
+    } for action in actions)
+    try:
+        approvals = verifier.verify_many_and_consume(
+            tuple(credentials), expectations, require_distinct_actors=True,
+        )
+        latest = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+        if latest.sha256 != evidence.sha256 or latest.size_bytes != evidence.size_bytes:
+            raise RAEIGovernanceError("closure evidence changed during approval")
+        payload = {
+            "finding_id": finding_id,
+            "finding_version": finding_version,
+            "closure_decision": "CLOSED",
+            "rationale": rationale,
+            "evidence_binding": evidence_binding,
+            "lifecycle_lineage": {
+                "plan_event_id": plan["event_id"],
+                "implementation_event_id": implementation["event_id"],
+                "effectiveness_event_id": effectiveness["event_id"],
+            },
+        }
+        event_id = f"FINDING_CLOSED:{finding_id}@{finding_version}:{request_id}"
+        recorded = registry.append_governed_activity_event(
+            event_id, "FINDING_CLOSED", payload,
+            project_id=project_id, project_version=project_version,
+            subject_id=finding_id, request_id=request_id,
+            approvals=approvals, expected_actions=actions,
+        )
+    except (ApprovalError, ValueError, TypeError) as exc:
+        raise RAEIGovernanceError(f"governed finding closure rejected: {exc}") from exc
+    return {
+        "recorded": recorded, "event_id": event_id,
+        "finding_id": finding_id, "finding_version": finding_version,
+        "decision": "CLOSED", "authenticated_reviewers": 2,
+        "approval_ids": [item.approval_id for item in approvals],
+    }
+
+
 def list_governed_reviews(
     registry: ReadinessRunRegistry, *, event_type: str | None = None,
     project_id: str | None = None, subject_id: str | None = None,
@@ -186,7 +285,7 @@ def list_governed_reviews(
     """Return decisions only after validating the registry chain and review envelope."""
     if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
         raise RAEIGovernanceError("activity history integrity verification failed")
-    allowed = {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}
+    allowed = {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "KNOWLEDGE_REVIEWED"}
     if event_type is not None and event_type not in allowed:
         raise RAEIGovernanceError("unsupported governed review filter")
     results = []
