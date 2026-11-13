@@ -154,7 +154,7 @@ class ReadinessRunRegistry:
             raise ValueError("unsupported external activity event type")
         if event_type in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("governed review events require append_governed_activity_event")
-        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED"}:
+        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED"}:
             raise ValueError("authenticated finding lifecycle events require append_authenticated_finding_lifecycle_event")
         for name, value in (("project_id", project_id), ("subject_id", subject_id)):
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -286,6 +286,7 @@ class ReadinessRunRegistry:
         actions = {
             "FINDING_RESEARCHED": "FINDING_RESEARCH",
             "FINDING_REPRODUCED": "FINDING_REPRODUCE",
+            "FINDING_PLANNED": "FINDING_PLAN",
         }
         if event_type not in actions:
             raise ValueError("unsupported authenticated finding lifecycle event")
@@ -358,7 +359,7 @@ class ReadinessRunRegistry:
                 if (not isinstance(payload.get(field), list)
                         or any(not isinstance(item, str) or not item.strip() for item in payload[field])):
                     raise ValueError(f"{field} must be a list of non-empty strings")
-        else:
+        elif event_type == "FINDING_REPRODUCED":
             required = {
                 "schema", "finding_id", "finding_version", "outcome", "environment", "steps",
                 "expected_behavior", "observed_behavior", "evidence_id", "evidence_version",
@@ -374,6 +375,23 @@ class ReadinessRunRegistry:
             if (not isinstance(payload.get("steps"), list) or not payload["steps"]
                     or any(not isinstance(item, str) or not item.strip() for item in payload["steps"])):
                 raise ValueError("reproduction steps must be a non-empty list of strings")
+        else:
+            required = {
+                "schema", "finding_id", "finding_version", "plan_objective", "scope",
+                "tasks", "milestones", "acceptance_criteria", "dependencies", "risks",
+                "rollback_plan", "evidence_id", "evidence_version", "evidence_binding",
+                "evidence_refs", "created_at_utc",
+            }
+            if set(payload) != required or payload.get("schema") != "raei-finding-plan-v1":
+                raise ValueError("plan event payload has an invalid field set or schema")
+            for field in ("plan_objective", "scope", "rollback_plan", "created_at_utc"):
+                if not isinstance(payload.get(field), str) or not payload[field].strip():
+                    raise ValueError(f"{field} must be non-empty text")
+            for field in ("tasks", "milestones", "acceptance_criteria", "dependencies", "risks"):
+                if (not isinstance(payload.get(field), list)
+                        or (field in {"tasks", "milestones", "acceptance_criteria"} and not payload[field])
+                        or any(not isinstance(item, str) or not item.strip() for item in payload[field])):
+                    raise ValueError(f"{field} must be a valid list of non-empty strings")
         if (payload.get("evidence_id") != binding["evidence_id"]
                 or payload.get("evidence_version") != binding["evidence_version"]):
             raise ValueError("finding lifecycle evidence ID/version does not match its binding")
@@ -444,13 +462,20 @@ class ReadinessRunRegistry:
                 ORDER BY sequence DESC""",
                 (project_id, finding_id),
             ).fetchall()
+            prior_plans = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type='FINDING_PLANNED' AND project_id=? AND subject_id=?
+                ORDER BY sequence DESC""",
+                (project_id, finding_id),
+            ).fetchall()
             def matches_version(rows):
                 return [json.loads(row[0]) for row in rows
                         if json.loads(row[0]).get("finding_version") == finding_version]
             research_for_version = matches_version(prior_research)
             reproduction_for_version = matches_version(prior_reproduction)
             disposition_for_version = matches_version(prior_disposition)
-            if disposition_for_version:
+            plans_for_version = matches_version(prior_plans)
+            if disposition_for_version and event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED"}:
                 db.rollback()
                 raise ValueError("a finding cannot be researched or reproduced after disposition")
             if event_type == "FINDING_RESEARCHED":
@@ -484,6 +509,34 @@ class ReadinessRunRegistry:
                         ))):
                     db.rollback()
                     raise ValueError("reproduction identity provider and policy must match the original trusted identity domain")
+            else:
+                if not research_for_version or not reproduction_for_version:
+                    db.rollback()
+                    raise ValueError("finding plan requires prior research and reproduction")
+                if reproduction_for_version[-1].get("outcome") != "REPRODUCED":
+                    db.rollback()
+                    raise ValueError("finding plan requires a REPRODUCED outcome")
+                if not disposition_for_version or disposition_for_version[-1].get("disposition") != "ACCEPTED":
+                    db.rollback()
+                    raise ValueError("finding plan requires an ACCEPTED governed disposition")
+                if plans_for_version:
+                    db.rollback()
+                    raise ValueError("finding plan is already recorded for this version")
+                research_auth = research_for_version[-1].get("authorization", {})
+                reproduction_auth = reproduction_for_version[-1].get("authorization", {})
+                submitter_identity = captured.get("submitter_identity", {})
+                prior_identities = [research_auth, reproduction_auth]
+                if submitter_identity:
+                    prior_identities.append(submitter_identity)
+                if any(
+                    approval.subject_id == item.get("subject_id")
+                    or approval.identity_session_id == item.get("identity_session_id")
+                    or approval.identity_provider_id != item.get("identity_provider_id")
+                    or approval.identity_policy_version != item.get("identity_policy_version")
+                    for item in prior_identities
+                ):
+                    db.rollback()
+                    raise ValueError("finding plan requires an independent planner in the same trusted identity domain")
             self._append_event_tx(db, event_id, event_type, normalised, project_id, finding_id)
             db.commit()
         return True
