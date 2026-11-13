@@ -8,6 +8,7 @@ public verification keys and verifies the returned scope before any action.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Mapping, Protocol, runtime_checkable
 import re
 
@@ -52,6 +53,131 @@ class ApprovalCredentialSource(Protocol):
 
     def request_approval(self, scope: ApprovalScope) -> Mapping[str, object]:
         """Return one signed credential bound to the exact supplied scope."""
+        ...
+
+
+@dataclass(frozen=True)
+class AuthenticatedIdentity:
+    """Normalized result produced only after an identity adapter validates its IdP response."""
+
+    identity_provider_id: str
+    subject_id: str
+    authn_context: str
+    authenticated_at: datetime
+    identity_session_id: str
+
+    def __post_init__(self) -> None:
+        for field in ("identity_provider_id", "subject_id", "authn_context", "identity_session_id"):
+            value = getattr(self, field)
+            if not isinstance(value, str) or not _ID.fullmatch(value):
+                raise ValueError(f"{field} must be a valid issuer-controlled identifier")
+        if (not isinstance(self.authenticated_at, datetime)
+                or self.authenticated_at.tzinfo is None
+                or self.authenticated_at.utcoffset() is None):
+            raise ValueError("authenticated_at must be timezone-aware")
+
+
+@dataclass(frozen=True)
+class DirectoryIdentity:
+    """Authoritative directory result; never construct from request/client claims."""
+
+    subject_id: str
+    actor_id: str
+    active: bool
+    roles: frozenset[str]
+    project_ids: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.subject_id, str) or not _ID.fullmatch(self.subject_id):
+            raise ValueError("directory subject_id is invalid")
+        if not isinstance(self.actor_id, str) or not _ID.fullmatch(self.actor_id):
+            raise ValueError("directory actor_id is invalid")
+        if not isinstance(self.active, bool):
+            raise ValueError("directory active status must be boolean")
+        if (not isinstance(self.roles, frozenset) or not self.roles
+                or any(not isinstance(role, str) or not _ID.fullmatch(role) for role in self.roles)):
+            raise ValueError("directory roles must be a non-empty immutable identifier set")
+        if (not isinstance(self.project_ids, frozenset)
+                or any(not isinstance(project, str) or not _ID.fullmatch(project) for project in self.project_ids)):
+            raise ValueError("directory project assignments must be an immutable identifier set")
+
+
+@dataclass(frozen=True)
+class ApprovalPolicyDecision:
+    """Immutable policy result from the issuer's trusted policy decision point."""
+
+    allowed: bool
+    identity_policy_version: str
+    actor_role: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.allowed, bool):
+            raise ValueError("policy allowed decision must be boolean")
+        if (not isinstance(self.identity_policy_version, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", self.identity_policy_version)):
+            raise ValueError("identity policy version is invalid")
+        if self.allowed and (not isinstance(self.actor_role, str) or not _ID.fullmatch(self.actor_role)):
+            raise ValueError("an allowed policy decision requires a valid actor role")
+        if not self.allowed and self.actor_role is not None:
+            raise ValueError("a denied policy decision cannot grant an actor role")
+
+
+@runtime_checkable
+class IdentityProtocolAdapter(Protocol):
+    """Perform direct human authentication and validate the full IdP protocol response."""
+
+    def authenticate(self, scope: ApprovalScope) -> AuthenticatedIdentity:
+        """Return normalized, cryptographically validated identity facts or fail closed."""
+        ...
+
+
+@runtime_checkable
+class SubjectDirectoryAdapter(Protocol):
+    """Resolve a validated issuer-scoped subject against an authoritative directory."""
+
+    def resolve_subject(self, subject_id: str) -> DirectoryIdentity:
+        """Return current active status, role memberships and project assignments."""
+        ...
+
+
+@runtime_checkable
+class ApprovalPolicyEngine(Protocol):
+    """Apply owner-approved action, project, assurance and separation-of-duties policy."""
+
+    def authorize(
+        self, scope: ApprovalScope, identity: AuthenticatedIdentity,
+        directory_identity: DirectoryIdentity,
+    ) -> ApprovalPolicyDecision:
+        """Return a versioned allow/deny decision; missing policy must deny."""
+        ...
+
+
+@runtime_checkable
+class SigningKeyProvider(Protocol):
+    """Sign canonical credentials using protected key custody without exporting private keys."""
+
+    def sign(self, canonical_payload: bytes) -> tuple[str, str]:
+        """Return (key_id, signature_hex); never return or expose private key bytes."""
+        ...
+
+
+@runtime_checkable
+class IssuanceLedger(Protocol):
+    """Enforce one-time issuance and separation of human subjects for a request."""
+
+    def reserve(
+        self, approval_id: str, nonce: str, scope: ApprovalScope, subject_id: str,
+    ) -> bool:
+        """Atomically reserve the approval and reject replay or same-subject dual approval."""
+        ...
+
+
+@runtime_checkable
+class IssuerAuditSink(Protocol):
+    """Persist issuance and denial evidence independently of the relying application."""
+
+    def record(self, event: Mapping[str, object]) -> None:
+        """Persist an audit event or raise; issuer must fail closed if required audit fails."""
         ...
 
 
