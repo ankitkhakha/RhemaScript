@@ -71,3 +71,12 @@ The command safely distinguishes Google token-endpoint failures:
 - Other failures return generic `FAILED` and keep response details redacted.
 
 For the captured External/Testing consent screen and `youtube.readonly` scope, Google documents seven-day refresh-token expiry. If the successful token was issued on 12-Nov-2026, plan to verify locally before approximately 19-Nov-2026. Do not create repeated refresh tokens unnecessarily; Google limits each Google Account to 100 refresh tokens per OAuth client ID.
+
+
+## Resumable upload indeterminate-write recovery
+
+The YouTube publishing client distinguishes a rejected request from a write whose outcome cannot be known because the transport failed after sending it. For upload-session creation (POST), a transport failure or provider 5xx raises `INDETERMINATE_WRITE`; the client does not automatically create another session. The operator must reconcile the provider-side upload state before authorizing any replacement attempt. The session-creation response may have been lost, so this code does not claim it can discover an unknown session URL.
+
+For a chunk write (PUT), the client uses the already-known session URL to issue the resumable protocol's status query (`Content-Range: bytes */<total>`) after an indeterminate outcome. It resumes only from the provider-acknowledged byte offset. If the query reports no accepted bytes, it may resend only the same unacknowledged range. If the provider reports an offset behind previously acknowledged bytes, an impossible range, an unavailable session, or another indeterminate response, the operation fails closed and does not start a replacement upload. A completed response is accepted only when it contains a video ID.
+
+These safeguards prevent blind replay of an ambiguous write; they do not provide an exactly-once guarantee across all provider failures. A session-creation ambiguity remains a manual reconciliation case. Synthetic tests simulate a lost chunk response after partial provider acceptance and a lost session-creation response. They do not contact Google or prove live provider behavior.
