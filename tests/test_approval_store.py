@@ -156,6 +156,24 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         self.assertEqual(snapshot["revoked"], [])
         self.assertTrue(self.store.is_revoked("revoked-race", "nonce-race"))
 
+    def test_consumption_and_revocation_are_read_from_one_snapshot(self):
+        entry = self.record(
+            "approval-state-snapshot-0001", "nonce-state-snapshot-0001", self.future,
+        )
+        self.assertTrue(self.store._consume_many_once((entry,)))
+        self.assertEqual(
+            self.store.read_consumption_state(entry.approval_id, entry.nonce),
+            (True, False),
+        )
+        self.store.revoke(
+            entry.approval_id, entry.nonce,
+            revoked_by="operator-0001", reason="test revocation",
+        )
+        self.assertEqual(
+            self.store.read_consumption_state(entry.approval_id, entry.nonce),
+            (True, True),
+        )
+
     def test_backup_is_owner_only_and_preserves_replay_state(self):
         entry = self.record("approval-backup-0001", "nonce-backup-0001", self.future)
         self.store._consume_many_once((entry,))
