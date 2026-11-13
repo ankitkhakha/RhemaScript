@@ -43,3 +43,10 @@ Authority labels distinguish Scripture, official primary sources, secondary sour
 ## Current limitation
 
 Training briefs surface pending items for review but never treat them as approved sources. This feature implements evidence-bound intake and pending-review search. It does not yet implement signed human knowledge approval or automatic source acquisition. Those are separate, controlled steps. No paid API, external connector or background model-weight training is used.
+
+
+## Versioned integration addendum — BWSF V1.0
+
+The Biblical Wisdom, Knowledge & Stewardship Foundation is integrated as a thematic source programme, not a new knowledge store. Bible passage records use the existing `BIBLE` source type with exact translation/version, book, passage and evidence binding. Commentary and scholarly material use `SECONDARY`. The BWSF specification itself is an `INTERNAL_SPEC` and must enter as `UNVERIFIED` / `PENDING_REVIEW` until separately reviewed.
+
+BWSF extends L1 Biblical Truth Intelligence and the existing RAEI curriculum. It does not add a source type, bypass review, create a second claim ledger, or grant approval/execution authority. The existing HINOVBSI direct-Hindi-quotation rule remains mandatory.
