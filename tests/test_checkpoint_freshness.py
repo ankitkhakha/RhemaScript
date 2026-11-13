@@ -84,10 +84,10 @@ class CheckpointFreshnessTests(unittest.TestCase):
             str(first_archive), key=self.key, anchor=self.anchor, expected_generation=0,
             recorded_at=self.anchor.now,
         )
-        second_archive = self.make_archive(2, "checkpoint-0002.json")
+        replayed_archive = self.make_archive(1, "checkpoint-0001-replayed.json")
         with self.assertRaisesRegex(ValueError, "generation changed"):
             advance_checkpoint_anchor(
-                str(second_archive), key=self.key, anchor=self.anchor,
+                str(replayed_archive), key=self.key, anchor=self.anchor,
                 expected_generation=0, recorded_at=self.anchor.now,
             )
         self.assertEqual(self.anchor.record.generation, 1)
