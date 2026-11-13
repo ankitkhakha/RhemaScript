@@ -270,6 +270,14 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
                 (verified.approval_id,),
             ).fetchone()
         self.assertEqual(row, ("ART-FINAL-001", "1", "a" * 64, 987654))
+        persisted = self.store.list_consumed_approval_records()[0]
+        audit = verifier.verify_persisted_record(persisted)
+        self.assertTrue(audit["signature_valid"])
+        self.assertEqual(audit["artifact_sha256"], "a" * 64)
+        tampered = dict(persisted)
+        tampered["artifact_sha256"] = "b" * 64
+        with self.assertRaisesRegex(Exception, "persisted approval signature is invalid"):
+            verifier.verify_persisted_record(tampered)
 
 if __name__ == "__main__":
     unittest.main()
