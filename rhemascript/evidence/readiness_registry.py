@@ -1064,7 +1064,7 @@ class ReadinessRunRegistry:
                         or evidence_items[0].get("size_bytes") != binding["size_bytes"]):
                     db.rollback()
                     raise ValueError("knowledge review evidence does not match the pending knowledge record")
-            else:
+            elif event_type in {"FINDING_CLOSED", "FINDING_REOPENED"}:
                 captured_rows = db.execute(
                     "SELECT payload_json FROM activity_events WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?",
                     (project_id, subject_id),
@@ -1087,66 +1087,88 @@ class ReadinessRunRegistry:
                             or binding != closure[1].get("evidence_binding")):
                         db.rollback()
                         raise ValueError("reopening must reference the exact closed finding event and its evidence")
+                    prior_reviewers = closure[1].get("authorization", {})
+                    if any(
+                        approval.subject_id == prior_subject
+                        or approval.identity_session_id == prior_session
+                        for approval in approvals
+                        for prior_subject, prior_session in zip(
+                            prior_reviewers.get("subject_ids", []),
+                            prior_reviewers.get("identity_session_ids", []),
+                        )
+                    ) or any(
+                        approval.identity_provider_id != prior_provider
+                        or approval.identity_policy_version != prior_policy
+                        for approval in approvals
+                        for prior_provider, prior_policy in zip(
+                            prior_reviewers.get("identity_provider_ids", []),
+                            prior_reviewers.get("identity_policy_versions", []),
+                        )
+                    ):
+                        db.rollback()
+                        raise ValueError("reopening reviewers must be independent from closure reviewers in the same identity domain")
+                    if any(
+                        event_type == "FINDING_REOPENED"
+                        and json.loads(raw).get("finding_version") == payload.get("finding_version")
+                        for (raw,) in db.execute(
+                            "SELECT payload_json FROM activity_events WHERE event_type='FINDING_REOPENED' AND project_id=? AND subject_id=?",
+                            (project_id, subject_id),
+                        ).fetchall()
+                    ):
+                        db.rollback()
+                        raise ValueError("finding version has already been reopened")
+                else:
+                    lineage_rows = db.execute(
+                        """SELECT event_id,event_type,payload_json FROM activity_events
+                        WHERE project_id=? AND subject_id=? AND event_type IN
+                        ('FINDING_RESEARCHED','FINDING_REPRODUCED','FINDING_PLANNED',
+                         'FINDING_IMPLEMENTED','FINDING_EFFECTIVENESS_ASSESSED')
+                        ORDER BY sequence""", (project_id, subject_id),
+                    ).fetchall()
+                    lineage = {kind: (eid, json.loads(raw)) for eid, kind, raw in lineage_rows
+                               if json.loads(raw).get("finding_version") == payload.get("finding_version")}
+                    required_lineage = (
+                        "FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED",
+                        "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED",
+                    )
+                    if not all(kind in lineage for kind in required_lineage):
+                        db.rollback()
+                        raise ValueError("closure requires research, reproduction, plan, implementation and effectiveness evidence")
+                    research_payload = lineage["FINDING_RESEARCHED"][1]
+                    reproduction_payload = lineage["FINDING_REPRODUCED"][1]
+                    plan_id, plan_payload = lineage["FINDING_PLANNED"]
+                    implementation_id, implementation_payload = lineage["FINDING_IMPLEMENTED"]
+                    effectiveness_id, effectiveness_payload = lineage["FINDING_EFFECTIVENESS_ASSESSED"]
+                    expected_lineage = {
+                        "plan_event_id": plan_id,
+                        "implementation_event_id": implementation_id,
+                        "effectiveness_event_id": effectiveness_id,
+                    }
+                    if payload.get("lifecycle_lineage") != expected_lineage:
+                        db.rollback()
+                        raise ValueError("closure does not bind the exact lifecycle event lineage")
+                    if (effectiveness_payload.get("outcome") != "EFFECTIVE"
+                            or binding != effectiveness_payload.get("evidence_binding")):
+                        db.rollback()
+                        raise ValueError("only an EFFECTIVE assessment and its exact evidence can be closed")
+                    prior_identities = [
+                        research_payload.get("authorization", {}),
+                        reproduction_payload.get("authorization", {}),
+                        plan_payload.get("authorization", {}),
+                        implementation_payload.get("authorization", {}),
+                        effectiveness_payload.get("authorization", {}),
+                    ]
+                    if captured.get("submitter_identity"):
+                        prior_identities.append(captured["submitter_identity"])
                     if any(
                         approval.subject_id == prior.get("subject_id")
                         or approval.identity_session_id == prior.get("identity_session_id")
                         or approval.identity_provider_id != prior.get("identity_provider_id")
                         or approval.identity_policy_version != prior.get("identity_policy_version")
-                        for approval in approvals
-                        for prior in [closure[1].get("authorization", {})]
+                        for approval in approvals for prior in prior_identities
                     ):
                         db.rollback()
-                        raise ValueError("reopening reviewers must be independent from closure reviewers")
-                else:
-                    lineage_rows = db.execute(
-                    """SELECT event_id,event_type,payload_json FROM activity_events
-                    WHERE project_id=? AND subject_id=? AND event_type IN
-                    ('FINDING_RESEARCHED','FINDING_REPRODUCED','FINDING_PLANNED',
-                     'FINDING_IMPLEMENTED','FINDING_EFFECTIVENESS_ASSESSED')
-                    ORDER BY sequence""", (project_id, subject_id),
-                ).fetchall()
-                lineage = {kind: (eid, json.loads(raw)) for eid, kind, raw in lineage_rows
-                           if json.loads(raw).get("finding_version") == payload.get("finding_version")}
-                if not all(kind in lineage for kind in
-                           ("FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED")):
-                    db.rollback()
-                    raise ValueError("closure requires plan, implementation and effectiveness evidence")
-                research_payload = lineage["FINDING_RESEARCHED"][1]
-                reproduction_payload = lineage["FINDING_REPRODUCED"][1]
-                plan_id, plan_payload = lineage["FINDING_PLANNED"]
-                implementation_id, implementation_payload = lineage["FINDING_IMPLEMENTED"]
-                effectiveness_id, effectiveness_payload = lineage["FINDING_EFFECTIVENESS_ASSESSED"]
-                expected_lineage = {
-                    "plan_event_id": plan_id,
-                    "implementation_event_id": implementation_id,
-                    "effectiveness_event_id": effectiveness_id,
-                }
-                if payload.get("lifecycle_lineage") != expected_lineage:
-                    db.rollback()
-                    raise ValueError("closure does not bind the exact lifecycle event lineage")
-                if (effectiveness_payload.get("outcome") != "EFFECTIVE"
-                        or binding != effectiveness_payload.get("evidence_binding")):
-                    db.rollback()
-                    raise ValueError("only an EFFECTIVE assessment and its exact evidence can be closed")
-                prior_identities = [
-                    research_payload.get("authorization", {}),
-                    reproduction_payload.get("authorization", {}),
-                    plan_payload.get("authorization", {}),
-                    implementation_payload.get("authorization", {}),
-                    effectiveness_payload.get("authorization", {}),
-                ]
-                if captured.get("submitter_identity"):
-                    prior_identities.append(captured["submitter_identity"])
-                if any(
-                    approval.subject_id == prior.get("subject_id")
-                    or approval.identity_session_id == prior.get("identity_session_id")
-                    or approval.identity_provider_id != prior.get("identity_provider_id")
-                    or approval.identity_policy_version != prior.get("identity_policy_version")
-                    for approval in approvals
-                    for prior in prior_identities
-                ):
-                    db.rollback()
-                    raise ValueError("closure reviewers must be independent of lifecycle participants")
+                        raise ValueError("closure reviewers must be independent of lifecycle participants")
             prior_rows = db.execute(
                 """SELECT payload_json FROM activity_events
                 WHERE event_type=? AND project_id=? AND subject_id=?
