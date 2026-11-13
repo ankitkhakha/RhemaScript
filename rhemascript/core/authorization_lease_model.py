@@ -177,10 +177,14 @@ class SQLiteLeaseStateModel:
     ) -> bool:
         if not isinstance(lease, AuthorizationLease):
             return False
-        current_time = self._utc(now or datetime.now(timezone.utc))
+        # Explicit now is a deterministic test seam. Production-model calls
+        # sample the clock only after acquiring the serialized lock.
+        current_time = self._utc(now) if now is not None else None
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
+            if current_time is None:
+                current_time = self._utc(datetime.now(timezone.utc))
             row = db.execute(
                 """SELECT l.resource_id,l.generation,l.dispatch_nonce,
                           l.request_fingerprint,l.expires_at,l.state,
