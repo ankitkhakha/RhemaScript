@@ -93,6 +93,36 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             lease, request_fingerprint="a" * 64,
         ))
 
+    def test_event_history_hash_chain_covers_lifecycle_and_detects_tampering(self):
+        lease = self.acquire(nonce="dispatch-event-history")
+        self.assertTrue(self.model.verify_event_history())
+        self.assertEqual(
+            [event["event_type"] for event in self.model.read_event_history()],
+            ["LEASE_ISSUED"],
+        )
+        self.assertTrue(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
+        self.model.revoke("approval-publisher")
+        self.assertTrue(self.model.verify_event_history())
+        events = self.model.read_event_history()
+        self.assertEqual(
+            [event["event_type"] for event in events],
+            ["LEASE_ISSUED", "DISPATCH_ACCEPTED", "APPROVAL_REVOKED"],
+        )
+        with sqlite3.connect(self.model.path) as db:
+            db.execute(
+                "UPDATE event_history SET payload_json=? WHERE sequence=2",
+                ('{"dispatch_nonce":"forged"}',),
+            )
+        self.assertFalse(self.model.verify_event_history())
+
+    def test_recovery_checkpoint_can_be_retrieved_after_lost_commit_response(self):
+        lease = self.acquire(nonce="dispatch-checkpoint-response-lost")
+        created = self.model.create_recovery_checkpoint()
+        recovered = self.model.get_latest_recovery_checkpoint()
+        self.assertEqual(recovered, created)
+        self.assertTrue(self.model.verify_recovery_checkpoint(recovered))
+        self.assertEqual(recovered["sha256"], created["sha256"])
+
     def test_recovery_checkpoint_detects_tampering_and_stale_sequence(self):
         first = self.acquire(nonce="dispatch-checkpoint-one")
         checkpoint_one = self.model.create_recovery_checkpoint()
