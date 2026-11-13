@@ -25,7 +25,7 @@ class ReadinessReplayError(ValueError):
 _ACTIVITY_EVENT_TYPES = {
     "READINESS_RUN_RECORDED", "LEGACY_READINESS_RECORD_IMPORTED",
     "FINDING_CAPTURED", "FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED",
-    "FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED", "DECISION_RECORDED", "REQUIREMENT_RECORDED",
+    "FINDING_DISPOSITIONED", "FINDING_CLOSED", "KNOWLEDGE_REVIEWED", "DECISION_RECORDED", "REQUIREMENT_RECORDED",
     "CHANGE_RECORDED", "TASK_RECORDED", "IMPLEMENTATION_RECORDED",
     "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED",
     "TEST_RECORDED", "DEFECT_RECORDED", "LESSON_RECORDED",
@@ -396,6 +396,20 @@ class ReadinessRunRegistry:
         if (payload.get("evidence_id") != binding["evidence_id"]
                 or payload.get("evidence_version") != binding["evidence_version"]):
             raise ValueError("finding lifecycle evidence ID/version does not match its binding")
+        if event_type == "FINDING_CLOSED":
+            lineage = payload.get("lifecycle_lineage")
+            if (not isinstance(lineage, dict)
+                    or set(lineage) != {"plan_event_id", "implementation_event_id", "effectiveness_event_id"}
+                    or any(not isinstance(value, str) or not value.strip() for value in lineage.values())):
+                raise ValueError("closure requires exact plan, implementation and effectiveness event IDs")
+            subjects = [item.subject_id for item in approvals]
+            sessions = [item.identity_session_id for item in approvals]
+            if (any(not value for value in subjects + sessions)
+                    or len(set(subjects)) != 2 or len(set(sessions)) != 2
+                    or len({item.identity_provider_id for item in approvals}) != 1
+                    or len({item.identity_policy_version for item in approvals}) != 1
+                    or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
+                raise ValueError("closure requires two distinct authenticated subjects and sessions in one trusted identity domain")
         enriched = dict(payload)
         enriched["authorization"] = {
             "issuer": approval.issuer,
@@ -875,7 +889,7 @@ class ReadinessRunRegistry:
         from datetime import datetime, timezone
         from rhemascript.core.approvals import is_consumed_verified_approval
 
-        if event_type not in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
+        if event_type not in {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("unsupported governed event type")
         for name, value in (
             ("event_id", event_id), ("project_id", project_id),
@@ -891,6 +905,7 @@ class ReadinessRunRegistry:
         required_actions = (
             ("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
             if event_type == "FINDING_DISPOSITIONED"
+            else ("FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM") if event_type == "FINDING_CLOSED"
             else ("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM")
         )
         if expected_actions != required_actions:
@@ -912,6 +927,10 @@ class ReadinessRunRegistry:
             required = {"finding_id", "finding_version", "disposition", "rationale", "evidence_binding"}
             decisions = {"ACCEPTED", "REJECTED", "DUPLICATE", "DEFERRED", "WITHDRAWN"}
             identity_field, version_field = "finding_id", "finding_version"
+        elif event_type == "FINDING_CLOSED":
+            required = {"finding_id", "finding_version", "closure_decision", "rationale", "evidence_binding", "lifecycle_lineage"}
+            decisions = {"CLOSED"}
+            identity_field, version_field = "finding_id", "finding_version"
         else:
             required = {"knowledge_id", "knowledge_version", "decision", "rationale", "evidence_binding"}
             decisions = {"APPROVED", "REJECTED"}
@@ -923,7 +942,7 @@ class ReadinessRunRegistry:
         version = payload.get(version_field)
         if not isinstance(version, str) or not version.strip():
             raise ValueError("governed review subject version is required")
-        decision_field = "disposition" if event_type == "FINDING_DISPOSITIONED" else "decision"
+        decision_field = "disposition" if event_type == "FINDING_DISPOSITIONED" else "closure_decision" if event_type == "FINDING_CLOSED" else "decision"
         if payload.get(decision_field) not in decisions:
             raise ValueError("governed review decision is unsupported")
         rationale = payload.get("rationale")
@@ -946,6 +965,10 @@ class ReadinessRunRegistry:
             "actor_ids": actors,
             "approval_ids": [item.approval_id for item in approvals],
             "actions": [item.action for item in approvals],
+            "subject_ids": [item.subject_id for item in approvals],
+            "identity_session_ids": [item.identity_session_id for item in approvals],
+            "identity_provider_ids": [item.identity_provider_id for item in approvals],
+            "identity_policy_versions": [item.identity_policy_version for item in approvals],
             "project_id": project_id,
             "project_version": project_version,
             "request_id": request_id,
@@ -1027,7 +1050,7 @@ class ReadinessRunRegistry:
                         "finding disposition evidence must be bound to the captured finding "
                         "or a prior authenticated research/reproduction report"
                     )
-            else:
+            elif event_type == "KNOWLEDGE_REVIEWED":
                 run_id = f"KNOWLEDGE:{subject_id}:{payload.get('knowledge_version')}"
                 stored = db.execute(
                     "SELECT payload_json FROM readiness_runs WHERE run_id=?",
@@ -1050,20 +1073,72 @@ class ReadinessRunRegistry:
                         or evidence_items[0].get("size_bytes") != binding["size_bytes"]):
                     db.rollback()
                     raise ValueError("knowledge review evidence does not match the pending knowledge record")
+            else:
+                captured_rows = db.execute(
+                    "SELECT payload_json FROM activity_events WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?",
+                    (project_id, subject_id),
+                ).fetchall()
+                captured = next((json.loads(raw) for (raw,) in captured_rows
+                                 if json.loads(raw).get("version") == payload.get("finding_version")), None)
+                if not captured:
+                    db.rollback()
+                    raise ValueError("closure requires the exact captured finding version")
+                lineage_rows = db.execute(
+                    """SELECT event_id,event_type,payload_json FROM activity_events
+                    WHERE project_id=? AND subject_id=? AND event_type IN
+                    ('FINDING_PLANNED','FINDING_IMPLEMENTED','FINDING_EFFECTIVENESS_ASSESSED')
+                    ORDER BY sequence""", (project_id, subject_id),
+                ).fetchall()
+                lineage = {kind: (eid, json.loads(raw)) for eid, kind, raw in lineage_rows
+                           if json.loads(raw).get("finding_version") == payload.get("finding_version")}
+                if not all(kind in lineage for kind in
+                           ("FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED")):
+                    db.rollback()
+                    raise ValueError("closure requires plan, implementation and effectiveness evidence")
+                plan_id, plan_payload = lineage["FINDING_PLANNED"]
+                implementation_id, implementation_payload = lineage["FINDING_IMPLEMENTED"]
+                effectiveness_id, effectiveness_payload = lineage["FINDING_EFFECTIVENESS_ASSESSED"]
+                expected_lineage = {
+                    "plan_event_id": plan_id,
+                    "implementation_event_id": implementation_id,
+                    "effectiveness_event_id": effectiveness_id,
+                }
+                if payload.get("lifecycle_lineage") != expected_lineage:
+                    db.rollback()
+                    raise ValueError("closure does not bind the exact lifecycle event lineage")
+                if (effectiveness_payload.get("outcome") != "EFFECTIVE"
+                        or binding != effectiveness_payload.get("evidence_binding")):
+                    db.rollback()
+                    raise ValueError("only an EFFECTIVE assessment and its exact evidence can be closed")
+                if any(
+                    approval.subject_id == prior.get("subject_id")
+                    or approval.identity_session_id == prior.get("identity_session_id")
+                    or approval.identity_provider_id != prior.get("identity_provider_id")
+                    or approval.identity_policy_version != prior.get("identity_policy_version")
+                    for approval in approvals
+                    for prior in [
+                        captured.get("submitter_identity") or {},
+                        plan_payload.get("authorization", {}),
+                        implementation_payload.get("authorization", {}),
+                        effectiveness_payload.get("authorization", {}),
+                    ]
+                ):
+                    db.rollback()
+                    raise ValueError("closure reviewers must be independent of lifecycle participants")
             prior_rows = db.execute(
                 """SELECT payload_json FROM activity_events
                 WHERE event_type=? AND project_id=? AND subject_id=?
                 ORDER BY sequence DESC""",
                 (event_type, project_id, subject_id),
             ).fetchall()
-            version_field = "finding_version" if event_type == "FINDING_DISPOSITIONED" else "knowledge_version"
+            version_field = "knowledge_version" if event_type == "KNOWLEDGE_REVIEWED" else "finding_version"
             same_version_prior = [
                 json.loads(row[0]) for row in prior_rows
                 if json.loads(row[0]).get(version_field) == payload.get(version_field)
             ]
-            if event_type == "KNOWLEDGE_REVIEWED" and same_version_prior:
+            if event_type in {"KNOWLEDGE_REVIEWED", "FINDING_CLOSED"} and same_version_prior:
                 db.rollback()
-                raise ValueError("a knowledge version may receive only one terminal review decision")
+                raise ValueError("a knowledge/finding version may receive only one terminal review decision")
             if event_type == "FINDING_DISPOSITIONED" and same_version_prior:
                 previous_payload = same_version_prior[0]
                 previous_disposition = previous_payload.get("disposition")
