@@ -71,11 +71,18 @@ def _record_review(
         if event_type == "FINDING_DISPOSITIONED"
         else ("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM")
     )
+    artifact_binding = {
+        "artifact_id": evidence_binding["evidence_id"],
+        "artifact_version": evidence_binding["evidence_version"],
+        "sha256": evidence_binding["sha256"],
+        "size_bytes": evidence_binding["size_bytes"],
+    }
     expectations = tuple({
         "action": action,
         "project_id": project_id,
         "project_version": project_version,
         "request_id": request_id,
+        "artifact_binding": artifact_binding,
     } for action in actions)
     try:
         approvals = verifier.verify_many_and_consume(
