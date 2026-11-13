@@ -761,57 +761,11 @@ class YouTubeClient:
                       approval_verifier: Any,
                       approval_credentials: tuple[object, ...],
                       approval_request_id: str) -> dict[str, Any]:
-        project_id, project_version, verified_approvals, request_id, artifact_binding, _unused_stream = _authorise_project_publish(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            evidence_root=evidence_root,
-            approval_verifier=approval_verifier,
-            approval_credentials=approval_credentials,
-            approval_request_id=approval_request_id,
+        # Fail closed: existing FINAL_ACCEPTANCE/PUBLISH credentials bind the final film,
+        # not the thumbnail bytes. Do not consume those approvals or contact YouTube.
+        raise YouTubeIntegrationError(
+            "thumbnail writes are disabled until a dedicated signed thumbnail-artifact approval contract is implemented"
         )
-        evidence_project_id, evidence_project_version, evidence_film_artifact_id = _authorise_project_video(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            video_id=video_id,
-        )
-        verified_context = self._verified_upload_context
-        if (verified_context is None
-                or verified_context.get("video_id") != video_id
-                or verified_context.get("project_id") != evidence_project_id
-                or verified_context.get("project_version") != evidence_project_version
-                or verified_context.get("final_film_artifact_id") != evidence_film_artifact_id):
-            raise YouTubeIntegrationError(
-                "thumbnail write requires a matching successful YouTube read-back "
-                "from this client session; a caller-supplied verification artifact alone is insufficient"
-            )
-        self._gateway_project_id = project_id
-        self._gateway_source_version = project_version
-        self._gateway_authority = {"verified_approvals": verified_approvals}
-        self._gateway_request_id = request_id
-        self._gateway_artifact_binding = artifact_binding
-        path = Path(image_path)
-        if not path.is_file():
-            raise YouTubeIntegrationError("thumbnail file does not exist")
-        suffix = path.suffix.lower()
-        mime_by_suffix = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
-        mime = mime_by_suffix.get(suffix)
-        if mime is None:
-            raise YouTubeIntegrationError("thumbnail must use a PNG or JPEG file extension")
-        # YouTube custom thumbnails are limited to 2 MB. Read one byte beyond
-        # the limit so a file that grows after stat() is still rejected.
-        try:
-            with path.open("rb") as image:
-                thumbnail_bytes = image.read(2 * 1024 * 1024 + 1)
-        except OSError:
-            raise YouTubeIntegrationError("thumbnail file could not be read") from None
-        if not thumbnail_bytes or len(thumbnail_bytes) > 2 * 1024 * 1024:
-            raise YouTubeIntegrationError("thumbnail must be non-empty and no larger than 2 MB")
-        url = f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?{urlencode({'videoId': video_id})}"
-        status, raw, _ = self._authorized_request(url, method="POST", body=thumbnail_bytes,
-            headers={"Authorization": f"Bearer {self._token()}", "Content-Type": mime})
-        if status not in (200, 201):
-            raise YouTubeIntegrationError(f"thumbnail upload returned HTTP {status}")
-        return json.loads(raw)
 
     def verify_video(self, video_id: str) -> dict[str, Any]:
         """Read back one exact video ID and return only validated status fields."""

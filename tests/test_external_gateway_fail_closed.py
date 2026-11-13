@@ -388,6 +388,30 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertIn("INDETERMINATE", [event["phase"] for event in events])
         self.assertNotIn("FAILED", [event["phase"] for event in events])
 
+    def test_thumbnail_write_is_blocked_at_gateway_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18",
+            provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"THUMBNAIL_WRITE": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/thumbnails/set",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
+            gateway.request(
+                "IF-18", "THUMBNAIL_WRITE",
+                "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=video-123",
+                method="POST", body=b"thumbnail", request_id="thumb-request-1",
+                project_id="RS-1", source_version="1.0",
+            )
+        self.assertEqual(transport.calls, [])
+
     def test_write_completion_audit_failure_is_indeterminate(self):
         class SuccessTransport:
             def send_request(self, url, method, headers, body, timeout):

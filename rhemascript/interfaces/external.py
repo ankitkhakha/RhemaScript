@@ -339,6 +339,10 @@ class ExternalIntegrationGateway:
             raise ExternalIntegrationError("auditable integration requires an audit sink")
         if not all(isinstance(x, str) and x.strip() for x in (operation, request_id, project_id, source_version)):
             raise ExternalIntegrationError("request identity fields must be non-empty strings")
+        if operation.upper() == "THUMBNAIL_WRITE":
+            raise ExternalIntegrationError(
+                "thumbnail writes are disabled until a dedicated signed thumbnail-artifact approval contract is implemented"
+            )
         spec = binding.operations.get(operation.upper())
         if not isinstance(spec, Mapping):
             raise ExternalIntegrationError("operation has no method-aware provider contract")
