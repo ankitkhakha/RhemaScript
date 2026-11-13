@@ -23,7 +23,7 @@ The comparison also records period lengths and returned-row counts. It does not 
 
 ## Daily coverage diagnostic
 
-For reports that include the `day` dimension, the coverage diagnostic lists expected dates, distinct dates represented by returned rows, and leading, internal, and trailing missing-date groups. For reports with additional dimensions (for example country), it counts distinct day labels rather than treating each dimension row as a separate day.
+For reports that include the `day` dimension, the coverage diagnostic lists expected dates, distinct dates represented by returned rows, and missing dates. For reports with additional dimensions (for example country), it counts distinct day labels rather than treating each dimension row as a separate day. Reports without the `day` dimension receive `NOT_APPLICABLE`; the comparison remains valid and does not fabricate a calendar-coverage result.
 
 The diagnostic is bound to the exact source snapshot and can be recomputed for verification. Missing dates remain unknown/not returned; the diagnostic does not infer reporting delay, zero activity, or the reason for missing data.
 
