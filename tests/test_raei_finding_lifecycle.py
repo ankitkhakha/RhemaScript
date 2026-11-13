@@ -671,7 +671,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         second_payload = dict(first_payload)
         second_payload["knowledge_id"] = "RS-KNOW-APPROVAL-REUSE-002"
         second_payload["rationale"] = "Attempt to reuse the same consumed approvals."
-        with self.assertRaisesRegex(Exception, "already authorized another event"):
+        with self.assertRaisesRegex(Exception, "already authorized another authenticated event"):
             self.registry.append_governed_activity_event(
                 "KNOWLEDGE_REVIEWED:RS-KNOW-APPROVAL-REUSE-002@1.0",
                 "KNOWLEDGE_REVIEWED", second_payload,
