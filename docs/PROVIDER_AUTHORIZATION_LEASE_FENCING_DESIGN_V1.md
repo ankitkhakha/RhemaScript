@@ -127,3 +127,19 @@ These controls require independent implementation and review. A passing local SQ
 ## One-time approval binding in the synthetic model — 13 November 2026
 
 The local model now enforces a unique lease association for each approval ID. A credential already bound to one lease cannot be reused for another lease, including a lease targeting a different resource. This models the one-time nature of consumed approval credentials and closes a gap in the earlier reference tests, which allowed an overlapping approval ID to be attached to a second lease. The model still does not replace the production approval ledger or prove atomicity across independent services.
+
+
+## Dispatch expiry and indeterminate-outcome recovery model — 13 November 2026
+
+The SQLite reference model now samples the acceptance clock after it acquires the serialized dispatch-state lock. This mirrors the acquisition-side expiry recheck and prevents a lease that expires while waiting behind another writer from being accepted on the basis of an earlier timestamp. An adversarial lock-contention test covers this path.
+
+The model also represents the post-acceptance uncertainty boundary:
+
+- An accepted dispatch may be marked `INDETERMINATE` with a bounded reason code when the client cannot establish whether the remote provider completed the operation.
+- An indeterminate dispatch cannot be accepted or replayed again.
+- Reconciliation requires a provider operation ID and an authoritative terminal result (`SUCCEEDED` or `REJECTED`).
+- Repeating the exact same reconciliation is idempotent; conflicting results are rejected.
+- A provider operation ID can be associated with only one lease.
+- A lease that was never accepted cannot be marked indeterminate or reconciled.
+
+These are synthetic local state-machine behaviors only. The model does not contact a provider, prove that a provider operation ID is authentic, or create an independent audit trail. Production reconciliation must verify provider evidence through an authenticated provider interface, persist evidence and audit acknowledgement independently, and prohibit automatic replay whenever acceptance is ambiguous.
