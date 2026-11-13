@@ -464,12 +464,26 @@ class ReadinessRunRegistry:
                 if reproduction_for_version:
                     db.rollback()
                     raise ValueError("finding reproduction is already recorded for this version")
-                researcher = research_for_version[-1].get("authorization", {}).get("subject_id")
-                submitter = captured.get("submitter_identity", {}).get("subject_id")
+                research_auth = research_for_version[-1].get("authorization", {})
+                researcher = research_auth.get("subject_id")
+                research_session = research_auth.get("identity_session_id")
+                submitter_identity = captured.get("submitter_identity", {})
+                submitter = submitter_identity.get("subject_id")
+                submitter_session = submitter_identity.get("identity_session_id")
                 if (approval.subject_id == researcher
-                        or (submitter and approval.subject_id == submitter)):
+                        or approval.identity_session_id == research_session
+                        or (submitter and approval.subject_id == submitter)
+                        or (submitter_session and approval.identity_session_id == submitter_session)):
                     db.rollback()
-                    raise ValueError("reproduction requires an independent human subject")
+                    raise ValueError("reproduction requires an independent human subject and session")
+                if (approval.identity_provider_id != research_auth.get("identity_provider_id")
+                        or approval.identity_policy_version != research_auth.get("identity_policy_version")
+                        or (submitter_identity and (
+                            approval.identity_provider_id != submitter_identity.get("identity_provider_id")
+                            or approval.identity_policy_version != submitter_identity.get("identity_policy_version")
+                        ))):
+                    db.rollback()
+                    raise ValueError("reproduction identity provider and policy must match the original trusted identity domain")
             self._append_event_tx(db, event_id, event_type, normalised, project_id, finding_id)
             db.commit()
         return True
