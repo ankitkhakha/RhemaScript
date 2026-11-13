@@ -16,7 +16,6 @@ concurrency:
 
 jobs:
   test:
-    needs: generate-lock-candidate
     name: Full contract and synthetic integration CI
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -29,19 +28,11 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - name: Download generated hash-lock candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v6
-        with:
-          name: rhemascript-ci-lock-candidate
-          path: lock-candidate
-
-      - name: Verify lock digest and install locked dependencies
+      - name: Verify committed lock and install locked dependencies
         run: |
-          cd lock-candidate
           sha256sum --check requirements-ci.lock.sha256
-          cd ..
           python -m venv .venv
-          .venv/bin/python -m pip install --disable-pip-version-check --require-hashes -r lock-candidate/requirements-ci.lock
+          .venv/bin/python -m pip install --disable-pip-version-check --require-hashes -r requirements-ci.lock
           .venv/bin/python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e .
           .venv/bin/python -m pip check
 
@@ -55,61 +46,4 @@ jobs:
           name: if18-read-only-validation-report
           path: if18-validation-report.json
           if-no-files-found: warn
-          retention-days: 14
-
-  generate-lock-candidate:
-    name: Generate and validate CI dependency lock candidate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-      - name: Record lock generator toolchain
-        run: |
-          python -m pip --version
-          python -m pip install --disable-pip-version-check "pip==24.3.1"
-          python -m pip install --disable-pip-version-check "pip-tools==7.4.1"
-          pip-compile --version
-      - name: Compile and validate exact hash lock
-        run: |
-          pip-compile --resolver=backtracking --generate-hashes --allow-unsafe --strip-extras --output-file requirements-ci.lock requirements-ci.in
-          python - <<'PY'
-          from pathlib import Path
-          import re
-          lines = Path("requirements-ci.lock").read_text().splitlines()
-          blocks, current = [], []
-          for line in lines:
-              if line and not line[0].isspace() and not line.startswith(("#", "--")):
-                  if current: blocks.append(current)
-                  current = [line]
-              elif current:
-                  current.append(line)
-          if current: blocks.append(current)
-          if not blocks: raise SystemExit("lock contains no requirements")
-          for block in blocks:
-              header = block[0].rstrip().rstrip("\\\\").strip()
-              if not re.search(r"==[^ ;]+$", header):
-                  raise SystemExit(f"non-exact requirement: {block[0]}")
-              hashes = [line.strip() for line in block[1:] if "--hash=" in line]
-              if not hashes or any(not re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", item.split()[0]) for item in hashes):
-                  raise SystemExit(f"missing or invalid SHA-256 hashes: {block[0]}")
-          PY
-          python -m pip download --disable-pip-version-check --require-hashes --only-binary=:all: --dest lock-wheelhouse -r requirements-ci.lock
-          sha256sum requirements-ci.lock > requirements-ci.lock.sha256
-          { python --version; python -m pip --version; pip-compile --version; cat requirements-ci.lock.sha256; } > lock-generation-record.txt
-      - name: Upload lock candidate for owner review
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        with:
-          name: rhemascript-ci-lock-candidate
-          path: |
-            requirements-ci.lock
-            requirements-ci.lock.sha256
-            lock-generation-record.txt
-          if-no-files-found: error
           retention-days: 14
