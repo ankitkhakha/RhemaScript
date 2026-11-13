@@ -250,7 +250,7 @@ def record_attempt(
     unit = _units_by_id().get(artifact_payload["unit_id"])
     if unit is None:
         raise RAEITrainingError("assessment references an unknown curriculum unit")
-    progress = get_progress(registry)
+    progress = get_progress(registry, evidence_root=evidence_root)
     if progress.get(unit["id"], {}).get("status") == INDEPENDENT_STATUS:
         raise RAEITrainingError("independently reviewed units are immutable; create a versioned curriculum revision")
     if not _prerequisites_met(unit, progress):
