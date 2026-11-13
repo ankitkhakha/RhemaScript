@@ -1,0 +1,5 @@
+# Inputs for the CPython 3.12 / Ubuntu 24.04 CI lock.
+# Keep these as ranges; the generated requirements-ci.lock records exact versions
+# and artifact hashes. Regenerate and review the lock when these inputs change.
+cryptography>=42.0.0,<48.0.0
+setuptools>=68
