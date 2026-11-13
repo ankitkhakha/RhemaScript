@@ -122,3 +122,8 @@ The fingerprint contract must define a versioned, unambiguous encoding over prov
 - Provider acceptance succeeds but the response is lost; reconciliation must not issue a duplicate mutation.
 
 These controls require independent implementation and review. A passing local SQLite test cannot establish caller identity, signing-key custody, audit immutability, provider enforcement or distributed consistency.
+
+
+## One-time approval binding in the synthetic model — 13 November 2026
+
+The local model now enforces a unique lease association for each approval ID. A credential already bound to one lease cannot be reused for another lease, including a lease targeting a different resource. This models the one-time nature of consumed approval credentials and closes a gap in the earlier reference tests, which allowed an overlapping approval ID to be attached to a second lease. The model still does not replace the production approval ledger or prove atomicity across independent services.
