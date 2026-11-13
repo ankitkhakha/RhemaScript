@@ -373,6 +373,13 @@ def list_findings(
         (item.get("subject_id"), item.get("payload", {}).get("finding_version")): item
         for item in closures
     }
+    reopenings = list_governed_reviews(
+        registry, event_type="FINDING_REOPENED", project_id=project_id,
+    )
+    reopening_by_version = {
+        (item.get("subject_id"), item.get("payload", {}).get("finding_version")): item
+        for item in reopenings
+    }
     finding_by_version = {(entry["finding_id"], entry["version"]): entry for entry in results}
     lifecycle_events = [
         event for event in registry.list_activity_events()
@@ -549,6 +556,15 @@ def list_findings(
             item["closure_event_id"] = closure["event_id"]
             item["closure_rationale"] = closure_payload.get("rationale")
             item["effectiveness_event_id"] = effectiveness["event_id"]
+            reopening = reopening_by_version.get(key)
+            if reopening:
+                reopen_payload = reopening.get("payload", {})
+                if (reopen_payload.get("closure_event_id") != closure["event_id"]
+                        or reopen_payload.get("reopen_decision") != "REOPENED"):
+                    raise RAEIFindingError("reopening does not bind the exact prior closure")
+                item["status"] = "REOPENED"
+                item["reopened_as_version"] = reopen_payload.get("new_finding_version")
+                item["reopening_event_id"] = reopening["event_id"]
         elif effectiveness:
             item["status"] = effectiveness["payload"]["outcome"]
             item["effectiveness_event_id"] = effectiveness["event_id"]
