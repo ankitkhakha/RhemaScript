@@ -227,6 +227,7 @@ class ExternalIntegrationGateway:
                  credential_resolver: Callable[[str], dict[str, str]] | None = None,
                  audit_sink: Callable[[dict[str, Any]], None] | None = None,
                  publish_session_registry: Any | None = None,
+                 session_url_vault: Any | None = None,
                  enabled: bool = False):
         configured_bindings = {}
         for binding in bindings:
@@ -260,6 +261,7 @@ class ExternalIntegrationGateway:
         self.credential_resolver = credential_resolver or (lambda _provider: {})
         self.audit_sink = audit_sink
         self.publish_session_registry = publish_session_registry
+        self.session_url_vault = session_url_vault
         self._session_owner_id = uuid.uuid4().hex
         self.enabled = enabled
         self._lock = threading.Lock()
