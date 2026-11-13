@@ -375,11 +375,11 @@ class ExternalIntegrationGateway:
         } else operation.upper()
         if authority_operation == "PUBLISH":
             from datetime import datetime, timezone
-            from rhemascript.core.approvals import is_verified_approval
+            from rhemascript.core.approvals import is_consumed_verified_approval
             approvals = (authority or {}).get("verified_approvals")
             now = datetime.now(timezone.utc)
             if (not isinstance(approvals, tuple) or len(approvals) != 2
-                    or any(not is_verified_approval(item) for item in approvals)):
+                    or any(not is_consumed_verified_approval(item) for item in approvals)):
                 raise ExternalIntegrationError("provider write requires verifier-issued signed approvals")
             first, second = approvals
             artifact_binding = (
