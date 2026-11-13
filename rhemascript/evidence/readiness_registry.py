@@ -286,6 +286,24 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("event_id already exists with different governed review data")
                 db.commit()
                 return False
+            prior = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type=? AND project_id=? AND subject_id=?
+                ORDER BY sequence DESC""",
+                (event_type, project_id, subject_id),
+            ).fetchall()
+            if event_type == "KNOWLEDGE_REVIEWED" and prior:
+                db.rollback()
+                raise ValueError("a knowledge version may receive only one terminal review decision")
+            if event_type == "FINDING_DISPOSITIONED" and prior:
+                previous_payload = json.loads(prior[0][0])
+                previous_disposition = previous_payload.get("disposition")
+                if previous_disposition in {"ACCEPTED", "REJECTED", "DUPLICATE", "WITHDRAWN"}:
+                    db.rollback()
+                    raise ValueError("a terminal finding disposition cannot be overwritten")
+                if previous_payload.get("finding_version") != payload.get("finding_version"):
+                    db.rollback()
+                    raise ValueError("a finding disposition cannot change the reviewed finding version")
             self._append_event_tx(db, event_id, event_type, normalised, project_id, subject_id)
             db.commit()
         return True
