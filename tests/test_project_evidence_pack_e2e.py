@@ -1,7 +1,7 @@
 import unittest
 
 from rhemascript.capabilities.runtime import CapabilityResult
-from rhemascript.evidence import EvidencePackError, run_evidence_pack
+from rhemascript.evidence import EvidencePackError, run_evidence_pack, validate_evidence_pack
 from rhemascript.orchestration import CreativeProductionOrchestrator
 from rhemascript.registry.system_registry import CAPABILITIES, REQUIRED_GATES
 
@@ -65,6 +65,85 @@ def make_pack():
     }
 
 class ProjectEvidencePackEndToEndTests(unittest.TestCase):
+    def test_analytics_snapshots_and_comparison_bind_exact_artifact_ids(self):
+        manifest = make_pack()
+        manifest["artifacts"].extend([
+            {
+                "artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                "version": "1",
+                "status": "DRAFT",
+                "snapshot_sha256": "a" * 64,
+            },
+            {
+                "artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                "version": "1",
+                "status": "DRAFT",
+                "snapshot_sha256": "b" * 64,
+            },
+            {
+                "artifact_id": "ANALYTICS-COMPARISON-1",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_COMPARISON",
+                "version": "1",
+                "status": "DRAFT",
+                "comparison_sha256": "c" * 64,
+                "current_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+                "previous_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+            },
+        ])
+        manifest["source_to_final_links"] = [
+            {"from_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+             "to_artifact_id": "ANALYTICS-COMPARISON-1", "relationship": "DERIVED_FROM"},
+            {"from_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+             "to_artifact_id": "ANALYTICS-COMPARISON-1", "relationship": "DERIVED_FROM"},
+        ]
+        validated = validate_evidence_pack(manifest)
+        artifacts = {item["artifact_id"]: item for item in validated.artifacts}
+        comparison = artifacts["ANALYTICS-COMPARISON-1"]
+        self.assertEqual(comparison["previous_snapshot_artifact_id"], "ANALYTICS-SNAPSHOT-PREV")
+        self.assertEqual(comparison["current_snapshot_artifact_id"], "ANALYTICS-SNAPSHOT-CURRENT")
+        self.assertEqual(
+            {link["from_artifact_id"] for link in validated.source_to_final_links},
+            {"ANALYTICS-SNAPSHOT-PREV", "ANALYTICS-SNAPSHOT-CURRENT"},
+        )
+
+    def test_analytics_comparison_rejects_missing_or_non_snapshot_source(self):
+        manifest = make_pack()
+        manifest["artifacts"].append({
+            "artifact_id": "ANALYTICS-COMPARISON-1",
+            "project_id": PROJECT["project_id"],
+            "project_version": PROJECT["version"],
+            "artifact_type": "YOUTUBE_ANALYTICS_COMPARISON",
+            "version": "1",
+            "status": "DRAFT",
+            "comparison_sha256": "c" * 64,
+            "current_snapshot_artifact_id": "NOT-A-SNAPSHOT",
+            "previous_snapshot_artifact_id": "ALSO-NOT-A-SNAPSHOT",
+        })
+        with self.assertRaisesRegex(EvidencePackError, "missing or non-snapshot"):
+            validate_evidence_pack(manifest)
+
+    def test_analytics_snapshot_requires_canonical_sha256(self):
+        manifest = make_pack()
+        manifest["artifacts"].append({
+            "artifact_id": "ANALYTICS-SNAPSHOT-BAD",
+            "project_id": PROJECT["project_id"],
+            "project_version": PROJECT["version"],
+            "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+            "version": "1",
+            "status": "DRAFT",
+            "snapshot_sha256": "NOT-A-DIGEST",
+        })
+        with self.assertRaisesRegex(EvidencePackError, "lowercase SHA-256"):
+            validate_evidence_pack(manifest)
+
     def test_manifest_compiles_all_capabilities_and_runs_in_dependency_order(self):
         validated, result = run_evidence_pack(
             make_pack(),
