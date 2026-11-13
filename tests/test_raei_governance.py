@@ -7,7 +7,7 @@ import unittest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from rhemascript.core.approvals import ApprovalVerifier
+from rhemascript.core.approvals import ApprovalVerifier, ApprovalError
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 from rhemascript.evidence.artifact_verification import EvidenceVersion, verify_artifact
 from raei.governance import (
@@ -145,6 +145,35 @@ class RAEIGovernanceTests(unittest.TestCase):
             subject_id="BWSF-01",
         )
         self.assertEqual(reviews[0]["payload"]["decision"], "APPROVED")
+
+    def test_registry_rejects_signature_verified_but_unconsumed_review_objects(self):
+        captured = []
+        public_key = self.private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=lambda entries: (captured.extend(entries) or False),
+            clock=lambda: self.now,
+        )
+        credentials = self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
+        expectations = (
+            {"action": "FINDING_DISPOSITION_REVIEW", "project_id": "RS-PWW-001",
+             "project_version": "3.2", "request_id": "review-request-0001"},
+            {"action": "FINDING_DISPOSITION_CONFIRM", "project_id": "RS-PWW-001",
+             "project_version": "3.2", "request_id": "review-request-0001"},
+        )
+        with self.assertRaisesRegex(ApprovalError, "could not be consumed atomically"):
+            verifier.verify_many_and_consume(credentials, expectations)
+        self.assertEqual(len(captured), 2)
+        with self.assertRaisesRegex(ValueError, "verifier-issued, consumed approvals"):
+            self.registry.append_governed_activity_event(
+                "FINDING_DISPOSITIONED:RS-FND-UNCONSUMED@1.0:req",
+                "FINDING_DISPOSITIONED", {},
+                project_id="RS-PWW-001", project_version="3.2",
+                subject_id="RS-FND-UNCONSUMED", request_id="review-request-0001",
+                approvals=tuple(captured),
+                expected_actions=("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM"),
+            )
 
     def test_generic_append_cannot_forge_governed_review_event(self):
         with self.assertRaisesRegex(ValueError, "append_governed_activity_event"):
