@@ -6,7 +6,7 @@ it never restores a database and does not claim cross-database atomicity.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -333,7 +333,7 @@ def advance_composite_checkpoint_anchor(
     age = (current.astimezone(timezone.utc) - latest.resolved_at.astimezone(timezone.utc)).total_seconds()
     if age < -30 or age > 30:
         raise CompositeCheckpointError("independent anchor response is stale or future-dated")
-    if latest.recorded_at > current.astimezone(timezone.utc) + __import__("datetime").timedelta(seconds=30):
+    if latest.recorded_at > current.astimezone(timezone.utc) + timedelta(seconds=30):
         raise CompositeCheckpointError("independent anchor record is future-dated")
     return latest
 
