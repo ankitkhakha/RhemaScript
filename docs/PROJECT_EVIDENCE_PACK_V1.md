@@ -35,7 +35,7 @@ Evidence payloads for the same CAP are merged only when repeated keys have ident
 
 ## Limits
 
-References are caller-supplied identifiers; remote files are not fetched or verified. No binary media storage, durable database, signature service, retention engine or immutable audit store is added. Human approval authenticity still depends on the existing gate-record process and review. No frame or waveform inspection is implemented.
+References are caller-supplied opaque identifiers; remote files and source identities are not fetched or verified. Readiness traceability explicitly labels these references unresolved by the local artifact verifier. The threat model and future source-specific resolver contract are documented in `docs/EXTERNAL_EVIDENCE_REFERENCE_RESOLUTION_V1.md`; that design is not implemented or activated. No binary media storage, signature service, retention engine or immutable audit store is added. Human approval authenticity still depends on the existing gate-record process and review. No frame or waveform inspection is implemented.
 
 
 ## Canonical schema and starter template
@@ -46,3 +46,11 @@ References are caller-supplied identifiers; remote files are not fetched or veri
 - Replace sample project identifiers and add version-bound artefacts/evidence as the project progresses.
 - The JSON Schema describes the manifest structure; the Python runtime validator remains authoritative for cross-record checks such as project/version binding, reference resolution, provenance acyclicity and complete source-to-final linkage.
 - Do not place generation authorisation in the manifest. Existing gate records are supplied as records; the separate execution-authorisation input remains outside the evidence pack.
+
+## Optional offline local-source resolution
+
+`run_evidence_pack` accepts an explicitly constructed `local_source_resolver` in addition to the existing optional `evidence_root`. An artifact may carry `local_source_reference` and its declared `sha256`. The resolver must contain that exact reference in its caller-supplied catalog. The resolved source ID, artifact version and digest must exactly match the evidence-pack artifact before the run is assessed.
+
+Successful resolution adds the immutable receipt to `ValidatedEvidencePack.source_resolution_receipts` and the verified byte version to `byte_verified_artifacts`. The receipt remains `CONTENT_VERIFIED` with source authentication and claim relevance both `NOT_CHECKED`. Resolver failure or any identity/version/digest disagreement rejects the pack before orchestration. No source reference is auto-discovered and no network lookup is performed.
+
+This is evidence resolution only. It does not change the six existing project gates, create approvals, infer human acceptance, grant generation authority, or enable external/publishing actions. Existing `gate_records` and the separate `generation_authorisation` input retain their current handling.

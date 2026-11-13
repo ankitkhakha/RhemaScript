@@ -82,6 +82,9 @@ def run_project_assessment(
     generation_authorisation: bool = False,
     run_id: str | None = None,
     orchestrator: Any = None,
+    evidence_root: str | None = None,
+    local_source_resolver: Any = None,
+    readiness_registry: Any = None,
 ) -> tuple[Any, OrchestrationResult, dict[str, Any]]:
     """Validate a project pack, assess it, and return its read-only readiness report."""
     from rhemascript.evidence import run_evidence_pack
@@ -92,5 +95,152 @@ def run_project_assessment(
         generation_authorisation=generation_authorisation,
         run_id=run_id,
         orchestrator=orchestrator,
+        evidence_root=evidence_root,
+        local_source_resolver=local_source_resolver,
     )
-    return validated, result, build_readiness_report(result)
+    if validated.source_resolution_receipts:
+        from rhemascript.evidence.local_source_resolver import LocalSourceResolver
+        if not isinstance(local_source_resolver, LocalSourceResolver):
+            raise ValueError("source resolution receipts require their originating resolver for freshness verification")
+        for receipt in validated.source_resolution_receipts:
+            if not local_source_resolver.verify_receipt(
+                receipt, project_id=validated.project_id,
+                project_version=validated.project_version,
+            ):
+                raise ValueError("local source receipt became stale before readiness assessment was recorded")
+
+    report = build_readiness_report(result)
+    report["evidence_integrity"] = {
+        "mode": validated.evidence_integrity_mode,
+        "byte_verified_artifact_count": len(validated.byte_verified_artifacts),
+        "structural_only_warning": (
+            "Artifact status labels were not checked against local file bytes."
+            if validated.evidence_integrity_mode == "STRUCTURAL_ONLY" else None
+        ),
+        "source_resolution_receipts": [
+            {
+                "reference": receipt.original_reference,
+                "source_id": receipt.source_id,
+                "version": receipt.version,
+                "sha256": receipt.sha256,
+                "catalog_revision": receipt.catalog_revision,
+                "catalog_fingerprint": receipt.catalog_fingerprint,
+                "project_id": receipt.project_id,
+                "project_version": receipt.project_version,
+                "outcome": receipt.outcome,
+                "source_authentication": receipt.source_authentication,
+                "claim_relevance": receipt.claim_relevance,
+            }
+            for receipt in validated.source_resolution_receipts
+        ],
+    }
+    verified_by_id = {item.evidence_id: item for item in validated.byte_verified_artifacts}
+    artifact_capabilities: dict[str, list[str]] = {}
+    evidence_traceability = []
+    for evidence_record in validated.evidence_records:
+        capability_id = evidence_record["capability_id"]
+        artifact_ids = list(evidence_record.get("artifact_refs", []))
+        for artifact_id in artifact_ids:
+            artifact_capabilities.setdefault(artifact_id, []).append(capability_id)
+        evidence_traceability.append({
+            "evidence_id": evidence_record["evidence_id"],
+            "capability_id": capability_id,
+            "artifact_refs": artifact_ids,
+            "evidence_refs": [
+                (
+                    {
+                        "reference": reference,
+                        "resolution_status": "CONTENT_VERIFIED",
+                        "source_id": receipt.source_id,
+                        "version": receipt.version,
+                        "sha256": receipt.sha256,
+                        "catalog_revision": receipt.catalog_revision,
+                        "catalog_fingerprint": receipt.catalog_fingerprint,
+                    }
+                    if (receipt := next((item for item in validated.source_resolution_receipts
+                                         if item.original_reference == reference), None)) is not None
+                    else {
+                        "reference": reference,
+                        "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
+                    }
+                )
+                for reference in evidence_record.get("evidence_refs", [])
+            ],
+        })
+    report["evidence_traceability"] = {
+        "records": evidence_traceability,
+        "artifacts": [
+            {
+                "artifact_id": artifact["artifact_id"],
+                "capability_ids": sorted(artifact_capabilities.get(artifact["artifact_id"], [])),
+                "integrity_status": (
+                    "BYTE_VERIFIED" if artifact["artifact_id"] in verified_by_id
+                    else "NOT_BYTE_VERIFIED"
+                ),
+                "verified_sha256": (
+                    verified_by_id[artifact["artifact_id"]].sha256
+                    if artifact["artifact_id"] in verified_by_id else None
+                ),
+                "verified_version": (
+                    verified_by_id[artifact["artifact_id"]].version
+                    if artifact["artifact_id"] in verified_by_id else None
+                ),
+                "declared_evidence_refs": [
+                    (
+                        {
+                            "reference": reference,
+                            "resolution_status": "CONTENT_VERIFIED",
+                            "source_id": receipt.source_id,
+                            "version": receipt.version,
+                            "sha256": receipt.sha256,
+                            "catalog_revision": receipt.catalog_revision,
+                            "catalog_fingerprint": receipt.catalog_fingerprint,
+                        }
+                        if (receipt := next((item for item in validated.source_resolution_receipts
+                                             if item.original_reference == reference), None)) is not None
+                        else {
+                            "reference": reference,
+                            "resolution_status": "UNRESOLVED_BY_LOCAL_ARTIFACT_VERIFIER",
+                        }
+                    )
+                    for reference in artifact.get("evidence_refs", [])
+                ],
+                "local_source_resolution": next((
+                    {
+                        "reference": receipt.original_reference,
+                        "source_id": receipt.source_id,
+                        "version": receipt.version,
+                        "sha256": receipt.sha256,
+                        "catalog_revision": receipt.catalog_revision,
+                        "catalog_fingerprint": receipt.catalog_fingerprint,
+                        "status": receipt.outcome,
+                    }
+                    for receipt in validated.source_resolution_receipts
+                    if receipt.source_id == artifact["artifact_id"]
+                ), None),
+            }
+            for artifact in validated.artifacts
+        ],
+    }
+    if readiness_registry is not None:
+        from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
+        if not isinstance(readiness_registry, ReadinessRunRegistry):
+            raise TypeError("readiness_registry must be a ReadinessRunRegistry")
+        if validated.evidence_integrity_mode != "BYTE_VERIFIED":
+            raise ValueError("durable readiness registration requires byte-verified evidence_root")
+        readiness_registry.record(
+            result.run_id, report, validated.byte_verified_artifacts,
+            validated.source_resolution_receipts,
+        )
+        report["durable_assessment"] = {
+            "registered": True,
+            "registry_type": "LOCAL_SQLITE",
+            "assessment_is_approval": False,
+            "assessment_is_execution_authorisation": False,
+        }
+    else:
+        report["durable_assessment"] = {
+            "registered": False,
+            "reason": "No readiness registry was supplied.",
+        }
+    return validated, result, report

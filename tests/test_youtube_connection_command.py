@@ -183,6 +183,54 @@ class ReadOnlyConnectionCommandTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_invalid_grant_is_classified_as_reauthorization_required(self):
+        class InvalidGrantTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                return 400, b'{"error":"invalid_grant","error_description":"do not expose this text"}', {}
+
+        with self.assertRaises(YouTubeIntegrationError) as caught:
+            run_connection_check(
+                self.credentials, "UC_expected_channel", self.audit,
+                transport=InvalidGrantTransport(),
+            )
+        self.assertEqual(caught.exception.code, "invalid_grant")
+        audit_text = self.audit.read_text()
+        self.assertIn('"error_type":"invalid_grant"', audit_text)
+        self.assertNotIn("do not expose this text", audit_text)
+        self.assertNotIn("refresh-token-value", audit_text)
+
+    def test_cli_reports_authorization_required_only_for_invalid_grant(self):
+        output = io.StringIO()
+        with patch(
+            "rhemascript.integrations.connection.run_connection_check",
+            side_effect=YouTubeIntegrationError("sanitised", code="invalid_grant"),
+        ):
+            with redirect_stdout(output):
+                exit_code = main([
+                    "--credential-file", str(self.credentials),
+                    "--expected-channel-id", "UC_expected_channel",
+                    "--audit-file", str(self.audit),
+                ])
+        self.assertEqual(exit_code, 3)
+        self.assertIn('"status": "AUTHORIZATION_REQUIRED"', output.getvalue())
+        self.assertNotIn("refresh-token-value", output.getvalue())
+
+    def test_cli_does_not_mislabel_invalid_client_as_reauthorization(self):
+        output = io.StringIO()
+        with patch(
+            "rhemascript.integrations.connection.run_connection_check",
+            side_effect=YouTubeIntegrationError("sanitised", code="invalid_client"),
+        ):
+            with redirect_stdout(output):
+                exit_code = main([
+                    "--credential-file", str(self.credentials),
+                    "--expected-channel-id", "UC_expected_channel",
+                    "--audit-file", str(self.audit),
+                ])
+        self.assertEqual(exit_code, 2)
+        self.assertIn('"status": "CLIENT_CONFIGURATION_ERROR"', output.getvalue())
+        self.assertNotIn("AUTHORIZATION_REQUIRED", output.getvalue())
+
     def test_missing_credentials_still_produces_redacted_failure_audit(self):
         missing = self.root / "missing.json"
         with self.assertRaises(YouTubeIntegrationError):

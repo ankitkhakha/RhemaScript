@@ -1,0 +1,20 @@
+{
+  "schema": "raei-field-finding-v1",
+  "finding_id": "RS-FND-REPLACE-ME",
+  "version": "1.0",
+  "project_id": "REPLACE-PROJECT-ID",
+  "title": "REPLACE-WITH-A-CONCISE-TITLE",
+  "raw_observation": "Paste the original non-sensitive observation wording here. Preserve the user's wording.",
+  "affected_workflow": "REPLACE-WORKFLOW",
+  "expected_behavior": "Describe what should have happened.",
+  "observed_behavior": "Describe what actually happened.",
+  "impact": "Describe the practical impact.",
+  "reproduction_steps": [],
+  "supporting_evidence": [],
+  "evidence_id": "REPLACE-WITH-EXACT-EVIDENCE-ID",
+  "evidence_version": "1.0",
+  "created_at_utc": "REPLACE-WITH-ISO8601-TIMESTAMP-WITH-TIMEZONE",
+  "tags": [],
+  "related_work_ids": [],
+  "supersedes": []
+}

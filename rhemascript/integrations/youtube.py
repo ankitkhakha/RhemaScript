@@ -38,6 +38,10 @@ REQUIRED_SCOPES = (
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
 
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
 
 class _NoRedirect(HTTPRedirectHandler):
     """Reject redirects so credentials and media never follow an untrusted hop."""
@@ -313,6 +317,30 @@ class YouTubeClient:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if status != 200:
+            code = None
+            try:
+                error_payload = json.loads(raw)
+                candidate = error_payload.get("error") if isinstance(error_payload, dict) else None
+                if candidate in {"invalid_grant", "invalid_client", "unauthorized_client",
+                                 "invalid_scope", "invalid_request"}:
+                    code = candidate
+            except (ValueError, TypeError):
+                pass
+            if code == "invalid_grant":
+                raise YouTubeIntegrationError(
+                    "Google rejected the stored refresh token (invalid_grant); reauthorization may be required after verifying the OAuth client configuration.",
+                    code=code,
+                )
+            if code == "invalid_client":
+                raise YouTubeIntegrationError(
+                    "Google rejected the OAuth client configuration (invalid_client); verify the matching Desktop client ID and secret.",
+                    code=code,
+                )
+            if code in {"unauthorized_client", "invalid_scope", "invalid_request"}:
+                raise YouTubeIntegrationError(
+                    "Google rejected the OAuth request configuration; inspect the local client and scope settings.",
+                    code=code,
+                )
             raise YouTubeIntegrationError("Google OAuth token refresh failed")
         try:
             token = json.loads(raw)["access_token"]
@@ -457,8 +485,14 @@ class YouTubeClient:
             _validate_publish_at(publish_at)
         if not isinstance(made_for_kids, bool):
             raise YouTubeIntegrationError("made_for_kids must be explicitly boolean")
-        if tags is not None and (not isinstance(tags, list) or any(not isinstance(x, str) for x in tags)):
-            raise YouTubeIntegrationError("tags must be a list of strings")
+        if tags is not None:
+            if not isinstance(tags, list) or any(not isinstance(tag, str) or not tag.strip() for tag in tags):
+                raise YouTubeIntegrationError("tags must be a list of non-empty strings")
+            if sum(len(tag) for tag in tags) > 500:
+                raise YouTubeIntegrationError("combined tag length exceeds 500 characters")
+        if (not isinstance(category_id, (str, int)) or isinstance(category_id, bool)
+                or not str(category_id).isdigit()):
+            raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
         metadata: dict[str, Any] = {
             "snippet": {"title": title.strip(), "description": description,
@@ -647,8 +681,18 @@ class YouTubeClient:
     def analytics(self, *, start_date: date, end_date: date,
                   metrics: str = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
                   dimensions: str = "day", filters: str | None = None) -> dict[str, Any]:
+        if not isinstance(start_date, date) or isinstance(start_date, datetime):
+            raise YouTubeIntegrationError("start_date must be a date, not a datetime")
+        if not isinstance(end_date, date) or isinstance(end_date, datetime):
+            raise YouTubeIntegrationError("end_date must be a date, not a datetime")
         if end_date < start_date:
             raise YouTubeIntegrationError("end_date cannot precede start_date")
+        if not isinstance(metrics, str) or not metrics.strip() or len(metrics) > 500:
+            raise YouTubeIntegrationError("metrics must be a non-empty string of at most 500 characters")
+        if not isinstance(dimensions, str) or not dimensions.strip() or len(dimensions) > 200:
+            raise YouTubeIntegrationError("dimensions must be a non-empty string of at most 200 characters")
+        if filters is not None and (not isinstance(filters, str) or len(filters) > 500):
+            raise YouTubeIntegrationError("filters must be a string of at most 500 characters")
         params: dict[str, Any] = {
             "ids": "channel==MINE", "startDate": start_date.isoformat(),
             "endDate": end_date.isoformat(), "metrics": metrics, "dimensions": dimensions,
