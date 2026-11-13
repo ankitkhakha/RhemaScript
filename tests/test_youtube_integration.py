@@ -427,18 +427,15 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertNotIn("approved-video-bytes", repr(events))
 
     def test_upload_session_is_denied_before_provider_write_without_durable_registry(self):
-        calls = []
-        def transport(request, timeout):
-            calls.append(request.full_url)
-            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
-                return 200, b'{"access_token":"test-token"}', {}
-            self.fail("upload provider write must be denied without a durable registry")
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append(url)
+                self.fail("no network request is allowed without the durable registry")
+        transport = MethodTransport()
         client = YouTubeClient(self.config(), gateway=ExternalIntegrationGateway(
-            (youtube_provider_binding(),), transport=type("T", (), {
-                "send_request": lambda _self, url, method, headers, body, timeout:
-                    (200, b'{"access_token":"test-token"}', {}) if url.startswith("https://oauth2.googleapis.com/token")
-                    else self.fail("provider write must be denied")
-            })(),
+            (youtube_provider_binding(),), transport=transport,
             credential_resolver=lambda provider: {}, audit_sink=lambda event: None, enabled=True,
         ))
         with tempfile.NamedTemporaryFile() as video:
@@ -450,6 +447,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                         video.name, title="Approved", description="Test",
                         **self.publish_context(final_film_bytes=b"approved-video-bytes"),
                     )
+        self.assertEqual(transport.calls, [])
 
     def test_verify_video_rejects_different_returned_video_id(self):
         def transport(request, timeout):
