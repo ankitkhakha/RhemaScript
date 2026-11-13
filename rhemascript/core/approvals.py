@@ -239,6 +239,7 @@ class ApprovalVerifier:
         if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
             raise ApprovalError("verifier clock must return a timezone-aware datetime")
         now = now.astimezone(timezone.utc)
+        issued_at = self._timestamp(token["issued_at"], "issued_at")
         identity = {}
         authenticated_at = None
         identity_max_age = None
@@ -261,12 +262,13 @@ class ApprovalVerifier:
                     or token["authn_context"] not in policy["allowed_authn_contexts"]):
                 raise ApprovalError("approval role or authentication context is not authorized")
             authenticated_at = self._timestamp(token["authenticated_at"], "authenticated_at")
+            if authenticated_at > issued_at + self._clock_skew:
+                raise ApprovalError("approval authentication occurred after credential issuance")
             identity_age = (now - authenticated_at).total_seconds()
             if identity_age < -self._clock_skew.total_seconds() or identity_age > policy["max_authentication_age_seconds"]:
                 raise ApprovalError("approval authentication is stale or future-dated")
             identity_max_age = policy["max_authentication_age_seconds"]
             identity = {name: token[name] for name in _IDENTITY_FIELDS}
-        issued_at = self._timestamp(token["issued_at"], "issued_at")
         expires_at = self._timestamp(token["expires_at"], "expires_at")
         if authenticated_at is not None and authenticated_at > issued_at + self._clock_skew:
             raise ApprovalError("approval authentication occurred after credential issuance")
