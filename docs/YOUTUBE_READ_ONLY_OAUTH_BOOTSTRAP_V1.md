@@ -84,3 +84,18 @@ Stop if:
 - The authenticated channel ID does not match the expected channel ID.
 
 Never share the authorization code, access token, refresh token, credential JSON, full authorization URL, or unredacted token response.
+
+
+## External Testing refresh-token lifetime
+
+The owner’s Google Auth Platform screenshots dated 12 November 2026 show an External user type and Testing publishing status, with one test user. The approved read-only Data Access scope is `https://www.googleapis.com/auth/youtube.readonly`.
+
+Google's current OAuth documentation (checked 13 November 2026) says refresh tokens issued to External/Testing apps expire after seven days unless the requested scopes are limited to `userinfo.email`, `userinfo.profile` and `openid`. `youtube.readonly` is outside that exception. If the successful owner authorization was issued on 12 November, expect refresh-token expiry around 19 November (exact time depends on issuance). The owner-reported successful flow does not require another consent flow on 13 November if the stored token refreshes successfully.
+
+Google also limits refresh-token issuance to 100 per Google Account per OAuth client ID. Avoid repeated consent attempts. Re-run the local read-only connection command near the seven-day point. If it reports `invalid_grant`, reauthorize using the same intended Desktop client and exact read-only scope after verifying client configuration. If it reports `invalid_client`, correct the client ID/secret pairing instead of repeating consent.
+
+Official references:
+- https://developers.google.com/identity/protocols/oauth2#expiration
+- https://developers.google.com/youtube/data/guides/authentication
+
+Do not change the consent screen to Production or change the user type as part of this bootstrap. Production status may require branding and sensitive-scope verification; it requires a separate owner decision.
