@@ -184,7 +184,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             ),), transport=transport, audit_sink=lambda event: None, enabled=True,
         )
         with self.assertRaisesRegex(
-            ExternalIntegrationError, "signed external-write authority",
+            ExternalIntegrationError, "signed operation authority",
         ):
             gateway.request(
                 "IF-18", "CUSTOM_MUTATION",
@@ -218,6 +218,36 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 authority={"external_action_authorisation": True},
             )
         self.assertEqual(transport.calls, [])
+
+    def test_named_generic_consequential_operations_reject_boolean_authority(self):
+        for operation, authority_key in (
+            ("GENERATE", "generation_authorisation"),
+            ("SPEND", "spending_authorisation"),
+            ("EXTERNAL_WRITE", "external_action_authorisation"),
+        ):
+            with self.subTest(operation=operation):
+                transport = NeverTransport()
+                gateway = ExternalIntegrationGateway(
+                    (ProviderBinding(
+                        interface_id="IF-18", provider_name="youtube",
+                        endpoint="https://www.googleapis.com",
+                        allowed_hosts=("www.googleapis.com",),
+                        operations={operation: {
+                            "method": "POST", "hosts": ("www.googleapis.com",),
+                            "path_prefix": "/custom/resource",
+                        }},
+                    ),), transport=transport, audit_sink=lambda event: None, enabled=True,
+                )
+                with self.assertRaisesRegex(
+                    ExternalIntegrationError, "signed operation authority",
+                ):
+                    gateway.request(
+                        "IF-18", operation, "https://www.googleapis.com/custom/resource",
+                        method="POST", body=b"mutation", request_id=f"generic-{operation.lower()}",
+                        project_id="RS-1", source_version="1.0",
+                        authority={authority_key: True},
+                    )
+                self.assertEqual(transport.calls, [])
 
     def test_oauth_token_exception_rejects_non_google_token_endpoint(self):
         transport = NeverTransport()
