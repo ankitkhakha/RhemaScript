@@ -367,6 +367,16 @@ class ExternalIntegrationGateway:
                 or parsed.fragment or parsed.hostname.rstrip(".").lower() not in allowed_hosts
                 or not (decoded_path == prefix or decoded_path.startswith(prefix.rstrip("/") + "/"))):
             raise ExternalIntegrationError("request URL is outside the provider operation allowlist")
+        if operation.upper() == "OAUTH_TOKEN" and (
+                binding.provider_name.lower() != "youtube"
+                or method.upper() != "POST"
+                or parsed.hostname.rstrip(".").lower() != "oauth2.googleapis.com"
+                or decoded_path != "/token"
+                or bool(parsed.query)
+                or bool(parsed.fragment)):
+            raise ExternalIntegrationError(
+                "OAuth token exchange is restricted to the exact Google token endpoint"
+            )
         if not isinstance(body, (bytes, type(None))) or not 0 < max_response_bytes <= 8_000_000:
             raise ExternalIntegrationError("request body or response limit is invalid")
         try:
@@ -389,6 +399,13 @@ class ExternalIntegrationGateway:
         else:
             authority_operation = operation_name
         write_approvals = None
+        if authority_operation == "EXTERNAL_WRITE":
+            # A caller-supplied boolean is not an authenticated approval.
+            # Keep generic external mutations disabled until a signed,
+            # identity-bound, independently verifiable authority contract exists.
+            raise ExternalIntegrationError(
+                "generic external writes are disabled until signed external-write authority is implemented"
+            )
         if authority_operation == "PUBLISH":
             from datetime import datetime, timezone
             from rhemascript.core.approvals import (
