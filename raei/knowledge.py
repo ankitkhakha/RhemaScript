@@ -143,6 +143,17 @@ def _validate_inherited_lineage(registry: ReadinessRunRegistry, payload: dict[st
                 or event.get("payload", {}).get("finding_version") != finding_version):
             raise RAEIKnowledgeError("stored inherited knowledge references an invalid source lifecycle event")
         selected[field] = event
+    closure_auth = selected["closure_event_id"].get("payload", {}).get("authorization", {})
+    closure_project = selected["closure_event_id"].get("project_id")
+    closure_version = closure_auth.get("project_version")
+    if (not isinstance(closure_project, str) or not closure_project
+            or not isinstance(closure_version, str) or not closure_version
+            or any(
+                event.get("project_id") != closure_project
+                or event.get("payload", {}).get("authorization", {}).get("project_version") != closure_version
+                for event in selected.values()
+            )):
+        raise RAEIKnowledgeError("stored inherited knowledge crosses project or project-version lifecycle scope")
     plan = selected["plan_event_id"]
     implementation = selected["implementation_event_id"]
     effectiveness = selected["effectiveness_event_id"]
@@ -310,6 +321,17 @@ def inherit_closed_finding_as_knowledge(
                 or event_payload.get("finding_id") != finding_id
                 or event_payload.get("finding_version") != finding_version):
             raise RAEIKnowledgeError("inherited knowledge source events do not match the exact finding version")
+    closure_auth = closure.get("payload", {}).get("authorization", {})
+    closure_project = closure.get("project_id")
+    closure_version = closure_auth.get("project_version")
+    if (not isinstance(closure_project, str) or not closure_project
+            or not isinstance(closure_version, str) or not closure_version
+            or any(
+                event.get("project_id") != closure_project
+                or event.get("payload", {}).get("authorization", {}).get("project_version") != closure_version
+                for event, _ in expected
+            )):
+        raise RAEIKnowledgeError("knowledge inheritance crosses project or project-version lifecycle scope")
     if (effectiveness["payload"].get("outcome") != "EFFECTIVE"
             or closure["payload"].get("closure_decision") != "CLOSED"
             or closure["payload"].get("evidence_binding") != effectiveness["payload"].get("evidence_binding")
