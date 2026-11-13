@@ -791,6 +791,28 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertIn("before retrying", str(caught.exception))
         self.assertEqual(calls, ["POST", "POST"])
 
+    def test_provider_5xx_during_session_creation_is_indeterminate(self):
+        calls = []
+
+        def transport(request, timeout):
+            calls.append(request.get_method())
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            if request.full_url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                return 503, b'{"error":"temporarily unavailable"}', {}
+            self.fail("indeterminate session creation must not be retried")
+
+        client = YouTubeClient(self.config(), transport=transport)
+        context = self.publish_context()
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaises(YouTubeIntegrationError) as caught:
+                    client.upload_video(video.name, title="Test", description="Test", **context)
+        self.assertEqual(caught.exception.code, "INDETERMINATE_WRITE")
+        self.assertEqual(calls, ["POST", "POST"])
+
     def test_resumable_upload_rejects_impossible_acknowledgement(self):
         chunk_size = 256 * 1024
 
