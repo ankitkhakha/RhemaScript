@@ -201,6 +201,22 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
             target[key] = value
         target.setdefault("evidence_refs", []).extend(refs + [f"artifact:{x}" for x in artifact_refs])
     _validate_graph(artifacts, links_raw)
+    provenance_edges = {
+        (link["from_artifact_id"], link["to_artifact_id"], link["relationship"])
+        for link in links_raw
+    }
+    for ident, artifact in artifacts.items():
+        if artifact["artifact_type"] != "YOUTUBE_ANALYTICS_COMPARISON":
+            continue
+        required_edges = {
+            (artifact["current_snapshot_artifact_id"], ident, "DERIVED_FROM"),
+            (artifact["previous_snapshot_artifact_id"], ident, "DERIVED_FROM"),
+        }
+        if not required_edges.issubset(provenance_edges):
+            raise EvidencePackError(
+                f"Analytics comparison {ident} requires DERIVED_FROM links "
+                "to both exact snapshot artifacts"
+            )
     gates = pack.get("gate_records", [])
     if not isinstance(gates, list) or any(not isinstance(x, dict) for x in gates):
         raise EvidencePackError("gate_records must be a list of objects")
