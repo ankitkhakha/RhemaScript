@@ -1,5 +1,7 @@
 # Inputs for the CPython 3.12 / Ubuntu 24.04 CI lock.
-# Keep these as ranges; the generated requirements-ci.lock records exact versions
-# and artifact hashes. Regenerate and review the lock when these inputs change.
-cryptography>=42.0.0,<48.0.0
+# Keep these as reviewed security floors and bounded ranges; the generated
+# requirements-ci.lock records exact versions and artifact hashes.
+# cryptography >=50.0.0 addresses GHSA-g6cj-pr64-35w5 and >=49.0.0
+# addresses GHSA-m2h6-j472-rp4c; floor is set to the current reviewed patch.
+cryptography>=50.0.2,<51.0.0
 setuptools>=68
