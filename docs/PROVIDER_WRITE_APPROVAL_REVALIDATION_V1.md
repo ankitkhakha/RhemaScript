@@ -9,7 +9,7 @@ Close the time gap between atomic approval consumption and the first external pr
 - `ApprovalVerifier` attaches an opaque reference to the exact verifier instance that created each `VerifiedApproval`.
 - `revalidate_consumed_verified_approval` accepts only the exact in-process approval object already marked as consumed by the verifier.
 - `ApprovalVerifier.revalidate_consumed_approval` rechecks:
-  - when the atomic-consumption callback is a bound durable store method exposing `is_consumed` and `is_revoked`, the exact approval remains present in the consumption ledger and has not subsequently been revoked; ledger read failures fail closed;
+  - when the atomic-consumption callback is the bound durable SQLite store, `read_consumption_state` reads consumed and revoked flags in one SQLite read transaction/snapshot; ledger read failures fail closed;
   - that the credential remains unexpired;
   - that the signing key still resolves from the verifier's configured trust source;
   - that the current key fingerprint matches the key used during signature verification;
@@ -43,5 +43,5 @@ Before enabling production provider writes:
 1. Deploy an authenticated, independently administered live key registry.
 2. Define and measure revocation propagation and registry freshness guarantees.
 3. Establish independent key custody, rotation, compromise response and audit retention.
-4. Decide whether the residual read-to-transport race is acceptable or requires an authorization-lease/fencing protocol.
+4. Implement and independently validate the provider-boundary authorization lease/fencing protocol in `PROVIDER_AUTHORIZATION_LEASE_FENCING_DESIGN_V1.md`; until the provider or a trusted gateway enforces fencing atomically, production writes remain blocked.
 5. Complete independent human security review and production write-boundary testing.
