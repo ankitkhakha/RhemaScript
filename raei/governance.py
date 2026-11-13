@@ -308,7 +308,7 @@ def list_governed_reviews(
         auth = payload.get("authorization")
         if (not isinstance(auth, dict)
                 or len(auth.get("actor_ids", [])) != 2
-                or len(set(auth.get("actor_ids", [])) != 2
+                or len(set(auth.get("actor_ids", []))) != 2
                 or len(auth.get("approval_ids", [])) != 2
                 or auth.get("project_id") != event.get("project_id")):
             raise RAEIGovernanceError("governed event authorization envelope is invalid")
