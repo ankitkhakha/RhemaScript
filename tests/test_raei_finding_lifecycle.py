@@ -592,6 +592,49 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self.assertEqual(after[0]["event_id"], first["event_id"])
         self.assertTrue(self.registry.verify())
 
+    def test_reopening_rejects_project_version_different_from_prior_closure(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        evidence = verify_artifact(
+            self.evidence_root, "effectiveness.json",
+            evidence_id="EV-FND-EFFECTIVENESS-001", version="1.0",
+        )
+        request_id = f"request-FINDING-REOPEN-CROSS-PROJECT-VERSION-{self.finding_id}"
+        credentials = []
+        for action, subject, actor, session in (
+            ("FINDING_REOPEN_REVIEW", "subject-reopen-version-reviewer", "actor-reopen-version-reviewer", "session-reopen-version-reviewer"),
+            ("FINDING_REOPEN_CONFIRM", "subject-reopen-version-approver", "actor-reopen-version-approver", "session-reopen-version-approver"),
+        ):
+            token = self._credential(
+                action, evidence, subject_id=subject, actor_id=actor,
+                session_id=session, request_id=request_id,
+            )
+            token["project_version"] = "3.3"
+            token.pop("signature")
+            token["signature"] = self.private_key.sign(
+                json.dumps(token, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+            ).hex()
+            credentials.append(token)
+        with self.assertRaisesRegex(RAEIGovernanceError, "match the exact prior closure scope"):
+            record_finding_reopening(
+                self.registry, self.verifier, tuple(credentials),
+                finding_id=self.finding_id, finding_version=self.finding_version,
+                new_finding_version="1.1", project_id=self.project_id,
+                project_version="3.3", request_id=request_id,
+                rationale="Attempt to reopen a finding under a different project version.",
+                evidence_root=str(self.evidence_root), evidence=evidence,
+            )
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_REOPENED"
+            for event in self.registry.list_activity_events()
+        ))
+        self.assertTrue(self.registry.verify())
+
     def _inherit_closed_knowledge(self):
         events = {
             event["event_type"]: event
