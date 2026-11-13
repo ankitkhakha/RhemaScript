@@ -6,6 +6,7 @@ from unittest.mock import patch
 import hashlib
 import json
 import shutil
+from urllib.error import URLError
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -721,6 +722,74 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(put_requests[0][1], payload[:chunk_size])
         self.assertEqual(put_requests[1][1], payload[131072:131072 + chunk_size])
         self.assertEqual(put_requests[2][1], payload[393216:])
+
+    def test_indeterminate_chunk_write_reconciles_existing_session_before_resuming(self):
+        chunk_size = 256 * 1024
+        payload = bytes((i % 251 for i in range(chunk_size + 64)))
+        put_ranges = []
+        simulated_received = 0
+        status_queries = 0
+
+        def transport(request, timeout):
+            nonlocal simulated_received, status_queries
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            if request.full_url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                return 200, b"", {"Location":"https://www.googleapis.com/upload/youtube/v3/videos/session"}
+            if request.full_url.endswith("/session") and request.get_method() == "PUT":
+                content_range = request.get_header("Content-range")
+                if content_range == f"bytes */{len(payload)}":
+                    status_queries += 1
+                    if simulated_received:
+                        return 308, b"", {"Range":f"bytes=0-{simulated_received - 1}"}
+                    return 308, b"", {}
+                put_ranges.append(content_range)
+                body = request.data or b""
+                if len(put_ranges) == 1:
+                    # Provider accepted part of the first chunk, then the response was lost.
+                    simulated_received = 131072
+                    raise URLError("simulated lost response after provider accepted bytes")
+                self.assertEqual(content_range, f"bytes {simulated_received}-{len(payload)-1}/{len(payload)}")
+                self.assertEqual(body, payload[simulated_received:])
+                simulated_received = len(payload)
+                return 201, b'{"id":"video-reconciled"}', {}
+            self.fail("unexpected HTTP request: " + request.full_url)
+
+        client = YouTubeClient(YouTubeConfig("id", "secret", "refresh", chunk_size=chunk_size),
+                               transport=transport)
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(payload)
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                result = client.upload_video(video.name, title="Test", description="Test",
+                                             **self.publish_context(final_film_bytes=payload))
+        self.assertEqual(result["video_id"], "video-reconciled")
+        self.assertEqual(status_queries, 1)
+        self.assertEqual(len(put_ranges), 2)
+        self.assertEqual(put_ranges[1], f"bytes {simulated_received - len(payload[simulated_received:])}-{len(payload)-1}/{len(payload)}")
+
+    def test_indeterminate_upload_session_creation_is_not_replayed(self):
+        calls = []
+
+        def transport(request, timeout):
+            calls.append(request.get_method())
+            if request.full_url.startswith("https://oauth2.googleapis.com/token"):
+                return 200, b'{"access_token":"test-token"}', {}
+            if request.full_url.startswith("https://www.googleapis.com/upload/youtube/v3/videos?"):
+                raise URLError("simulated lost session-creation response")
+            self.fail("no request may follow an indeterminate session creation")
+
+        client = YouTubeClient(self.config(), transport=transport)
+        context = self.publish_context()
+        with tempfile.NamedTemporaryFile() as video:
+            video.write(b"video")
+            video.flush()
+            with patch("rhemascript.core.authority.authorise_action", return_value=True):
+                with self.assertRaises(YouTubeIntegrationError) as caught:
+                    client.upload_video(video.name, title="Test", description="Test", **context)
+        self.assertEqual(caught.exception.code, "INDETERMINATE_WRITE")
+        self.assertIn("do not retry", str(caught.exception))
+        self.assertEqual(calls, ["POST", "POST"])
 
     def test_resumable_upload_rejects_impossible_acknowledgement(self):
         chunk_size = 256 * 1024
