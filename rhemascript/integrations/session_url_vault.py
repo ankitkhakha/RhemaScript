@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import json
 import os
 import re
 import sqlite3
@@ -299,7 +301,6 @@ class SQLiteEncryptedSessionUrlVault:
 
 
 def hmac_compare(left: str, right: str) -> bool:
-    import hmac
     return hmac.compare_digest(left, right)
 
 
@@ -312,7 +313,7 @@ def publish_session_vault_reference(identity: dict[str, object]) -> str:
     if not isinstance(identity, dict) or set(identity) != set(required):
         raise SessionUrlVaultError("publish-session identity has an invalid shape")
     payload = {key: identity[key] for key in required}
-    canonical = __import__("json").dumps(
+    canonical = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
