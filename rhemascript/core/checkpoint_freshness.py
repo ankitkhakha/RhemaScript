@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 import re
 from typing import Protocol, runtime_checkable
 
+from rhemascript.core.approval_archive import verify_checkpoint_archive
+
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -56,13 +58,17 @@ class MonotonicCheckpointAnchor(Protocol):
 
 
 def advance_checkpoint_anchor(
-    archive_result: dict[str, object], anchor: MonotonicCheckpointAnchor, *,
+    archive_path: str, *, key: bytes, anchor: MonotonicCheckpointAnchor,
     expected_generation: int, recorded_at: datetime | None = None,
 ) -> CheckpointAnchorRecord:
-    """Register a verified V2 archive and read it back from the independent anchor."""
+    """Verify a generation-bound archive, then register/read it back independently."""
     if not isinstance(anchor, MonotonicCheckpointAnchor):
         raise TypeError("anchor does not implement the monotonic checkpoint contract")
-    if (not isinstance(archive_result, dict) or archive_result.get("archive_valid") is not True
+    try:
+        archive_result = verify_checkpoint_archive(archive_path, key=key)
+    except Exception:
+        raise ValueError("checkpoint archive failed local cryptographic verification") from None
+    if (archive_result.get("archive_valid") is not True
             or not isinstance(archive_result.get("snapshot_sha256"), str)
             or not _SHA256.fullmatch(archive_result["snapshot_sha256"])
             or not isinstance(archive_result.get("generation"), int)
@@ -95,14 +101,17 @@ def advance_checkpoint_anchor(
         raise ValueError("independent checkpoint anchor timestamp is future-dated")
     return latest
 
-
 def verify_checkpoint_against_anchor(
-    archive_result: dict[str, object], anchor: MonotonicCheckpointAnchor,
+    archive_path: str, *, key: bytes, anchor: MonotonicCheckpointAnchor,
 ) -> CheckpointAnchorRecord:
-    """Require an archive to match the independently recorded latest generation and digest."""
+    """Require a cryptographically verified archive to match the latest anchor."""
     if not isinstance(anchor, MonotonicCheckpointAnchor):
         raise TypeError("anchor does not implement the monotonic checkpoint contract")
-    if (not isinstance(archive_result, dict) or archive_result.get("archive_valid") is not True
+    try:
+        archive_result = verify_checkpoint_archive(archive_path, key=key)
+    except Exception:
+        raise ValueError("checkpoint archive failed local cryptographic verification") from None
+    if (archive_result.get("archive_valid") is not True
             or not isinstance(archive_result.get("generation"), int)
             or isinstance(archive_result.get("generation"), bool)
             or not isinstance(archive_result.get("snapshot_sha256"), str)
