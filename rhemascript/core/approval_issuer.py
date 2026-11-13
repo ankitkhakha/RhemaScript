@@ -18,6 +18,7 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _SIGNATURE = re.compile(r"^[0-9a-f]{128}$")
 _SCHEMA_V3 = "RhemaScript.ApprovalCredential.v3"
 _HIGH_RISK_ACTIONS = frozenset({"FINAL_ACCEPTANCE", "PUBLISH"})
+_ISSUABLE_ACTIONS = _HIGH_RISK_ACTIONS | frozenset({"FINDING_SUBMIT"})
 
 
 @dataclass(frozen=True)
@@ -278,9 +279,9 @@ class TrustedApprovalIssuer:
     def request_approval(self, scope: ApprovalScope) -> Mapping[str, object]:
         if not isinstance(scope, ApprovalScope):
             raise TypeError("approval scope must be an ApprovalScope")
-        if scope.action not in _HIGH_RISK_ACTIONS:
-            self._audit_denial(scope, "unsupported_high_risk_action")
-            raise ApprovalIssuerError("trusted issuer only issues FINAL_ACCEPTANCE and PUBLISH credentials")
+        if scope.action not in _ISSUABLE_ACTIONS:
+            self._audit_denial(scope, "unsupported_action")
+            raise ApprovalIssuerError("trusted issuer action is not enabled by the candidate policy boundary")
         if (scope.artifact_id is None or scope.artifact_version is None
                 or scope.artifact_sha256 is None or scope.artifact_size_bytes is None):
             self._audit_denial(scope, "exact_artifact_binding_required")
