@@ -35,6 +35,22 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         self.assertEqual(result["consumed_count"], 0)
         self.assertTrue(result["matches_current_state"])
 
+    def test_generation_bound_v2_archive_retains_generation_and_digest(self):
+        path = export_checkpoint_archive(
+            self.store, self.archive, key=self.key, generation=7,
+        )
+        result = verify_checkpoint_archive(path, key=self.key, current_store=self.store)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["generation"], 7)
+        self.assertEqual(result["schema"], "RhemaScript.ApprovalCheckpointArchive.v2")
+        self.assertTrue(result["matches_current_state"])
+
+    def test_generation_must_be_positive_integer(self):
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            export_checkpoint_archive(
+                self.store, self.archive, key=self.key, generation=True,
+            )
+
     def test_wrong_key_is_rejected(self):
         export_checkpoint_archive(self.store, self.archive, key=self.key)
         with self.assertRaisesRegex(ApprovalStoreError, "authentication failed"):
