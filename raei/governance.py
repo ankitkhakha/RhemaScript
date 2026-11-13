@@ -308,9 +308,20 @@ def list_governed_reviews(
         auth = payload.get("authorization")
         if (not isinstance(auth, dict)
                 or len(auth.get("actor_ids", [])) != 2
-                or len(set(auth.get("actor_ids", []))) != 2
+                or len(set(auth.get("actor_ids", [])) != 2
                 or len(auth.get("approval_ids", [])) != 2
                 or auth.get("project_id") != event.get("project_id")):
             raise RAEIGovernanceError("governed event authorization envelope is invalid")
+        if event["event_type"] == "FINDING_CLOSED":
+            subjects = auth.get("subject_ids", [])
+            sessions = auth.get("identity_session_ids", [])
+            providers = auth.get("identity_provider_ids", [])
+            policies = auth.get("identity_policy_versions", [])
+            if (len(subjects) != 2 or len(set(subjects)) != 2
+                    or len(sessions) != 2 or len(set(sessions)) != 2
+                    or len(providers) != 2 or len(set(providers)) != 1
+                    or len(policies) != 2 or len(set(policies)) != 1
+                    or auth.get("actions") != ["FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM"]):
+                raise RAEIGovernanceError("finding closure must retain two distinct authenticated reviewers in one identity domain")
         results.append({**event, **payload})
     return results
