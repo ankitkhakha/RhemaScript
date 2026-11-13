@@ -58,6 +58,19 @@ The SQLite approval store atomically consumes a batch or none, rejects replay/re
 
 The V3 HMAC checkpoint snapshot includes the persisted credential schema, signature and exact artifact tuple. A database-local hash or HMAC checkpoint is not immutable storage. Retain checkpoint keys and independently retained checkpoint records outside the database. This implementation does not claim protection against an attacker who can rewrite the database, the external checkpoint and its key.
 
+## Provider upload-session authorization boundary
+
+The current method-aware gateway verifies V3 approval objects, project/version/request scope and the exact final-film artifact before UPLOAD_SESSION and UPLOAD_CHUNK requests. However, the gateway does not yet persist a one-time publish-session claim, bind the returned resumable-session URL to that claim, or reject reuse of the same consumed approval objects for a second session. Its current path-prefix allowlist is not a substitute for session ownership.
+
+This is a release blocker for production provider writes. Before enabling them, implement and independently review a durable, linearizable publish-session registry that:
+- atomically claims one upload session per approval/request/artifact tuple;
+- binds the exact provider-issued session URL (store a digest, not the bearer URL) to the same request, approvals and artifact;
+- permits chunk/status reconciliation only against that session;
+- marks completion and rejects further chunks or duplicate session creation;
+- preserves indeterminate outcomes across process restarts and audit-sink failures.
+
+No production session registry is configured. Synthetic tests and the ordinary upload_video credential-replay check do not establish this durable gateway guarantee.
+
 ## Remaining prerequisites
 
 - A production trusted issuer must authenticate human identity and roles, derive actor identity from the authenticated session and protect private signing keys outside the repository.
