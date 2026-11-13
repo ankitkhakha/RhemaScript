@@ -44,7 +44,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         }
 
 
-    def publish_authority(self, request_id, project_id="RS-1", source_version="1.0"):
+    def publish_authority(self, request_id, project_id="RS-1", source_version="1.0", identity_overrides=None):
         private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         now = datetime.now(timezone.utc)
@@ -84,6 +84,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "identity_policy_version": "identity-policy-v1",
                 "identity_provider_id": "test-idp",
             }
+            payload.update((identity_overrides or {}).get(action, {}))
             payload["signature"] = private_key.sign(
                 json.dumps(payload, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=False, allow_nan=False).encode()
@@ -229,6 +230,37 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "IF-18", "UPLOAD_CHUNK",
                 "https://www.googleapis.com/upload/youtube/v3/videos/session",
                 **args,
+            )
+        self.assertEqual(transport.calls, [])
+
+    def test_provider_write_rejects_shared_identity_session_before_transport(self):
+        transport = NeverTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        authority = self.publish_authority(
+            "shared-session",
+            identity_overrides={
+                "FINAL_ACCEPTANCE": {"identity_session_id": "shared-session-0001"},
+                "PUBLISH": {"identity_session_id": "shared-session-0001"},
+            },
+        )
+        with self.assertRaisesRegex(ExternalIntegrationError, "actor separation"):
+            gateway.request(
+                "IF-18", "UPLOAD_CHUNK",
+                "https://www.googleapis.com/upload/youtube/v3/videos/session",
+                method="PUT", headers={"Authorization": "Bearer test"},
+                body=b"chunk", request_id="shared-session", project_id="RS-1",
+                source_version="1.0", authority=authority,
             )
         self.assertEqual(transport.calls, [])
 
