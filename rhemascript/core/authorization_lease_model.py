@@ -246,6 +246,38 @@ class SQLiteLeaseStateModel:
         finally:
             db.close()
 
+    def get_dispatch_state(self, dispatch_nonce: str) -> dict[str, str | int | None] | None:
+        """Read-only local reconciliation lookup; never retries or dispatches."""
+        if not isinstance(dispatch_nonce, str) or not dispatch_nonce.strip():
+            raise ValueError("dispatch_nonce must be non-empty")
+        db = self._connect()
+        try:
+            row = db.execute(
+                """SELECT l.lease_id,l.resource_id,l.generation,l.request_fingerprint,
+                          l.expires_at,l.state,o.status,o.provider_operation_id,o.reason_code
+                   FROM leases l
+                   LEFT JOIN dispatch_outcomes o ON o.lease_id=l.lease_id
+                   WHERE l.dispatch_nonce=?""",
+                (dispatch_nonce,),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "lease_id": row[0],
+                "resource_id": row[1],
+                "generation": row[2],
+                "request_fingerprint": row[3],
+                "expires_at": row[4],
+                "lease_state": row[5],
+                "outcome_state": row[6],
+                "provider_operation_id": row[7],
+                "reason_code": row[8],
+            }
+        except sqlite3.Error:
+            raise LeaseStateError("dispatch state lookup failed") from None
+        finally:
+            db.close()
+
     def mark_indeterminate(self, lease_id: str, *, reason_code: str) -> bool:
         """Record an accepted dispatch whose remote outcome is unknown; never retry it."""
         if not isinstance(lease_id, str) or not lease_id.strip():
