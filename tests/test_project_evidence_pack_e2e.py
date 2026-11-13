@@ -114,6 +114,46 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
             {"ANALYTICS-SNAPSHOT-PREV", "ANALYTICS-SNAPSHOT-CURRENT"},
         )
 
+    def test_analytics_comparison_requires_both_derived_from_links(self):
+        manifest = make_pack()
+        manifest["artifacts"].extend([
+            {
+                "artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                "version": "1",
+                "status": "DRAFT",
+                "snapshot_sha256": "a" * 64,
+            },
+            {
+                "artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                "version": "1",
+                "status": "DRAFT",
+                "snapshot_sha256": "b" * 64,
+            },
+            {
+                "artifact_id": "ANALYTICS-COMPARISON-1",
+                "project_id": PROJECT["project_id"],
+                "project_version": PROJECT["version"],
+                "artifact_type": "YOUTUBE_ANALYTICS_COMPARISON",
+                "version": "1",
+                "status": "DRAFT",
+                "comparison_sha256": "c" * 64,
+                "current_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-CURRENT",
+                "previous_snapshot_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+            },
+        ])
+        manifest["source_to_final_links"] = [
+            {"from_artifact_id": "ANALYTICS-SNAPSHOT-PREV",
+             "to_artifact_id": "ANALYTICS-COMPARISON-1", "relationship": "DERIVED_FROM"},
+        ]
+        with self.assertRaisesRegex(EvidencePackError, "both exact snapshot artifacts"):
+            validate_evidence_pack(manifest)
+
     def test_analytics_comparison_rejects_missing_or_non_snapshot_source(self):
         manifest = make_pack()
         manifest["artifacts"].append({
