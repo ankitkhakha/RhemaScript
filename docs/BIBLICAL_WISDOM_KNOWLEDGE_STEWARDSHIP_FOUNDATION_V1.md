@@ -230,6 +230,19 @@ A BWSF implementation is not complete merely because this document exists. Valid
 ## 9. Research references and source register
 
 **Primary Scripture source**
+
+Initial HINOVBSI chapter-level capture log (Bible Society of India / YouVersion, version 1683; Copyright © 2012 BSI; Used by permission):
+- 2 Chronicles 1: https://www.bible.com/bible/1683/2CH.1.HINOVBSI
+- Exodus 31: https://www.bible.com/bible/1683/EXO.31.HINOVBSI
+- James 1: https://www.bible.com/bible/1683/JAS.1.HINOVBSI
+- Proverbs 2: https://www.bible.com/bible/1683/PRO.2.HINOVBSI
+- 1 Thessalonians 5: https://www.bible.com/bible/1683/1TH.5.HINOVBSI
+- Nehemiah 1, 2, 4, 5 and 6: https://www.bible.com/bible/1683/NEH.1.HINOVBSI ; https://www.bible.com/bible/1683/NEH.2.HINOVBSI ; https://www.bible.com/bible/1683/NEH.4.HINOVBSI ; https://www.bible.com/bible/1683/NEH.5.HINOVBSI ; https://www.bible.com/bible/1683/NEH.6.HINOVBSI
+- 2 Timothy 3: https://www.bible.com/bible/1683/2TI.3.HINOVBSI
+- 1 Corinthians 4: https://www.bible.com/bible/1683/1CO.4.HINOVBSI
+
+This register records that the exact HINOVBSI chapter pages were opened and their version metadata inspected. It does not claim a complete verse-by-verse collation, exhaustive literary-context review, original-language analysis or formal human approval. The 1 Kings 3 page was not successfully retrieved in HINOVBSI during this pass; 2 Chronicles 1:7–13 is a verified canonical parallel, not a replacement edition of 1 Kings 3.
+
 - Bible Society of India / YouVersion, *पवित्र बाइबिल OV (Re-edited) Bible (BSI)*, version identifier HINOVBSI, copyright © 2012 Bible Society of India: https://www.bible.com/versions/1683
 - Bible Society of India Hindi Bible information: https://www.indian.bible/hi
 
@@ -253,6 +266,8 @@ A BWSF implementation is not complete merely because this document exists. Valid
 
 **Initial research synthesis:** recorded.  
 **Integration target:** existing L1, CAP-01–CAP-03 and RAEI curriculum/knowledge systems.  
+**HINOVBSI chapter-level source capture:** verified for 2 Chronicles 1, Exodus 31, James 1, Proverbs 2, 1 Thessalonians 5, Nehemiah 1, 2, 4, 5 and 6, 2 Timothy 3, and 1 Corinthians 4. These are source-capture checks, not completed theological adjudications or word-for-word approval of every quotation.
+**1 Kings 3 HINOVBSI capture:** unresolved in the current retrieval. A separate HINCLBSI edition was surfaced but is not a substitute for HINOVBSI; do not silently substitute it.
 **Full canonical study:** not complete.  
 **Exact HINOVBSI passage capture and word-for-word comparison for each unit:** pending.  
 **Full historical, textual-critical, original-language and scholarly review:** pending where materially relevant.  
