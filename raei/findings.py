@@ -284,6 +284,37 @@ def list_findings(
             "recorded_at_utc": event["recorded_at_utc"],
             **event["payload"],
         })
+    # Validate persisted submitter identity envelopes before projecting any finding.
+    for item in results:
+        identity_status = item.get("identity_authentication_status")
+        submitter = item.get("submitter_identity")
+        authorization = item.get("submitter_authorization")
+        primary = item.get("observation_evidence", {})
+        if identity_status == "VERIFIED":
+            if (not isinstance(submitter, dict) or not isinstance(authorization, dict)
+                    or authorization.get("action") != "FINDING_SUBMIT"
+                    or authorization.get("project_id") != item.get("project_id")
+                    or authorization.get("artifact_sha256") != primary.get("sha256")
+                    or authorization.get("artifact_size_bytes") != primary.get("size_bytes")
+                    or not isinstance(authorization.get("approval_id"), str)
+                    or not isinstance(authorization.get("signature_sha256"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", authorization["signature_sha256"])
+                    or not isinstance(submitter.get("subject_id"), str)
+                    or not isinstance(submitter.get("actor_id"), str)
+                    or not isinstance(submitter.get("identity_session_id"), str)
+                    or not isinstance(submitter.get("identity_policy_version"), str)
+                    or not isinstance(submitter.get("identity_provider_id"), str)):
+                raise RAEIFindingError("stored authenticated submitter envelope is invalid")
+            if (authorization.get("approval_id") == ""
+                    or authorization.get("request_id") == ""
+                    or authorization.get("project_version") == ""):
+                raise RAEIFindingError("stored submitter authorization scope is incomplete")
+        elif identity_status == "UNVERIFIED":
+            if submitter is not None or authorization is not None:
+                raise RAEIFindingError("unverified finding cannot carry submitter identity claims")
+        else:
+            raise RAEIFindingError("stored finding identity authentication status is invalid")
+
     # Dispositions are a separately authenticated stream; capture remains immutable.
     from raei.governance import list_governed_reviews
     reviews = list_governed_reviews(
@@ -301,10 +332,51 @@ def list_findings(
     latest_research = {}
     latest_reproduction = {}
     for event in lifecycle_events:
-        key = (event.get("subject_id"), event.get("payload", {}).get("finding_version"))
+        payload = event.get("payload", {})
+        key = (event.get("subject_id"), payload.get("finding_version"))
+        expected_action = "FINDING_RESEARCH" if event["event_type"] == "FINDING_RESEARCHED" else "FINDING_REPRODUCE"
+        auth = payload.get("authorization")
+        binding = payload.get("evidence_binding")
+        refs = payload.get("evidence_refs")
+        if (not isinstance(auth, dict) or auth.get("action") != expected_action
+                or auth.get("project_id") != event.get("project_id")
+                or not all(isinstance(auth.get(field), str) and auth[field].strip()
+                           for field in ("issuer", "approval_id", "actor_id", "subject_id",
+                                         "actor_role", "identity_provider_id",
+                                         "identity_policy_version", "identity_session_id",
+                                         "project_version", "request_id"))
+                or not isinstance(auth.get("signature_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", auth["signature_sha256"])
+                or not isinstance(binding, dict)
+                or auth.get("artifact_sha256") != binding.get("sha256")
+                or auth.get("artifact_size_bytes") != binding.get("size_bytes")
+                or not isinstance(refs, list) or len(refs) != 1
+                or refs[0].get("evidence_id") != binding.get("evidence_id")
+                or refs[0].get("version") != binding.get("evidence_version")
+                or refs[0].get("sha256") != binding.get("sha256")
+                or refs[0].get("size_bytes") != binding.get("size_bytes")
+                or payload.get("finding_id") != event.get("subject_id")):
+            raise RAEIFindingError("stored authenticated finding lifecycle envelope is invalid")
+        for timestamp_field in ("created_at_utc",):
+            try:
+                parsed = datetime.fromisoformat(payload[timestamp_field].replace("Z", "+00:00"))
+            except (KeyError, AttributeError, TypeError, ValueError) as exc:
+                raise RAEIFindingError("stored lifecycle timestamp is invalid") from exc
+            if parsed.tzinfo is None or parsed.utcoffset() is None:
+                raise RAEIFindingError("stored lifecycle timestamp must include a timezone")
         if event["event_type"] == "FINDING_RESEARCHED":
+            if key in latest_research or key in latest_reproduction:
+                raise RAEIFindingError("finding research history contains a duplicate or out-of-order event")
             latest_research[key] = event
         else:
+            if key not in latest_research or key in latest_reproduction:
+                raise RAEIFindingError("finding reproduction history is missing research or is duplicated")
+            research_auth = latest_research[key]["payload"]["authorization"]
+            if (auth.get("subject_id") == research_auth.get("subject_id")
+                    or auth.get("identity_session_id") == research_auth.get("identity_session_id")
+                    or auth.get("identity_provider_id") != research_auth.get("identity_provider_id")
+                    or auth.get("identity_policy_version") != research_auth.get("identity_policy_version")):
+                raise RAEIFindingError("finding reproduction is not independently authenticated")
             latest_reproduction[key] = event
     for item in results:
         key = (item["finding_id"], item["version"])
