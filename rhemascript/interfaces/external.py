@@ -739,7 +739,8 @@ class ExternalIntegrationGateway:
                 except Exception:
                     pass
                 raise ExternalIntegrationError(
-                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled"
+                    "provider write outcome is indeterminate; do not retry automatically until provider state is reconciled",
+                    code="INDETERMINATE_WRITE",
                 ) from None
             event.update({"phase": "FAILED", "error_type": type(exc).__name__})
             self.audit_sink(dict(event))
