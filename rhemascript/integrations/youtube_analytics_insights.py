@@ -81,6 +81,22 @@ def _metric_values(snapshot: dict[str, Any]) -> dict[str, tuple[Decimal | None, 
     totals: dict[str, Decimal] = {}
     for name, (index, dtype) in positions.items():
         if name == "averageViewDuration":
+            for row_number, row in enumerate(rows):
+                value = row[index]
+                if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                    raise YouTubeAnalyticsInsightError(
+                        f"metric {name} in row {row_number} is not a numeric scalar"
+                    )
+                try:
+                    number = Decimal(str(value))
+                except InvalidOperation:
+                    raise YouTubeAnalyticsInsightError(
+                        f"metric {name} in row {row_number} is not numeric"
+                    ) from None
+                if not number.is_finite():
+                    raise YouTubeAnalyticsInsightError(
+                        f"metric {name} in row {row_number} is not finite"
+                    )
             continue
         total = Decimal(0)
         for row_number, row in enumerate(rows):
@@ -246,6 +262,8 @@ def verify_analytics_period_comparison(comparison: dict[str, Any]) -> bool:
             raise YouTubeAnalyticsInsightError("comparison metric entry is malformed")
         if metric.get("status") not in {"COMPARABLE", "ZERO_BASELINE", "INSUFFICIENT_DATA", "ZERO_DENOMINATOR"}:
             raise YouTubeAnalyticsInsightError("comparison metric status is invalid")
+        if metric.get("aggregation") not in {"SUM", "WEIGHTED_AVERAGE_SECONDS"}:
+            raise YouTubeAnalyticsInsightError("comparison metric aggregation is invalid")
         if metric["status"] == "INSUFFICIENT_DATA" and (
             metric.get("absolute_change") is not None
             or metric.get("percentage_change") is not None
