@@ -37,32 +37,22 @@ class ExternalGatewayTests(unittest.TestCase):
         with self.assertRaises(ExternalIntegrationError):
             ProviderBinding("IF-01","bad","https://evil.test",("api.example.test",),{"VALIDATE":"x"}).validate()
 
-    def test_success_is_audited_and_idempotent_in_process(self):
+    def test_legacy_generic_invoke_is_disabled_even_with_boolean_authority(self):
         transport=FakeTransport(); events=[]
         gateway=ExternalIntegrationGateway((binding(),),transport=transport,
             audit_sink=events.append,credential_resolver=lambda p:{"Authorization":"Bearer test-secret"},enabled=True)
-        authority={"external_action_authorisation":True}
-        first=gateway.invoke("IF-01",request(),authority=authority)
-        second=gateway.invoke("IF-01",request(),authority=authority)
-        self.assertEqual(first,second); self.assertEqual(len(transport.calls),1)
-        self.assertEqual(first["status"],"PROVIDER_CONFIRMED")
-        self.assertEqual([e["phase"] for e in events],["REQUESTED","COMPLETED"])
-        self.assertNotIn("test-secret",json.dumps(events))
+        with self.assertRaisesRegex(ExternalIntegrationError,"legacy generic POST invocation is disabled"):
+            gateway.invoke("IF-01",request(),authority={"external_action_authorisation":True})
+        self.assertEqual(transport.calls,[])
+        self.assertEqual(events,[])
 
-    def test_write_requires_explicit_authority(self):
-        gateway=ExternalIntegrationGateway((binding(),),transport=FakeTransport(),
+    def test_legacy_generic_invoke_is_disabled_without_authority(self):
+        transport=FakeTransport()
+        gateway=ExternalIntegrationGateway((binding(),),transport=transport,
             audit_sink=lambda e:None,enabled=True)
-        with self.assertRaisesRegex(ExternalIntegrationError,"lacks explicit authority"):
+        with self.assertRaisesRegex(ExternalIntegrationError,"legacy generic POST invocation is disabled"):
             gateway.invoke("IF-01",request("EXTERNAL_WRITE"))
-
-    def test_write_with_authority_uses_idempotency_header(self):
-        transport=FakeTransport(); gateway=ExternalIntegrationGateway((binding(),),transport=transport,
-            audit_sink=lambda e:None,enabled=True)
-        result=gateway.invoke("IF-01",request("EXTERNAL_WRITE"),
-            authority={"external_action_authorisation":True})
-        self.assertEqual(result["status"],"PROVIDER_CONFIRMED")
-        self.assertIn("Idempotency-Key",transport.calls[0][1])
-
+        self.assertEqual(transport.calls,[])
     def test_requires_audit_sink_before_call(self):
         gateway=ExternalIntegrationGateway((binding(),),transport=FakeTransport(),enabled=True)
         with self.assertRaisesRegex(ExternalIntegrationError,"audit sink"):
