@@ -245,4 +245,21 @@ def list_findings(
             "recorded_at_utc": event["recorded_at_utc"],
             **event["payload"],
         })
+    # Dispositions are a separately authenticated stream; capture remains immutable.
+    from raei.governance import list_governed_reviews
+    reviews = list_governed_reviews(
+        registry, event_type="FINDING_DISPOSITIONED", project_id=project_id,
+    )
+    latest_by_version = {
+        (item.get("subject_id"), item.get("payload", {}).get("finding_version")):
+            item.get("payload", {})
+        for item in reviews
+    }
+    for item in results:
+        disposition = latest_by_version.get((item["finding_id"], item["version"]))
+        item["status"] = disposition.get("disposition") if disposition else "SUBMITTED"
+        if disposition:
+            item["disposition_event_id"] = disposition.get("event_id")
+            item["disposition_rationale"] = disposition.get("rationale")
+            item["disposition_evidence_binding"] = disposition.get("evidence_binding")
     return results
