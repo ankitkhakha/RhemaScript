@@ -350,3 +350,9 @@ POSIX permission checks protect against other local users; they do not defend ag
 HMAC authenticity and snapshot consistency do not prove checkpoint freshness. A valid older checkpoint remains cryptographically valid for the older state it describes. If an operator can replay both an older database and its matching older checkpoint, local verification alone cannot know that a newer checkpoint once existed.
 
 Production recovery therefore requires a separate monotonic freshness anchor under independent administration (for example, an append-only external audit service or hardware-backed monotonic counter) that stores the latest checkpoint generation and snapshot digest. The readiness registry's local HMAC checkpoint and the approval archive's signed creation timestamp are not substitutes for this anchor. No automatic restore or anti-rollback service is implemented.
+
+## Private backup destination enforcement — 13 November 2026
+
+Readiness registry backups now require the destination parent to be a real, owner-owned private directory (mode 0700 or stricter), matching the registry database storage policy. Backup files are created in that directory using a private temporary file (0600) and atomically hard-linked into a destination that must not already exist. Existing destination files and symlinks are not overwritten. Adversarial tests cover public destination-directory rejection and owner-only backup-file mode, in addition to the existing symlink and no-overwrite tests.
+
+This protects backup confidentiality against other local users. It does not establish independent administration or off-host custody, and it does not provide anti-rollback freshness. A backup is a recovery candidate only after it is reconciled against the latest independently retained checkpoint and monotonic freshness anchor.
