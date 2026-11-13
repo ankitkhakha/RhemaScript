@@ -1274,6 +1274,12 @@ class ReadinessRunRegistry:
                         implementation_payload.get("authorization", {}),
                         effectiveness_payload.get("authorization", {}),
                     ]
+                    if any(
+                        prior.get("project_version") != project_version
+                        for prior in prior_identities
+                    ):
+                        db.rollback()
+                        raise ValueError("finding closure requires every lifecycle event from the same project version")
                     if captured.get("submitter_identity"):
                         prior_identities.append(captured["submitter_identity"])
                     if any(
