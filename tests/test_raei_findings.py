@@ -61,10 +61,10 @@ class RAEIFindingTests(unittest.TestCase):
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ).encode("utf-8")
-        path = self.evidence_root / "finding.json"
+        path = self.evidence_root / f"{payload['finding_id']}.json"
         path.write_bytes(encoded)
         evidence = verify_artifact(
-            self.evidence_root, "finding.json",
+            self.evidence_root, path.name,
             evidence_id=payload["evidence_id"], version=payload["evidence_version"],
         )
         return encoded, evidence
