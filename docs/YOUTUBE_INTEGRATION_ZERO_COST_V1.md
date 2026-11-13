@@ -85,7 +85,7 @@ The existing interface gateway and project approval system remain intact. Do not
 
 ## External gateway integration status
 
-The YouTube client is now routed through the existing provider-neutral external gateway when an IF-18 gateway is explicitly supplied. The provider binding declares the supported Google hosts, API path families, and HTTP methods for OAuth, channel/video reads, analytics, resumable upload sessions, upload chunks, and thumbnail writes. The client refuses live traffic if neither an explicitly configured gateway nor an injected offline test transport is supplied. The direct `transport` injection is a test seam only; production traffic must use the IF-18 gateway and its audit, allowlist and authorization controls.
+The YouTube client is now routed through the existing provider-neutral external gateway when an IF-18 gateway is explicitly supplied. The provider binding declares the supported Google hosts, API path families, and HTTP methods for OAuth, channel/video reads, analytics, resumable upload sessions, upload chunks, and thumbnail writes. The client refuses live traffic if neither an explicitly configured gateway nor an injected offline test transport is supplied. The direct `transport` injection is a test seam only; it is now blocked from dispatching mutating YouTube resource requests (apart from the exact OAuth token-exchange POST required by read-only tests). Production traffic must use the IF-18 gateway and its audit, allowlist and authorization controls.
 
 ### Read-only channel identity verification
 
