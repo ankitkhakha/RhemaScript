@@ -671,7 +671,11 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                         stale = datetime.fromisoformat(old_lease) <= now
                     except ValueError:
                         stale = False
-                if state != "INDETERMINATE" and not stale:
+                active_idle = (
+                    state == "ACTIVE" and old_owner is None
+                    and old_start is None and old_end is None
+                )
+                if state != "INDETERMINATE" and not stale and not active_idle:
                     db.execute("ROLLBACK")
                     return False
                 new_state, new_start, new_end = "RECONCILING", old_start, old_end
@@ -764,7 +768,8 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                     else:
                         new_offset = int(match.group(1)) + 1
                         if (new_offset < acknowledged or new_offset > total
-                                or (end is not None and new_offset > end + 1)):
+                                or (end is not None and new_offset > end + 1)
+                                or (end is None and new_offset != acknowledged)):
                             new_state, new_offset = "INDETERMINATE", acknowledged
                 if new_state != "INDETERMINATE":
                     new_state = "ACTIVE"
