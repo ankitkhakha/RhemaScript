@@ -80,20 +80,28 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.acquire()
 
-    def test_overlapping_approval_leases_are_serialized_and_old_fence_rejected(self):
+    def test_approval_credentials_cannot_be_reused_for_overlapping_leases(self):
         first = self.acquire(nonce="dispatch-overlap-1")
-        second = self.model.acquire(
-            resource_id="youtube:channel-1:publish",
-            approval_ids=("approval-publisher", "approval-second-director"),
-            dispatch_nonce="dispatch-overlap-2",
-            request_fingerprint="c" * 64, expires_at=self.expiry,
-        )
-        self.assertFalse(self.model.accept_dispatch(
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.model.acquire(
+                resource_id="youtube:channel-1:publish",
+                approval_ids=("approval-publisher", "approval-second-director"),
+                dispatch_nonce="dispatch-overlap-2",
+                request_fingerprint="c" * 64, expires_at=self.expiry,
+            )
+        self.assertTrue(self.model.accept_dispatch(
             first, request_fingerprint="a" * 64,
         ))
-        self.assertTrue(self.model.accept_dispatch(
-            second, request_fingerprint="c" * 64,
-        ))
+
+    def test_approval_credentials_cannot_be_reused_on_another_resource(self):
+        self.acquire(nonce="dispatch-resource-1")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.model.acquire(
+                resource_id="youtube:channel-2:publish",
+                approval_ids=("approval-director", "approval-publisher"),
+                dispatch_nonce="dispatch-resource-2",
+                request_fingerprint="e" * 64, expires_at=self.expiry,
+            )
 
 
     def test_expiry_is_rechecked_after_waiting_for_acquisition_lock(self):
