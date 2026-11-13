@@ -178,6 +178,17 @@ class RAEIGovernanceTests(unittest.TestCase):
             verification_keys={"key-2026-01": public_key},
             consume_many_once=lambda entries: (captured.extend(entries) or False),
             clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {
+                    "FINDING_DISPOSITION_REVIEW": ["reviewer"],
+                    "FINDING_DISPOSITION_CONFIRM": ["approver"],
+                    "KNOWLEDGE_REVIEW": ["reviewer"],
+                    "KNOWLEDGE_CONFIRM": ["approver"],
+                },
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
         credentials = self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
         expectations = (
