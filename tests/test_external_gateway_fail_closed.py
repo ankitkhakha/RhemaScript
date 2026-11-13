@@ -509,6 +509,11 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
 
         events = []
         transport = MethodTransport()
+        authority = self.publish_authority("request-3", project_id="project-1", source_version="1.0")
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque"
+        temporary, registry = self.make_registry(authority, "request-3", project_id="project-1",
+                                                 source_version="1.0", session_url=session_url)
+        self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (ProviderBinding(
                 interface_id="IF-18", provider_name="youtube",
@@ -518,14 +523,16 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "method": "PUT", "hosts": ("www.googleapis.com",),
                     "path_prefix": "/upload/youtube/v3/videos",
                 }},
-            ),), transport=transport, audit_sink=events.append, enabled=True,
+            ),), transport=transport, audit_sink=events.append,
+            publish_session_registry=registry, enabled=True,
         )
         status, body, response_headers = gateway.request(
-            "IF-18", "UPLOAD_CHUNK",
-            "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque",
-            method="PUT", headers={"Authorization": "Bearer secret"},
+            "IF-18", "UPLOAD_CHUNK", session_url,
+            method="PUT",
+            headers={"Authorization": "Bearer secret", "Content-Range": "bytes 0-10/123456",
+                     "Content-Length": "11"},
             body=b"video bytes", request_id="request-3", project_id="project-1", source_version="1.0",
-            authority=self.publish_authority("request-3", project_id="project-1", source_version="1.0"),
+            authority=authority,
         )
         self.assertEqual(status, 308)
         self.assertEqual(body, b"")
