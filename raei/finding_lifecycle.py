@@ -262,6 +262,104 @@ def record_finding_reproduction(
     )
 
 
+def record_finding_implementation(
+    registry: ReadinessRunRegistry,
+    verifier: ApprovalVerifier,
+    credential: object,
+    *,
+    finding_id: str,
+    finding_version: str,
+    project_id: str,
+    project_version: str,
+    request_id: str,
+    evidence_root: str,
+    artifact_bytes: bytes,
+    evidence: EvidenceVersion,
+) -> dict[str, Any]:
+    """Record actual implementation against the exact previously approved plan."""
+    payload = _load_exact_report(
+        registry, evidence_root, artifact_bytes, evidence,
+        schema="raei-finding-implementation-v1",
+        finding_id=finding_id, finding_version=finding_version,
+    )
+    required = {
+        "schema", "finding_id", "finding_version", "plan_event_id", "plan_evidence_binding",
+        "implementation_summary", "changes", "test_results", "deviations", "rollback_reference",
+        "evidence_id", "evidence_version", "created_at_utc",
+    }
+    if set(payload) != required:
+        raise RAEIFindingLifecycleError("implementation report has an invalid field set")
+    for field in ("plan_event_id", "implementation_summary", "rollback_reference"):
+        _required_text(payload, field)
+    for field in ("changes", "test_results"):
+        _string_list(payload, field, required=True)
+    _string_list(payload, "deviations")
+    if not isinstance(payload.get("plan_evidence_binding"), dict):
+        raise RAEIFindingLifecycleError("implementation report requires exact plan evidence binding")
+    if not isinstance(verifier, ApprovalVerifier):
+        raise RAEIFindingLifecycleError("ApprovalVerifier is required")
+    binding = {
+        "evidence_id": evidence.evidence_id,
+        "evidence_version": evidence.version,
+        "sha256": evidence.sha256,
+        "size_bytes": evidence.size_bytes,
+    }
+    enriched = dict(payload)
+    enriched["evidence_binding"] = binding
+    enriched["evidence_refs"] = [{
+        "evidence_id": evidence.evidence_id,
+        "relative_path": evidence.relative_path,
+        "version": evidence.version,
+        "sha256": evidence.sha256,
+        "size_bytes": evidence.size_bytes,
+        "description": "Exact implementation report",
+    }]
+    try:
+        approval = verifier.verify_many_and_consume(
+            (credential,),
+            ({
+                "action": "FINDING_IMPLEMENT",
+                "project_id": project_id,
+                "project_version": project_version,
+                "request_id": request_id,
+                "artifact_binding": {
+                    "artifact_id": evidence.evidence_id,
+                    "artifact_version": evidence.version,
+                    "sha256": evidence.sha256,
+                    "size_bytes": evidence.size_bytes,
+                },
+            },),
+            require_distinct_actors=False,
+        )[0]
+        latest = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+        if latest.sha256 != evidence.sha256 or latest.size_bytes != evidence.size_bytes:
+            raise RAEIFindingLifecycleError("implementation evidence changed during approval")
+        event_id = f"FINDING_IMPLEMENTED:{finding_id}@{finding_version}:{request_id}"
+        recorded = registry.append_authenticated_finding_implementation_event(
+            event_id, enriched,
+            project_id=project_id, project_version=project_version,
+            request_id=request_id, approval=approval,
+        )
+    except (ApprovalError, OSError, ValueError, TypeError) as exc:
+        if isinstance(exc, RAEIFindingLifecycleError):
+            raise
+        raise RAEIFindingLifecycleError(f"authenticated implementation transition rejected: {exc}") from exc
+    return {
+        "recorded": recorded,
+        "event_id": event_id,
+        "finding_id": finding_id,
+        "finding_version": finding_version,
+        "status": "IMPLEMENTED",
+        "approval_id": approval.approval_id,
+        "authenticated_subject_id": approval.subject_id,
+        "evidence_binding": binding,
+        "plan_event_id": payload["plan_event_id"],
+    }
+
+
 
 def record_finding_plan(
     registry: ReadinessRunRegistry,
