@@ -244,8 +244,8 @@ class RAEIKnowledgeTests(unittest.TestCase):
                 "UPDATE readiness_runs SET payload_sha256=?, payload_json=? WHERE run_id=?",
                 (digest, encoded, run_id),
             )
-        self.assertTrue(self.registry.verify())
-        with self.assertRaisesRegex(RAEIKnowledgeError, "PENDING_REVIEW"):
+        self.assertFalse(self.registry.verify())
+        with self.assertRaisesRegex(ValueError, "integrity verification failed"):
             list_knowledge(self.registry)
 
     def test_forged_evidence_dataclass_is_rejected(self):
