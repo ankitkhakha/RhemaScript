@@ -659,6 +659,7 @@ class YouTubeClient:
             total = artifact_binding["size_bytes"]
             offset = 0
             final_raw = b""
+            reconciliation_attempts = 0
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
                 end = offset + len(chunk) - 1
@@ -675,6 +676,12 @@ class YouTubeClient:
                 except YouTubeIntegrationError as exc:
                     if exc.code != "INDETERMINATE_WRITE":
                         raise
+                    reconciliation_attempts += 1
+                    if reconciliation_attempts > 2:
+                        raise YouTubeIntegrationError(
+                            "upload exceeded the bounded status-reconciliation attempts; do not start a replacement upload",
+                            code="INDETERMINATE_WRITE",
+                        ) from None
                     reconciled_offset, reconciled_result = self._query_upload_status(
                         location, total
                     )
