@@ -65,7 +65,7 @@ jobs:
           if not blocks:
               raise SystemExit("lock contains no requirements")
           for block in blocks:
-              header = block[0].rstrip().removesuffix("\\").strip()
+              header = block[0].rstrip().rstrip("\\").strip()
               if not re.search(r"==[^ ;]+$", header):
                   raise SystemExit(f"non-exact requirement: {block[0]}")
               hashes = [line.strip() for line in block[1:] if "--hash=" in line]
