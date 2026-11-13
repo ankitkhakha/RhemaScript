@@ -623,6 +623,63 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     privacy_status="public", publish_at="2026-12-01T12:00:00Z",
                     **self.publish_context())
 
+    def test_analytics_report_validates_header_order_and_empty_rows(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,likes",
+        }
+        valid = {
+            "kind": "youtubeAnalytics#resultTable",
+            "columnHeaders": [
+                {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+                {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+                {"name": "likes", "columnType": "METRIC", "dataType": "INTEGER"},
+            ],
+            "rows": [["2026-11-01", 12, 2]],
+        }
+        self.assertEqual(_validate_analytics_report(valid, params), valid)
+        empty = {**valid}
+        empty.pop("rows")
+        self.assertEqual(_validate_analytics_report(empty, params), empty)
+
+        invalid_reports = (
+            {**valid, "kind": "unexpected"},
+            {**valid, "columnHeaders": list(reversed(valid["columnHeaders"]))},
+            {**valid, "rows": [["2026-11-01", 12]]},
+            {**valid, "rows": "not-a-list"},
+            {**valid, "rows": [["2026-11-01", {"unexpected": "object"}, 2]]},
+        )
+        for report in invalid_reports:
+            with self.subTest(report=report):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_report(report, params)
+
+    def test_analytics_request_rejects_injected_or_duplicate_identifiers_and_bad_filters(self):
+        from rhemascript.integrations.youtube import _validate_analytics_request
+
+        base = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,likes",
+        }
+        invalid = (
+            {**base, "metrics": "views,views"},
+            {**base, "metrics": "views&alt=csv"},
+            {**base, "dimensions": "day;country"},
+            {**base, "filters": "country=US"},
+            {**base, "filters": "country=="},
+            {**base, "filters": "country==US;"},
+            {**base, "ids": "channel==OTHER"},
+            {**base, "startDate": "2026-2-1"},
+        )
+        for params in invalid:
+            with self.subTest(params=params):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_request(params)
+
     def test_analytics_date_range_is_validated_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
