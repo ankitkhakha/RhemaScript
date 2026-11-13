@@ -12,6 +12,7 @@ from rhemascript.integrations.youtube_analytics_insights import (
 
 HEADERS = [
     {"name": "day", "dataType": "STRING", "columnType": "DIMENSION"},
+    {"name": "country", "dataType": "STRING", "columnType": "DIMENSION"},
     {"name": "views", "dataType": "INTEGER", "columnType": "METRIC"},
     {"name": "estimatedMinutesWatched", "dataType": "FLOAT", "columnType": "METRIC"},
     {"name": "averageViewDuration", "dataType": "FLOAT", "columnType": "METRIC"},
@@ -28,9 +29,17 @@ def snapshot(start, end, rows, *, metrics="views,estimatedMinutesWatched,average
     if filters is not None:
         params["filters"] = filters
     requested_metrics = set(metrics.split(","))
-    selected_headers = [header for header in HEADERS
-                        if header["columnType"] == "DIMENSION"
-                        or header["name"] in requested_metrics]
+    requested_dimensions = set(dimensions.split(",")) if dimensions else set()
+    selected_headers = [
+        header for header in HEADERS
+        if (
+            header["columnType"] == "DIMENSION"
+            and header["name"] in requested_dimensions
+        ) or (
+            header["columnType"] == "METRIC"
+            and header["name"] in requested_metrics
+        )
+    ]
     report = {"kind": "youtubeAnalytics#resultTable", "columnHeaders": selected_headers}
     if rows is not None:
         report["rows"] = deepcopy(rows)
@@ -104,15 +113,15 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         metrics = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained"
         previous = snapshot(
             "2026-10-01", "2026-10-07",
-            [["2026-10-01", 10, 2.5, 15.0, 1],
-             ["2026-10-01", 5, 1.0, 12.0, 0],
-             ["2026-10-03", 20, 4.5, 13.5, 2]],
+            [["2026-10-01", "US", 10, 2.5, 15.0, 1],
+             ["2026-10-01", "CA", 5, 1.0, 12.0, 0],
+             ["2026-10-03", "US", 20, 4.5, 13.5, 2]],
             metrics=metrics, dimensions="day,country",
         )
         current = snapshot(
             "2026-10-08", "2026-10-14",
-            [["2026-10-08", 15, 3.0, 12.0, 1],
-             ["2026-10-08", 7, 1.5, 11.0, 0]],
+            [["2026-10-08", "US", 15, 3.0, 12.0, 1],
+             ["2026-10-08", "CA", 7, 1.5, 11.0, 0]],
             metrics=metrics, dimensions="day,country",
         )
         result = compare_analytics_periods(current, previous)
