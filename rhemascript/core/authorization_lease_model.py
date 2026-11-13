@@ -240,6 +240,11 @@ class SQLiteLeaseStateModel:
                 "INSERT INTO lease_approvals VALUES(?,?)",
                 [(lease_id, approval_id) for approval_id in approval_ids],
             )
+            self._append_event(db, "LEASE_ISSUED", lease_id, {
+                "resource_id": resource_id, "generation": generation,
+                "approval_ids": list(approval_ids), "dispatch_nonce": dispatch_nonce,
+                "request_fingerprint": request_fingerprint, "expires_at": expiry,
+            })
             db.execute("COMMIT")
             return AuthorizationLease(
                 lease_id, resource_id, generation, dispatch_nonce,
@@ -282,6 +287,9 @@ class SQLiteLeaseStateModel:
                          SELECT lease_id FROM lease_approvals WHERE approval_id=?
                        )""", (approval_id,),
                 )
+                self._append_event(db, "APPROVAL_REVOKED", approval_id, {
+                    "affected_resources": [item[0] for item in resources],
+                })
             db.execute("COMMIT")
         except sqlite3.Error:
             if db.in_transaction:
@@ -337,6 +345,10 @@ class SQLiteLeaseStateModel:
             db.execute(
                 "UPDATE leases SET state='ACCEPTED' WHERE lease_id=?", (lease.lease_id,),
             )
+            self._append_event(db, "DISPATCH_ACCEPTED", lease.lease_id, {
+                "dispatch_nonce": nonce, "generation": generation,
+                "request_fingerprint": fingerprint,
+            })
             db.execute("COMMIT")
             return True
         except sqlite3.IntegrityError:
@@ -494,6 +506,9 @@ class SQLiteLeaseStateModel:
                 (lease_id, "INDETERMINATE", None, reason_code, stamp),
             )
             db.execute("UPDATE leases SET state='INDETERMINATE' WHERE lease_id=?", (lease_id,))
+            self._append_event(db, "DISPATCH_INDETERMINATE", lease_id, {
+                "reason_code": reason_code,
+            })
             db.execute("COMMIT")
             return True
         except sqlite3.IntegrityError:
@@ -541,6 +556,9 @@ class SQLiteLeaseStateModel:
                 (terminal, provider_operation_id, stamp, lease_id),
             )
             db.execute("UPDATE leases SET state=? WHERE lease_id=?", (terminal, lease_id))
+            self._append_event(db, "DISPATCH_RECONCILED", lease_id, {
+                "provider_operation_id": provider_operation_id, "outcome": outcome,
+            })
             db.execute("COMMIT")
             return True
         except sqlite3.IntegrityError:
