@@ -12,6 +12,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+from rhemascript.integrations.session_url_vault import (
+    SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
+)
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
@@ -123,6 +126,9 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         os.chmod(temporary.name, 0o700)
         registry = SQLitePublishSessionRegistry(Path(temporary.name) / "publish.sqlite3")
+        vault = SQLiteEncryptedSessionUrlVault(
+            Path(temporary.name) / "session-url-vault.sqlite3", b"v" * 32,
+        )
         approvals = authority["verified_approvals"]
         first = approvals[0]
         identity = {
@@ -136,6 +142,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "artifact_size_bytes": first.artifact_size_bytes,
         }
         if session_url is not None:
+            vault.store(publish_session_vault_reference(identity), session_url)
             owner = "registry-setup"
             self.assertTrue(registry.reserve_publish_session(
                 **identity, owner_id=owner, lease_seconds=60,
@@ -149,7 +156,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 project_id=first.project_id, project_version=first.project_version,
                 request_id=request_id, owner_id=owner,
             ))
-        return temporary, registry
+        return temporary, registry, vault
 
     def test_gateway_disabled_by_default_and_fails_before_transport(self):
         transport = NeverTransport()
@@ -412,12 +419,12 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         )
         authority = self.publish_authority("upload-2")
         session_url = "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=session-opaque"
-        temporary, registry = self.make_registry(authority, "upload-2", session_url=session_url)
+        temporary, registry, vault = self.make_registry(authority, "upload-2", session_url=session_url)
         self.addCleanup(temporary.cleanup)
         events = []
         gateway = ExternalIntegrationGateway(
             (binding,), transport=transport, audit_sink=events.append,
-            publish_session_registry=registry, enabled=True,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             status, body, response_headers = gateway.request(
@@ -460,7 +467,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=AmbiguousTransport(),
-            audit_sink=events.append, publish_session_registry=registry, enabled=True,
+            audit_sink=events.append, publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
@@ -524,7 +531,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=SuccessTransport(), audit_sink=audit,
-            publish_session_registry=registry, enabled=True,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
@@ -563,7 +570,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "path_prefix": "/upload/youtube/v3/videos",
                 }},
             ),), transport=transport, audit_sink=events.append,
-            publish_session_registry=registry, enabled=True,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         status, body, response_headers = gateway.request(
             "IF-18", "UPLOAD_CHUNK", session_url,
