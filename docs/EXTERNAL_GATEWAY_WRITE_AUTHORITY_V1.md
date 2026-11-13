@@ -25,3 +25,10 @@ Synthetic tests cover:
 - OAuth-token aliases, path suffixes, query strings and fragments rejected before transport.
 
 CI validates local code behavior and synthetic fixtures only. It does not establish production identity, authorization, or provider-write readiness.
+
+
+## Legacy generic POST entry point
+
+The legacy `ExternalIntegrationGateway.invoke` API always emits POST and has no signed, operation-specific approval contract. It is therefore disabled unconditionally, including when callers supply `external_action_authorisation: true`. The method performs only basic interface/enabled/binding/audit-sink checks before rejecting; it never resolves provider credentials, consults the response cache, or calls transport. Generic mutations must not be routed through this API. The method-aware request path also keeps GENERATE, SPEND and EXTERNAL_WRITE disabled until signed, identity-bound operation authority is implemented.
+
+Adversarial tests confirm that forged boolean authority and concurrent/duplicate attempts cannot reach transport through the legacy API.
