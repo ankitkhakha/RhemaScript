@@ -316,5 +316,16 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
                 with self.assertRaisesRegex(ApprovalError, "persisted approval signature is invalid"):
                     auditor.verify_persisted_record(tampered)
 
+        checkpoint_key = b"approval-state-checkpoint-key-32-bytes!!"
+        checkpoint = self.store.checkpoint(checkpoint_key)
+        self.assertTrue(self.store.verify_checkpoint(checkpoint, checkpoint_key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE consumed_approvals SET identity_claims_json=? WHERE approval_id=?",
+                ('{"subject_id":"tampered-subject"}', verified.approval_id),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, checkpoint_key))
+
+
 if __name__ == "__main__":
     unittest.main()
