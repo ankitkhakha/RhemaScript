@@ -117,15 +117,29 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             finally:
                 writer.close()
 
+        class InterleavingCursor:
+            def __init__(self, cursor, trigger=False):
+                self.cursor = cursor
+                self.trigger = trigger
+
+            def fetchall(self):
+                rows = self.cursor.fetchall()
+                if self.trigger:
+                    interleave()
+                return rows
+
+            def __getattr__(self, name):
+                return getattr(self.cursor, name)
+
         class InterleavingConnection:
             def __init__(self, connection):
                 self.connection = connection
 
             def execute(self, sql, *args):
-                result = self.connection.execute(sql, *args)
-                if "FROM consumed_approvals ORDER BY approval_id" in sql:
-                    interleave()
-                return result
+                cursor = self.connection.execute(sql, *args)
+                return InterleavingCursor(
+                    cursor, "FROM consumed_approvals ORDER BY approval_id" in sql
+                )
 
             def __getattr__(self, name):
                 return getattr(self.connection, name)
