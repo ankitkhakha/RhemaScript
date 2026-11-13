@@ -165,6 +165,36 @@ class ApprovalVerifierTests(unittest.TestCase):
                 (self.credential(),), (self.expectations("PUBLISH"),),
             )
 
+    def test_live_key_registry_revocation_between_verification_and_consumption_fails_closed(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        class Registry:
+            calls = 0
+
+            def resolve_key(inner, key_id, *, issuer, environment):
+                inner.calls += 1
+                revoked = inner.calls > 1
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="REVOKED" if revoked else "ACTIVE", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision=f"registry-revision-{inner.calls:03d}",
+                    resolved_at=self.now,
+                    revoked_at=self.now if revoked else None,
+                )
+
+        registry = Registry()
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=registry,
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "not active"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+        self.assertEqual(registry.calls, 2)
+
     def test_live_key_registry_preserves_historical_signature_audit_for_verify_only_key(self):
         from rhemascript.core.verification_keys import VerificationKeyRecord
 
