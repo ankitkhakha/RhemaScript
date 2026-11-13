@@ -286,6 +286,54 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("event_id already exists with different governed review data")
                 db.commit()
                 return False
+            if event_type == "FINDING_DISPOSITIONED":
+                captured = db.execute(
+                    """SELECT payload_json FROM activity_events
+                    WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?
+                    ORDER BY sequence DESC LIMIT 1""",
+                    (project_id, subject_id),
+                ).fetchone()
+                if not captured:
+                    db.rollback()
+                    raise ValueError("finding disposition requires an existing captured finding")
+                captured_payload = json.loads(captured[0])
+                if captured_payload.get("version") != payload.get("finding_version"):
+                    db.rollback()
+                    raise ValueError("finding disposition version does not match the captured finding")
+                exact_refs = captured_payload.get("evidence_refs", [])
+                if not any(
+                    isinstance(ref, dict)
+                    and ref.get("evidence_id") == binding["evidence_id"]
+                    and ref.get("version") == binding["evidence_version"]
+                    and ref.get("sha256") == binding["sha256"]
+                    and ref.get("size_bytes") == binding["size_bytes"]
+                    for ref in exact_refs
+                ):
+                    db.rollback()
+                    raise ValueError("finding disposition evidence is not bound to the captured finding")
+            else:
+                run_id = f"KNOWLEDGE:{subject_id}:{payload.get('knowledge_version')}"
+                stored = db.execute(
+                    "SELECT payload_json FROM readiness_runs WHERE run_id=?",
+                    (run_id,),
+                ).fetchone()
+                if not stored:
+                    db.rollback()
+                    raise ValueError("knowledge review requires an existing evidence-bound knowledge item")
+                stored_payload = json.loads(stored[0])
+                report = stored_payload.get("report", {})
+                knowledge = report.get("knowledge_payload", {}) if isinstance(report, dict) else {}
+                evidence_items = stored_payload.get("byte_verified_evidence", [])
+                stored_binding = report.get("evidence_binding", {}) if isinstance(report, dict) else {}
+                if (knowledge.get("status") != "PENDING_REVIEW"
+                        or len(evidence_items) != 1
+                        or not isinstance(evidence_items[0], dict)
+                        or stored_binding.get("evidence_id") != binding["evidence_id"]
+                        or stored_binding.get("evidence_version") != binding["evidence_version"]
+                        or stored_binding.get("evidence_sha256") != binding["sha256"]
+                        or evidence_items[0].get("size_bytes") != binding["size_bytes"]):
+                    db.rollback()
+                    raise ValueError("knowledge review evidence does not match the pending knowledge record")
             prior = db.execute(
                 """SELECT payload_json FROM activity_events
                 WHERE event_type=? AND project_id=? AND subject_id=?
