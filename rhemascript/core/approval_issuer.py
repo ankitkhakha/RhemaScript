@@ -20,12 +20,25 @@ class ApprovalScope:
     project_id: str
     project_version: str
     request_id: str
+    artifact_id: str | None = None
+    artifact_version: str | None = None
+    artifact_sha256: str | None = None
+    artifact_size_bytes: int | None = None
 
     def __post_init__(self) -> None:
         for field in ("action", "project_id", "project_version", "request_id"):
             value = getattr(self, field)
             if not isinstance(value, str) or not _ID.fullmatch(value):
                 raise ValueError(f"{field} must be a valid non-empty identifier")
+        values = (self.artifact_id, self.artifact_version, self.artifact_sha256, self.artifact_size_bytes)
+        if any(value is not None for value in values):
+            if (not isinstance(self.artifact_id, str) or not _ID.fullmatch(self.artifact_id)
+                    or not isinstance(self.artifact_version, str) or not _ID.fullmatch(self.artifact_version)
+                    or not isinstance(self.artifact_sha256, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", self.artifact_sha256)
+                    or not isinstance(self.artifact_size_bytes, int)
+                    or isinstance(self.artifact_size_bytes, bool) or self.artifact_size_bytes < 0):
+                raise ValueError("artifact-bound approval requires artifact ID/version/SHA-256/size")
 
 
 @runtime_checkable
@@ -44,12 +57,21 @@ class ApprovalCredentialSource(Protocol):
 
 def required_publish_scopes(
     *, project_id: str, project_version: str, request_id: str,
+    artifact_binding: Mapping[str, object],
 ) -> tuple[ApprovalScope, ApprovalScope]:
-    """Describe the two distinct approvals required for a YouTube write."""
+    """Describe two approvals bound to the exact final-film artifact bytes."""
+    if not isinstance(artifact_binding, Mapping) or set(artifact_binding) != {
+        "artifact_id", "artifact_version", "sha256", "size_bytes"
+    }:
+        raise ValueError("exact final-film artifact binding is required")
     shared = {
         "project_id": project_id,
         "project_version": project_version,
         "request_id": request_id,
+        "artifact_id": artifact_binding["artifact_id"],
+        "artifact_version": artifact_binding["artifact_version"],
+        "artifact_sha256": artifact_binding["sha256"],
+        "artifact_size_bytes": artifact_binding["size_bytes"],
     }
     return (
         ApprovalScope(action="FINAL_ACCEPTANCE", **shared),
@@ -63,6 +85,7 @@ def request_publish_approval_credentials(
     project_id: str,
     project_version: str,
     request_id: str,
+    artifact_binding: Mapping[str, object],
 ) -> tuple[dict[str, object], dict[str, object]]:
     """Request final-acceptance and publish credentials from a trusted issuer.
 
@@ -76,6 +99,7 @@ def request_publish_approval_credentials(
         project_id=project_id,
         project_version=project_version,
         request_id=request_id,
+        artifact_binding=artifact_binding,
     )
     credentials = []
     for scope in scopes:
