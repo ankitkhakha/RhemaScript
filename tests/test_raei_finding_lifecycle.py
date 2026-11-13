@@ -800,7 +800,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self.assertEqual(len(self.registry.list_activity_events()), before)
         self.assertTrue(self.registry.verify())
 
-    def test_reopening_projection_rejects_missing_resumed_capture(self):
+    def test_reopening_projection_marks_authorized_version_awaiting_submission(self):
         self._record_research()
         self._record_reproduction()
         self._record_accepted_disposition()
@@ -809,8 +809,16 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_effectiveness(outcome="EFFECTIVE")
         self._record_closure()
         self._record_reopening()
-        with self.assertRaisesRegex(RAEIFindingError, "exactly one authenticated resumed finding version"):
-            list_findings(self.registry)
+        old_finding = next(
+            item for item in list_findings(self.registry)
+            if item["version"] == "1.0"
+        )
+        self.assertEqual(old_finding["status"], "REOPENED")
+        self.assertEqual(old_finding["reopened_as_version"], "1.1")
+        self.assertEqual(
+            old_finding["resumption_status"],
+            "AWAITING_AUTHENTICATED_SUBMISSION",
+        )
 
     def _inherit_closed_knowledge(self):
         events = {
