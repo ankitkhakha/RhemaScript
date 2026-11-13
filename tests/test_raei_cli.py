@@ -170,6 +170,52 @@ class RAEICLITests(unittest.TestCase):
         self.assertEqual(code, 0, errors)
         self.assertEqual(json.loads(output)["recorded_units"], 1)
 
+    def test_capture_finding_cli_records_and_lists_pending_observation(self):
+        self.run_cli("init", "--database", str(self.database))
+        evidence_root = self.private / "evidence"
+        evidence_root.mkdir(mode=0o700)
+        os.chmod(evidence_root, 0o700)
+        (evidence_root / "screenshot.txt").write_text("synthetic screenshot fixture", encoding="utf-8")
+        payload = {
+            "schema": "raei-field-finding-v1",
+            "finding_id": "RS-FND-CLI-001",
+            "version": "1.0",
+            "project_id": "RS-PWW-001",
+            "title": "Portrait aspect ratio was not retained",
+            "raw_observation": "The next clip unexpectedly rendered in landscape.",
+            "affected_workflow": "video_generation",
+            "expected_behavior": "The clip should be portrait 9:16.",
+            "observed_behavior": "The returned clip was landscape 16:9.",
+            "impact": "The generation attempt and credits were wasted.",
+            "reproduction_steps": ["Select portrait 9:16 before each clip request."],
+            "supporting_evidence": [{
+                "evidence_id": "EV-CLI-FIND-SUPPORT",
+                "version": "1.0",
+                "relative_path": "screenshot.txt",
+                "description": "Supporting screenshot fixture",
+            }],
+            "evidence_id": "EV-CLI-FIND-OBS",
+            "evidence_version": "1.0",
+            "created_at_utc": "2026-11-13T01:00:00+00:00",
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        (evidence_root / "finding.json").write_bytes(encoded)
+        code, output, errors = self.run_cli(
+            "capture-finding", "--database", str(self.database),
+            "--evidence-root", str(evidence_root), "--artifact-path", "finding.json",
+        )
+        self.assertEqual(code, 0, errors)
+        self.assertEqual(json.loads(output)["status"], "SUBMITTED")
+        code, output, errors = self.run_cli(
+            "finding-list", "--database", str(self.database),
+            "--evidence-root", str(evidence_root), "--project-id", "RS-PWW-001",
+        )
+        self.assertEqual(code, 0, errors)
+        findings = json.loads(output)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["finding_id"], "RS-FND-CLI-001")
+        self.assertEqual(findings[0]["identity_authentication_status"], "UNVERIFIED")
+
     def test_private_parent_is_required(self):
         public = self.root / "public"
         public.mkdir(mode=0o755)
