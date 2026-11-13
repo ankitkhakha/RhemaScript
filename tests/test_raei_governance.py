@@ -191,11 +191,19 @@ class RAEIGovernanceTests(unittest.TestCase):
             }},
         )
         credentials = self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
+        artifact_binding = {
+            "artifact_id": self.evidence.evidence_id,
+            "artifact_version": self.evidence.version,
+            "sha256": self.evidence.sha256,
+            "size_bytes": self.evidence.size_bytes,
+        }
         expectations = (
             {"action": "FINDING_DISPOSITION_REVIEW", "project_id": "RS-PWW-001",
-             "project_version": "3.2", "request_id": "review-request-0001"},
+             "project_version": "3.2", "request_id": "review-request-0001",
+             "artifact_binding": artifact_binding},
             {"action": "FINDING_DISPOSITION_CONFIRM", "project_id": "RS-PWW-001",
-             "project_version": "3.2", "request_id": "review-request-0001"},
+             "project_version": "3.2", "request_id": "review-request-0001",
+             "artifact_binding": artifact_binding},
         )
         with self.assertRaisesRegex(ApprovalError, "could not be consumed atomically"):
             verifier.verify_many_and_consume(credentials, expectations)
