@@ -449,12 +449,12 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_closure()
         reopened = self._record_reopening()
         self.assertEqual(reopened["decision"], "REOPENED")
-        old_finding = next(item for item in list_findings(self.registry) if item["version"] == "1.0")
+        old_finding = next(item for item in list_findings(self.registry, evidence_root=self.evidence_root) if item["version"] == "1.0")
         self.assertEqual(old_finding["status"], "REOPENED")
         self.assertEqual(old_finding["reopened_as_version"], "1.1")
         resumed = self._capture_resumed_finding()
         self.assertEqual(resumed["version"], "1.1")
-        findings = list_findings(self.registry)
+        findings = list_findings(self.registry, evidence_root=self.evidence_root)
         new_finding = next(item for item in findings if item["version"] == "1.1")
         self.assertEqual(new_finding["status"], "SUBMITTED")
         self.assertEqual(new_finding["supersedes"], [f"{self.finding_id}@1.0"])
@@ -913,7 +913,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_closure()
         self._record_reopening()
         old_finding = next(
-            item for item in list_findings(self.registry)
+            item for item in list_findings(self.registry, evidence_root=self.evidence_root)
             if item["version"] == "1.0"
         )
         self.assertEqual(old_finding["status"], "REOPENED")
@@ -1100,7 +1100,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_effectiveness(outcome="EFFECTIVE")
         result = self._record_closure()
         self.assertEqual(result["decision"], "CLOSED")
-        finding = list_findings(self.registry)[0]
+        finding = list_findings(self.registry, evidence_root=self.evidence_root)[0]
         self.assertEqual(finding["status"], "CLOSED")
         self.assertEqual(finding["closure_event_id"], result["event_id"])
 
@@ -1113,7 +1113,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_effectiveness(outcome="INEFFECTIVE")
         with self.assertRaisesRegex(Exception, "only an EFFECTIVE assessment"):
             self._record_closure()
-        self.assertEqual(list_findings(self.registry)[0]["status"], "INEFFECTIVE")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "INEFFECTIVE")
         self.assertFalse(any(
             event["event_type"] == "FINDING_CLOSED"
             for event in self.registry.list_activity_events()
@@ -1127,7 +1127,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         implementation = self._record_implementation()
         result = self._record_effectiveness(outcome="EFFECTIVE")
         self.assertEqual(result["status"], "EFFECTIVE")
-        finding = list_findings(self.registry)[0]
+        finding = list_findings(self.registry, evidence_root=self.evidence_root)[0]
         self.assertEqual(finding["status"], "EFFECTIVE")
         self.assertEqual(finding["implementation_event_id"], implementation["event_id"])
         self.assertEqual(finding["effectiveness_event_id"], result["event_id"])
@@ -1140,7 +1140,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_implementation()
         with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent assessor"):
             self._record_effectiveness(subject_id="subject-implementer-001", session_id="session-assessor-new")
-        self.assertEqual(list_findings(self.registry)[0]["status"], "IMPLEMENTED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "IMPLEMENTED")
         self.assertFalse(any(
             event["event_type"] == "FINDING_EFFECTIVENESS_ASSESSED"
             for event in self.registry.list_activity_events()
@@ -1153,7 +1153,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         plan = self._record_plan()
         result = self._record_implementation()
         self.assertEqual(result["status"], "IMPLEMENTED")
-        finding = list_findings(self.registry)[0]
+        finding = list_findings(self.registry, evidence_root=self.evidence_root)[0]
         self.assertEqual(finding["status"], "IMPLEMENTED")
         self.assertEqual(finding["plan_event_id"], plan["event_id"])
         self.assertEqual(finding["implementation_event_id"], result["event_id"])
@@ -1165,7 +1165,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_plan()
         with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent implementer"):
             self._record_implementation(subject_id="subject-planner-001", session_id="session-implementer-new")
-        self.assertEqual(list_findings(self.registry)[0]["status"], "PLANNED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "PLANNED")
         self.assertFalse(any(
             event["event_type"] == "FINDING_IMPLEMENTED"
             for event in self.registry.list_activity_events()
@@ -1188,7 +1188,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
         )
         self.assertEqual(result["status"], "REPRODUCED")
-        finding = list_findings(self.registry)[0]
+        finding = list_findings(self.registry, evidence_root=self.evidence_root)[0]
         self.assertEqual(finding["status"], "REPRODUCED")
         self.assertEqual(finding["reproduction_outcome"], "REPRODUCED")
         self.assertTrue(self.registry.verify_artifacts(self.evidence_root))
@@ -1208,7 +1208,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
                 evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
             )
-        self.assertEqual(list_findings(self.registry)[0]["status"], "SUBMITTED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "SUBMITTED")
 
     def test_reproduction_rejects_research_from_different_project_version(self):
         self._record_research()
@@ -1227,7 +1227,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
                 evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
             )
-        self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "RESEARCHED")
         self.assertTrue(self.registry.verify())
 
     def test_plan_rejects_research_and_reproduction_from_different_project_version(self):
@@ -1271,7 +1271,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
                 evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
             )
-        self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "RESEARCHED")
 
     def test_reproduction_requires_distinct_session_even_for_different_subject(self):
         self._record_research()
@@ -1289,7 +1289,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
                 evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
             )
-        self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "RESEARCHED")
 
 
     def test_disposition_rejects_unlinked_evidence_even_when_byte_verified(self):
@@ -1327,7 +1327,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_accepted_disposition()
         result = self._record_plan(subject_id="subject-planner-retry-001", session_id="session-planner-retry-001")
         self.assertEqual(result["status"], "PLANNED")
-        self.assertEqual(list_findings(self.registry)[0]["status"], "PLANNED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "PLANNED")
 
     def test_plan_rejects_same_human_as_reproducer(self):
         self._record_research()
@@ -1335,7 +1335,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         self._record_accepted_disposition()
         with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent planner"):
             self._record_plan(subject_id="subject-reproducer-001", session_id="session-planner-other")
-        self.assertEqual(list_findings(self.registry)[0]["status"], "ACCEPTED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "ACCEPTED")
 
     def test_generic_append_cannot_forge_research_or_reproduction(self):
         with self.assertRaisesRegex(ValueError, "authenticated finding lifecycle"):
@@ -1362,7 +1362,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                 evidence_root=str(self.evidence_root), artifact_bytes=raw + b" ",
                 evidence=evidence,
             )
-        self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root)[0]["status"], "RESEARCHED")
 
 
     def test_consumed_approval_id_is_single_use_across_all_activity_event_types(self):

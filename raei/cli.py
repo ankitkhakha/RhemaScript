@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "finding-list":
-            print(_json(list_findings(registry, project_id=args.project_id)))
+            print(_json(list_findings(registry, evidence_root=args.evidence_root, project_id=args.project_id)))
             return 0
 
         root = Path(args.evidence_root).expanduser()

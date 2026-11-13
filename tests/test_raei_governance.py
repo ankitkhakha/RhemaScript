@@ -147,7 +147,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         reviews = list_governed_reviews(
             self.registry, event_type="FINDING_DISPOSITIONED",
             subject_id="RS-FND-001",
-        )
+        , evidence_root=self.evidence_root)
         self.assertEqual(len(reviews), 1)
         self.assertEqual(reviews[0]["payload"]["authorization"]["actor_ids"],
                          ["reviewer-001", "approver-001"])
@@ -167,7 +167,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         reviews = list_governed_reviews(
             self.registry, event_type="KNOWLEDGE_REVIEWED",
             subject_id="BWSF-01",
-        )
+        , evidence_root=self.evidence_root)
         self.assertEqual(reviews[0]["payload"]["decision"], "APPROVED")
 
     def test_registry_rejects_signature_verified_but_unconsumed_review_objects(self):
@@ -259,7 +259,7 @@ class RAEIGovernanceTests(unittest.TestCase):
                 request_id="review-request-0001", disposition="ACCEPTED",
                 rationale="Evidence checked.", evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
-        self.assertEqual(list_governed_reviews(self.registry), [])
+        self.assertEqual(list_governed_reviews(self.registry, evidence_root=self.evidence_root), [])
 
     def test_unverified_evidence_object_is_rejected(self):
         self.register_pending_knowledge("BWSF-02")
@@ -313,7 +313,7 @@ class RAEIGovernanceTests(unittest.TestCase):
                 rationale="Identity separation adversarial test.",
                 evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
-        self.assertEqual(list_governed_reviews(self.registry), [])
+        self.assertEqual(list_governed_reviews(self.registry, evidence_root=self.evidence_root), [])
 
     def test_knowledge_review_rejects_shared_authenticated_session(self):
         self.register_pending_knowledge("BWSF-SHARED-SESSION")
@@ -329,7 +329,7 @@ class RAEIGovernanceTests(unittest.TestCase):
                 rationale="Shared-session adversarial test.",
                 evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
-        self.assertEqual(list_governed_reviews(self.registry), [])
+        self.assertEqual(list_governed_reviews(self.registry, evidence_root=self.evidence_root), [])
 
     def test_disposition_rejects_wrong_artifact_binding_before_consumption(self):
         self.capture_finding("RS-FND-WRONG-ARTIFACT")
@@ -346,7 +346,7 @@ class RAEIGovernanceTests(unittest.TestCase):
                 evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
         self.assertEqual(self.used, set())
-        self.assertEqual(list_governed_reviews(self.registry), [])
+        self.assertEqual(list_governed_reviews(self.registry, evidence_root=self.evidence_root), [])
 
     def test_governed_review_rejects_legacy_v1_credentials(self):
         self.capture_finding("RS-FND-LEGACY")
@@ -370,7 +370,24 @@ class RAEIGovernanceTests(unittest.TestCase):
                 evidence_root=str(self.evidence_root), evidence=self.evidence,
             )
         self.assertEqual(self.used, set())
-        self.assertEqual(list_governed_reviews(self.registry), [])
+        self.assertEqual(list_governed_reviews(self.registry, evidence_root=self.evidence_root), [])
+
+    def test_direct_governed_review_listing_reverifies_retained_evidence_bytes(self):
+        result = record_knowledge_review(
+            self.registry, self.verifier,
+            self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"),
+            knowledge_id="BWSF-01", knowledge_version="0.1",
+            project_id="RS-PWW-001", project_version="3.2",
+            request_id="review-request-direct-tamper", decision="APPROVED",
+            rationale="Sources and claims independently reviewed.",
+            evidence_root=str(self.evidence_root), evidence=self.evidence,
+        )
+        self.assertTrue(result["recorded"])
+        (self.evidence_root / "review.txt").write_bytes(b"tampered after review")
+        with self.assertRaisesRegex(RAEIGovernanceError, "retained evidence integrity verification failed"):
+            list_governed_reviews(self.registry, evidence_root=self.evidence_root)
+
+
 
 if __name__ == "__main__":
     unittest.main()

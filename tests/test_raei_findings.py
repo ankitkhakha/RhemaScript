@@ -134,7 +134,7 @@ class RAEIFindingTests(unittest.TestCase):
             project_version="3.2", request_id="finding-submit-request-0001",
         )
         self.assertEqual(result["identity_authentication_status"], "VERIFIED")
-        findings = list_findings(self.registry, project_id="RS-PWW-001")
+        findings = list_findings(self.registry, project_id="RS-PWW-001", evidence_root=self.evidence_root)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["identity_authentication_status"], "VERIFIED")
         self.assertEqual(findings[0]["submitter_identity"]["actor_id"], "submitter-0001")
@@ -161,7 +161,7 @@ class RAEIFindingTests(unittest.TestCase):
                 verifier=verifier, submitter_credential=credential,
                 project_version="3.2", request_id="finding-submit-request-0001",
             )
-        self.assertEqual(list_findings(self.registry), [])
+        self.assertEqual(list_findings(self.registry, evidence_root=self.evidence_root), [])
 
     def test_generic_event_append_cannot_forge_authenticated_submitter(self):
         with self.assertRaisesRegex(ValueError, "authenticated finding capture"):
@@ -183,7 +183,7 @@ class RAEIFindingTests(unittest.TestCase):
         self.assertEqual(result["status"], "SUBMITTED")
         self.assertEqual(result["suggested_evidence_level"], "E2")
         self.assertEqual(result["identity_authentication_status"], "UNVERIFIED")
-        findings = list_findings(self.registry, project_id="RS-PWW-001")
+        findings = list_findings(self.registry, project_id="RS-PWW-001", evidence_root=self.evidence_root)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["observation_evidence"]["sha256"], evidence.sha256)
         self.assertEqual(len(findings[0]["supporting_evidence"]), 1)
@@ -237,6 +237,16 @@ class RAEIFindingTests(unittest.TestCase):
         capture_finding(self.registry, self.evidence_root, encoded, evidence)
         (self.evidence_root / "screenshot.txt").write_text("altered", encoding="utf-8")
         self.assertFalse(self.registry.verify_artifacts(self.evidence_root))
+
+
+    def test_direct_list_findings_reverifies_retained_evidence_bytes(self):
+        payload = self.payload("RS-FND-DIRECT-001")
+        encoded, evidence = self.write_artifact(payload)
+        capture_finding(self.registry, self.evidence_root, encoded, evidence)
+        (self.evidence_root / evidence.relative_path).write_bytes(b"tampered after capture")
+        with self.assertRaisesRegex(RAEIFindingError, "integrity verification failed"):
+            list_findings(self.registry, evidence_root=self.evidence_root)
+
 
 
 if __name__ == "__main__":

@@ -305,11 +305,12 @@ def capture_finding(
 
 
 def list_findings(
-    registry: ReadinessRunRegistry, *, project_id: str | None = None
+    registry: ReadinessRunRegistry, *, evidence_root: str | Path,
+    project_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Return captured finding submissions; later dispositions remain separate events."""
-    if not isinstance(registry, ReadinessRunRegistry):
-        raise RAEIFindingError("a ReadinessRunRegistry is required")
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify_artifacts(evidence_root):
+        raise RAEIFindingError("RAEI registry or retained evidence integrity verification failed")
     if project_id is not None and (not isinstance(project_id, str) or not project_id.strip()):
         raise RAEIFindingError("project_id must be null or non-empty text")
     results = []
@@ -359,7 +360,7 @@ def list_findings(
     # Dispositions are a separately authenticated stream; capture remains immutable.
     from raei.governance import list_governed_reviews
     reviews = list_governed_reviews(
-        registry, event_type="FINDING_DISPOSITIONED", project_id=project_id,
+        registry, evidence_root=evidence_root, event_type="FINDING_DISPOSITIONED", project_id=project_id,
     )
     latest_by_version = {
         (item.get("subject_id"), item.get("payload", {}).get("finding_version")):
@@ -367,14 +368,14 @@ def list_findings(
         for item in reviews
     }
     closures = list_governed_reviews(
-        registry, event_type="FINDING_CLOSED", project_id=project_id,
+        registry, evidence_root=evidence_root, event_type="FINDING_CLOSED", project_id=project_id,
     )
     closure_by_version = {
         (item.get("subject_id"), item.get("payload", {}).get("finding_version")): item
         for item in closures
     }
     reopenings = list_governed_reviews(
-        registry, event_type="FINDING_REOPENED", project_id=project_id,
+        registry, evidence_root=evidence_root, event_type="FINDING_REOPENED", project_id=project_id,
     )
     reopening_by_version = {
         (item.get("subject_id"), item.get("payload", {}).get("finding_version")): item

@@ -405,12 +405,13 @@ def record_finding_reopening(
 
 
 def list_governed_reviews(
-    registry: ReadinessRunRegistry, *, event_type: str | None = None,
-    project_id: str | None = None, subject_id: str | None = None,
+    registry: ReadinessRunRegistry, *, evidence_root: str | Path,
+    event_type: str | None = None, project_id: str | None = None,
+    subject_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return decisions only after validating the registry chain and review envelope."""
-    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
-        raise RAEIGovernanceError("activity history integrity verification failed")
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify_artifacts(evidence_root):
+        raise RAEIGovernanceError("activity history or retained evidence integrity verification failed")
     allowed = {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "FINDING_REOPENED", "KNOWLEDGE_REVIEWED"}
     if event_type is not None and event_type not in allowed:
         raise RAEIGovernanceError("unsupported governed review filter")

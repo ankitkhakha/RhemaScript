@@ -243,7 +243,7 @@ def list_knowledge(registry: ReadinessRunRegistry, *, evidence_root: str | Path)
     # Review events are a separate, signed governance stream. The immutable
     # intake record remains PENDING_REVIEW; this projection never rewrites it.
     from raei.governance import list_governed_reviews
-    reviews = list_governed_reviews(registry, event_type="KNOWLEDGE_REVIEWED")
+    reviews = list_governed_reviews(registry, evidence_root=evidence_root, event_type="KNOWLEDGE_REVIEWED")
     latest_by_version = {
         (item.get("subject_id"), item.get("payload", {}).get("knowledge_version")):
             item.get("payload", {}).get("decision")
