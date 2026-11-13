@@ -201,6 +201,74 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         self.assertTrue(self.registry.verify())
         self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
 
+    def test_verify_uses_one_snapshot_when_readiness_and_event_commit_concurrently(self):
+        import hashlib
+        import json
+        import sqlite3
+        from unittest.mock import patch
+
+        real_connect = self.registry._connect
+        injected = {"done": False}
+
+        def interleave():
+            if injected["done"]:
+                return
+            injected["done"] = True
+            payload = {
+                "run_id": "RACE-RUN",
+                "report": {},
+                "byte_verified_evidence": [],
+                "source_resolution_receipts": [],
+                "assessment_is_approval": False,
+                "assessment_is_execution_authorisation": False,
+            }
+            encoded = self.registry._canonical(payload)
+            digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+            writer = sqlite3.connect(self.path, isolation_level=None)
+            try:
+                writer.execute("BEGIN IMMEDIATE")
+                writer.execute(
+                    "INSERT INTO readiness_runs(run_id,payload_sha256,payload_json) VALUES(?,?,?)",
+                    ("RACE-RUN", digest, encoded),
+                )
+                self.registry._append_event_tx(
+                    writer, "READINESS:RACE-RUN", "READINESS_RUN_RECORDED",
+                    {"run_id": "RACE-RUN", "payload_sha256": digest, "evidence_refs": []},
+                    None, "RACE-RUN",
+                )
+                writer.execute("COMMIT")
+            finally:
+                writer.close()
+
+        class InterleavingConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def execute(self, sql, *args):
+                result = self.connection.execute(sql, *args)
+                if ("SELECT run_id,payload_sha256,payload_json FROM readiness_runs "
+                        "ORDER BY created_at,rowid" in sql):
+                    interleave()
+                return result
+
+            def __enter__(self):
+                self.connection.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self.connection.__exit__(*args)
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+        with patch.object(
+            self.registry, "_connect",
+            side_effect=lambda: InterleavingConnection(real_connect()),
+        ):
+            self.assertTrue(self.registry.verify())
+        self.assertTrue(injected["done"])
+        self.assertTrue(self.registry.verify())
+
     def test_legacy_readiness_records_are_imported_into_event_chain(self):
         import hashlib
         import json
