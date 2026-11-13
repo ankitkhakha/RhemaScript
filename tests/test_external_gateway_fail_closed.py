@@ -684,20 +684,25 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             (self.binding(),), transport=transport,
             audit_sink=lambda event: None, enabled=True,
         )
-        with self.assertRaisesRegex(ExternalIntegrationError, "external-write authority"):
+        with self.assertRaisesRegex(ExternalIntegrationError, "legacy generic POST invocation is disabled"):
             gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
-    def test_generic_post_invocation_requires_explicit_authority_before_transport(self):
+    def test_generic_post_invocation_rejects_boolean_authority_before_transport(self):
         transport = NeverTransport()
         gateway = ExternalIntegrationGateway(
             (self.binding(),), transport=transport,
             audit_sink=lambda event: None, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            result = gateway.invoke("IF-01", self.request())
-        self.assertEqual(result["status"], "PROVIDER_CONFIRMED")
-        self.assertEqual(len(transport.calls), 1)
+            with self.assertRaisesRegex(
+                ExternalIntegrationError, "legacy generic POST invocation is disabled",
+            ):
+                gateway.invoke(
+                    "IF-01", self.request(),
+                    authority={"external_action_authorisation": True},
+                )
+        self.assertEqual(transport.calls, [])
 
     def test_generic_operation_path_rejects_traversal_before_transport(self):
         transport = NeverTransport()
@@ -712,7 +717,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             audit_sink=lambda event: None, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+            with self.assertRaisesRegex(ExternalIntegrationError, "legacy generic POST invocation is disabled"):
                 gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
@@ -734,50 +739,21 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
 
 
-    def test_concurrent_duplicate_invocations_share_one_provider_post(self):
-        entered = threading.Event()
-        release = threading.Event()
-        class BlockingTransport:
-            def __init__(self):
-                self.calls = 0
-            def send(self, url, headers, body, timeout):
-                self.calls += 1
-                entered.set()
-                if not release.wait(3):
-                    raise RuntimeError("test transport timed out")
-                return 200, b'{"ok":true}'
-
-        transport = BlockingTransport()
+    def test_legacy_generic_invocation_fails_closed_before_transport(self):
+        transport = NeverTransport()
         gateway = ExternalIntegrationGateway(
             (self.binding(),), transport=transport,
             audit_sink=lambda event: None, enabled=True,
         )
-        results, errors = [], []
-        def invoke():
-            try:
-                results.append(gateway.invoke(
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(
+                ExternalIntegrationError, "legacy generic POST invocation is disabled",
+            ):
+                gateway.invoke(
                     "IF-01", self.request(),
                     authority={"external_action_authorisation": True},
-                ))
-            except Exception as exc:
-                errors.append(exc)
-
-        with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            first = threading.Thread(target=invoke)
-            second = threading.Thread(target=invoke)
-            first.start()
-            self.assertTrue(entered.wait(2))
-            second.start()
-            release.set()
-            first.join(3)
-            second.join(3)
-        self.assertFalse(first.is_alive())
-        self.assertFalse(second.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual(transport.calls, 1)
-        self.assertEqual(len(results), 2)
-        self.assertEqual(results[0], results[1])
-
+                )
+        self.assertEqual(transport.calls, [])
 
 if __name__ == "__main__":
     unittest.main()
