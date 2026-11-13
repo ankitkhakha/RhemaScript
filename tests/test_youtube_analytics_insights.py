@@ -82,6 +82,44 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         self.assertEqual(coverage["status"], "OBSERVATION_ONLY")
         self.assertIn("not zero-activity", coverage["interpretation"])
 
+    def test_reports_without_day_dimension_mark_coverage_not_applicable(self):
+        previous = snapshot(
+            "2026-10-01", "2026-10-07", [[10, 2.5, 15.0, 1]],
+            dimensions="",
+        )
+        current = snapshot(
+            "2026-10-08", "2026-10-14", [[15, 3.0, 12.0, 1]],
+            dimensions="",
+        )
+        result = compare_analytics_periods(current, previous)
+        self.assertEqual(
+            result["current_period"]["daily_coverage"]["status"],
+            "NOT_APPLICABLE",
+        )
+        self.assertIsNone(
+            result["previous_period"]["daily_coverage"]["expected_calendar_days"]
+        )
+
+    def test_multi_dimension_daily_rows_count_distinct_days(self):
+        metrics = "views,estimatedMinutesWatched,averageViewDuration,subscribersGained"
+        previous = snapshot(
+            "2026-10-01", "2026-10-07",
+            [["2026-10-01", 10, 2.5, 15.0, 1],
+             ["2026-10-01", 5, 1.0, 12.0, 0],
+             ["2026-10-03", 20, 4.5, 13.5, 2]],
+            metrics=metrics, dimensions="day,country",
+        )
+        current = snapshot(
+            "2026-10-08", "2026-10-14",
+            [["2026-10-08", 15, 3.0, 12.0, 1],
+             ["2026-10-08", 7, 1.5, 11.0, 0]],
+            metrics=metrics, dimensions="day,country",
+        )
+        result = compare_analytics_periods(current, previous)
+        coverage = result["previous_period"]["daily_coverage"]
+        self.assertEqual(coverage["observed_days"], ["2026-10-01", "2026-10-03"])
+        self.assertEqual(coverage["unobserved_day_count"], 5)
+
     def test_duplicate_day_rows_are_rejected(self):
         previous = snapshot("2026-10-01", "2026-10-07", [
             ["2026-10-01", 10, 2.5, 15.0, 1],
