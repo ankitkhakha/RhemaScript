@@ -290,16 +290,17 @@ class ReadinessRunRegistry:
                 captured = db.execute(
                     """SELECT payload_json FROM activity_events
                     WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?
-                    ORDER BY sequence DESC LIMIT 1""",
+                    ORDER BY sequence DESC""",
                     (project_id, subject_id),
-                ).fetchone()
-                if not captured:
+                ).fetchall()
+                captured_payload = next(
+                    (json.loads(row[0]) for row in captured
+                     if json.loads(row[0]).get("version") == payload.get("finding_version")),
+                    None,
+                )
+                if not captured_payload:
                     db.rollback()
-                    raise ValueError("finding disposition requires an existing captured finding")
-                captured_payload = json.loads(captured[0])
-                if captured_payload.get("version") != payload.get("finding_version"):
-                    db.rollback()
-                    raise ValueError("finding disposition version does not match the captured finding")
+                    raise ValueError("finding disposition requires the exact captured finding version")
                 exact_refs = captured_payload.get("evidence_refs", [])
                 if not any(
                     isinstance(ref, dict)
