@@ -1,6 +1,6 @@
 # RAEI Controlled Implementation, Effectiveness, Closure & Learning Contract V1.0
 
-**Status:** Candidate implementation transition is implemented and synthetic integration CI passed on `5a34e7110d04f7693f50a6d559120e491d27698a` (run #1446). Effectiveness is now implemented in the candidate and passed exact-head CI run #1458 on `0771e284a751abebedaf657b9bacf170eddfe10d`. Closure and knowledge-inheritance transitions remain proposed until their typed APIs, registry enforcement, projections and adversarial tests pass exact-head CI.
+**Status:** Candidate implementation transition is implemented and synthetic integration CI passed on `5a34e7110d04f7693f50a6d559120e491d27698a` (run #1446). Effectiveness is now implemented in the candidate and passed exact-head CI run #1458 on `0771e284a751abebedaf657b9bacf170eddfe10d`. Two-person governed closure is now implemented and passed exact-head CI run #1482 on `eb15d2fd02b6fff18676d874db4041652d450a9d`. Reopening and knowledge-inheritance transitions remain proposed until their typed APIs, registry enforcement, projections and adversarial tests pass exact-head CI.
 **Authority:** A recorded plan is not permission to execute it. The Human Director retains existing decision and execution authority. No new approval gate is silently activated by this document.
 **Scope:** Candidate-only design for the remaining RAEI finding lifecycle. This document does not authorize live project changes, production deployment, provider writes, media generation, upload or publishing.
 
@@ -66,6 +66,8 @@ Closure is a separately governed transition, not a side effect of implementation
 - Closure approvals must be distinct authenticated subjects and sessions, use permitted action roles, and be consumed atomically.
 - Closure is append-only. Re-opening creates a new lifecycle event referencing the prior closure; it never edits or deletes history.
 - Any change to the original observation, plan, implementation or evidence creates a new version or superseding record. Old assessments do not automatically carry forward.
+
+**Candidate closure status:** `record_finding_closure` and governed `FINDING_CLOSED` are implemented. Closure requires an EFFECTIVE assessment, exact plan/implementation/effectiveness event lineage, the exact assessment evidence tuple, and two consumed V3 approvals bound to that evidence. Reviewers must have distinct subjects and sessions, be independent of all lifecycle participants, and share one trusted identity-provider/policy domain. Projection validates the lineage and exposes `CLOSED`. Synthetic tests cover successful closure and rejection of INEFFECTIVE outcomes. CI run #1482 passed on the exact head above.
 
 ## 5. Knowledge inheritance contract
 
