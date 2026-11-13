@@ -237,6 +237,38 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             )
         self.assertEqual(transport.calls, [])
 
+    def test_gateway_denies_valid_upload_without_durable_registry_before_transport(self):
+        class MethodTransport:
+            def __init__(self):
+                self.calls = []
+            def send_request(self, url, method, headers, body, timeout):
+                self.calls.append((url, method, headers, body))
+                return 200, b'{"id":"unexpected"}', {}
+
+        transport = MethodTransport()
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_SESSION": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=transport, audit_sink=lambda event: None, enabled=True,
+        )
+        authority = self.publish_authority("upload-no-registry")
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            with self.assertRaisesRegex(ExternalIntegrationError, "durable SQLitePublishSessionRegistry"):
+                gateway.request(
+                    "IF-18", "UPLOAD_SESSION",
+                    "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                    method="POST", body=b"metadata", request_id="upload-no-registry",
+                    project_id="RS-1", source_version="1.0", authority=authority,
+                )
+        self.assertEqual(transport.calls, [])
+
     def test_upload_chunk_requires_separate_publish_authority_before_transport(self):
         class MethodTransport:
             def __init__(self):
