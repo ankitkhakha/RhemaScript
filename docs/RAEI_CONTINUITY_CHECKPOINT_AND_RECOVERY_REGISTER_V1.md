@@ -305,3 +305,21 @@ The IF-18 artifact from run #1583 was downloaded and its JSON inspected independ
 At this observation, PR #62 remains open and draft, its head is `4c3f6902ef6389db85ed8dc2062ba13f4a06c1b4`, GitHub reports mergeable/clean, and the compare against main SHA `c44d8e9c0847bd220167945b967db74fcf12635f` is 454 commits ahead and 0 behind. This is a point-in-time repository state; recheck before any future integration decision.
 
 The next bounded work remains dependency reproducibility and adversarial review of evidence/history persistence. No lockfile has been invented, and no production or owner-only action has been performed.
+
+## 14. Direct-read integrity guard — 13 November 2026
+
+### Finding and bounded correction
+
+A code review found that `ReadinessRunRegistry.get(run_id)` returned a single readiness record without first verifying the registry. Unlike `list_all()` and `list_activity_events()`, this direct-read path could return a payload whose stored digest or canonical representation had been altered, without surfacing the registry-integrity failure.
+
+The method now calls `verify()` before reading and raises an integrity error when the registry is invalid. A regression test modifies a stored readiness payload without updating its digest and confirms that `get()` fails closed.
+
+### Exact candidate and validation
+
+- Implementation commit: `e12860f26fe6f6269213d33d8af6ff9ba8bb37f9`.
+- Regression-test commit / candidate head: `5a0530483fe2462b297788b09e3a654e7d544188`.
+- Exact-head PR CI run #1590: `43402096229` — success; dependency installation, full local CI suite and IF-18 report upload all passed.
+- Push-triggered run `43402090159` for the same head was still pending at this checkpoint; the successful PR-triggered run is the observed exact-head validation.
+- The correction does not change the checkpoint key model, provide independent checkpoint custody, or establish production readiness.
+
+PR #62 remains open and draft. At this checkpoint the candidate compares 457 commits ahead and 0 behind the recorded main SHA. No merge, deployment, Google authorization or live YouTube write occurred.
