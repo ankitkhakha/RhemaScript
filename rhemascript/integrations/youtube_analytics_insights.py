@@ -34,6 +34,12 @@ def _canonical_digest(value: Any) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def _decimal_text(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    return format(value.normalize(), "f")
+
+
 def _period_days(query: dict[str, Any]) -> int:
     try:
         start = date.fromisoformat(query["startDate"])
@@ -82,7 +88,7 @@ def _metric_totals(snapshot: dict[str, Any]) -> dict[str, str] | None:
                     f"integer metric {name} contains a fractional value"
                 )
             totals[name] += number
-    return {name: format(value, "f") for name, value in totals.items()}
+    return {name: _decimal_text(value) for name, value in totals.items()}
 
 
 def _query_identity(query: dict[str, Any]) -> dict[str, Any]:
@@ -109,14 +115,14 @@ def compare_analytics_periods(
         raise YouTubeAnalyticsInsightError(
             "periods must use identical channel, metrics, dimensions and filters"
         )
+    if current_query["startDate"] <= previous_query["endDate"]:
+        raise YouTubeAnalyticsInsightError("current period must follow previous period")
     current_days = _period_days(current_query)
     previous_days = _period_days(previous_query)
     if current_days != previous_days:
         raise YouTubeAnalyticsInsightError(
             "periods must have equal inclusive date-range lengths"
         )
-    if current_query["startDate"] <= previous_query["endDate"]:
-        raise YouTubeAnalyticsInsightError("current period must follow previous period")
 
     current_totals = _metric_totals(current_snapshot)
     previous_totals = _metric_totals(previous_snapshot)
@@ -130,16 +136,16 @@ def compare_analytics_periods(
             status = "INSUFFICIENT_DATA"
         else:
             delta_value = current_value - previous_value
-            delta = format(delta_value, "f")
+            delta = _decimal_text(delta_value)
             if previous_value == 0:
                 change_pct = None
                 status = "ZERO_BASELINE"
             else:
-                change_pct = format((delta_value / abs(previous_value) * 100), "f")
+                change_pct = _decimal_text(delta_value / abs(previous_value) * 100)
                 status = "COMPARABLE"
         metrics[name] = {
-            "current_total": None if current_value is None else format(current_value, "f"),
-            "previous_total": None if previous_value is None else format(previous_value, "f"),
+            "current_total": None if current_value is None else _decimal_text(current_value),
+            "previous_total": None if previous_value is None else _decimal_text(previous_value),
             "absolute_change": delta,
             "percentage_change": change_pct,
             "status": status,
