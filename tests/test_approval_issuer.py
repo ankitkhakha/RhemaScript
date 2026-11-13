@@ -119,6 +119,26 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         self.assertEqual(len(ledger.entries), 1)
         self.assertEqual(audit.events[-1]["event"], "approval_issued")
 
+    def test_synthetic_issuer_can_issue_implementation_and_effectiveness_approvals(self):
+        for action in ("FINDING_IMPLEMENT", "FINDING_EFFECTIVENESS_ASSESS"):
+            with self.subTest(action=action):
+                issuer, signer, ledger, audit, now = self.make_trusted_issuer()
+                scope = ApprovalScope(
+                    action=action,
+                    project_id="RS-PWW-001",
+                    project_version="3.2",
+                    request_id=f"{action.lower()}-request-0001",
+                    artifact_id="EV-FND-IMPL-001",
+                    artifact_version="2.0",
+                    artifact_sha256="b" * 64,
+                    artifact_size_bytes=2345,
+                )
+                credential = issuer.request_approval(scope)
+                self.assertEqual(credential["action"], action)
+                self.assertEqual(credential["artifact_sha256"], "b" * 64)
+                self.assertEqual(len(ledger.entries), 1)
+                self.assertEqual(audit.events[-1]["event"], "approval_issued")
+
     def test_synthetic_issuer_emits_verifiable_v3_from_directory_identity(self):
         issuer, signer, ledger, audit, now = self.make_trusted_issuer()
         scope = required_publish_scopes(
