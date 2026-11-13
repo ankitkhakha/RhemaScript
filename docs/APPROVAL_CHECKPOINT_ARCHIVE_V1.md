@@ -82,3 +82,12 @@ This primitive intentionally does not restore or replace the live SQLite databas
 ## Validation and limitations
 
 Synthetic tests cover private export, wrong-key rejection, archive tampering, state mismatch reporting without database mutation, same-directory rejection, create-once behavior and minimum key length. CI success validates these code contracts only. It does not establish independent storage, external key custody, production retention, disaster-recovery readiness or production certification.
+
+
+## Atomic read-snapshot hardening — 13 November 2026
+
+A concurrency review found that integrity verification and checkpoint construction read related SQLite tables in separate autocommit SELECTs. Under WAL, a valid writer can commit between those reads, causing a mixed-time view (for example, readiness rows from before a commit and its event row from after it). This is a consistency defect, not evidence that an attacker can forge a valid HMAC.
+
+The readiness registry now holds one explicit read transaction while it reads readiness rows, activity events and append-only trigger metadata for `verify()`, and while it reads both tables for checkpoint snapshot digests. The approval-consumption store likewise holds one explicit read transaction across consumed and revoked approval tables when constructing checkpoint bytes. SQLite WAL readers retain a stable snapshot while concurrent writers commit; this behavior is documented by SQLite: https://www.sqlite.org/isolation.html.
+
+Adversarial interleaving tests arrange a real second-connection commit after the first table has been read. They assert that the in-flight verification/checkpoint snapshot remains internally consistent and that the concurrent commit is visible to a subsequent read. This does not replace independent HMAC checkpoint custody, and it does not make local SQLite storage tamper-proof.
