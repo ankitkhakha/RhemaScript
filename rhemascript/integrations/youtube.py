@@ -102,6 +102,7 @@ def _authorise_project_publish(
     approval_verifier: Any, approval_credentials: tuple[object, ...],
     approval_request_id: str,
     upload_file_path: str | None = None,
+    publish_session_registry: Any | None = None,
 ) -> tuple[str, str, tuple[Any, ...], str, dict[str, Any], Any | None]:
     """Byte-verify the final film, then consume approvals signed for its exact digest."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
@@ -168,9 +169,40 @@ def _authorise_project_publish(
             "project_version": validated.project_version, "request_id": approval_request_id,
             "artifact_binding": artifact_binding,
         } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
-        approvals = approval_verifier.verify_many_and_consume(
-            approval_credentials, expected, require_distinct_actors=True,
-        )
+        existing_session = None
+        if publish_session_registry is not None:
+            try:
+                existing_session = publish_session_registry.get_publish_session(
+                    project_id=validated.project_id,
+                    project_version=validated.project_version,
+                    request_id=approval_request_id,
+                )
+            except Exception:
+                raise ApprovalError("existing publish-session state could not be verified") from None
+        if existing_session is not None:
+            try:
+                approvals = approval_verifier.verify_many_existing_consumed(
+                    approval_credentials, expected,
+                    consumed_records=publish_session_registry.list_consumed_approval_records(),
+                    is_revoked=publish_session_registry.is_revoked,
+                    require_distinct_actors=True,
+                )
+            except Exception as exc:
+                raise ApprovalError(f"existing consumed approvals cannot authorize session resume: {exc}") from None
+            from rhemascript.interfaces.external import _publish_approval_fingerprint
+            if _publish_approval_fingerprint(approvals) != existing_session.get("approval_fingerprint"):
+                raise ApprovalError("resume approvals do not match the existing publish-session fingerprint")
+            if (
+                existing_session.get("artifact_id") != artifact_binding["artifact_id"]
+                or existing_session.get("artifact_version") != artifact_binding["artifact_version"]
+                or existing_session.get("artifact_sha256") != artifact_binding["sha256"]
+                or existing_session.get("artifact_size_bytes") != artifact_binding["size_bytes"]
+            ):
+                raise ApprovalError("resume artifact does not match the existing publish-session binding")
+        else:
+            approvals = approval_verifier.verify_many_and_consume(
+                approval_credentials, expected, require_distinct_actors=True,
+            )
         return validated.project_id, validated.project_version, approvals, approval_request_id, artifact_binding, upload_stream
     except (EvidencePackError, EvidencePackIntegrityError, ApprovalError, GateError, ValueError, TypeError, OSError) as exc:
         if upload_stream is not None:
