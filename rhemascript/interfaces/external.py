@@ -398,6 +398,15 @@ class ExternalIntegrationGateway:
                     or not first.identity_provider_id
                     or first.identity_provider_id != second.identity_provider_id
                     or first.authenticated_at is None or second.authenticated_at is None
+                    or not isinstance(first.identity_max_authentication_age_seconds, int)
+                    or isinstance(first.identity_max_authentication_age_seconds, bool)
+                    or first.identity_max_authentication_age_seconds <= 0
+                    or first.identity_max_authentication_age_seconds != second.identity_max_authentication_age_seconds
+                    or (now - first.authenticated_at).total_seconds() < -30
+                    or (now - second.authenticated_at).total_seconds() < -30
+                    or (now - first.authenticated_at).total_seconds() > first.identity_max_authentication_age_seconds
+                    or (now - second.authenticated_at).total_seconds() > second.identity_max_authentication_age_seconds
+                    or first.identity_session_id == second.identity_session_id
                     or first.action != "FINAL_ACCEPTANCE" or second.action != "PUBLISH"
                     or first.actor_id == second.actor_id
                     or first.approval_id == second.approval_id
