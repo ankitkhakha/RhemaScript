@@ -85,9 +85,17 @@ def capture_finding(
         raise RAEIFindingError("finding intake requires evidence returned by verify_artifact")
     if not isinstance(artifact_bytes, bytes):
         raise RAEIFindingError("finding artifact must be supplied as exact bytes")
-    if (hashlib.sha256(artifact_bytes).hexdigest() != evidence.sha256
+    if not registry.verify_artifacts(evidence_root):
+        raise RAEIFindingError("existing RAEI registry or retained evidence failed integrity verification")
+    current_evidence = verify_artifact(
+        evidence_root, evidence.relative_path,
+        evidence_id=evidence.evidence_id, version=evidence.version,
+    )
+    if (current_evidence.sha256 != evidence.sha256
+            or current_evidence.size_bytes != evidence.size_bytes
+            or hashlib.sha256(artifact_bytes).hexdigest() != evidence.sha256
             or len(artifact_bytes) != evidence.size_bytes):
-        raise RAEIFindingError("finding artifact bytes do not match the verified evidence version")
+        raise RAEIFindingError("finding artifact bytes do not match the current verified evidence version")
     try:
         payload = json.loads(artifact_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
