@@ -20,8 +20,8 @@ from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 
 SCHEMA = "raei-field-finding-v1"
 _FINDING_ID = re.compile(r"^RS-FND-[A-Z0-9][A-Z0-9._:-]{1,100}$")
-_VERSION = re.compile(r"^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$")
-_SUPERSEDES = re.compile(r"^RS-FND-[A-Z0-9][A-Z0-9._:-]{1,100}@[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$")
+_VERSION = re.compile(r"^[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
+_SUPERSEDES = re.compile(r"^RS-FND-[A-Z0-9][A-Z0-9._:-]{1,100}@[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 _REQUIRED_FIELDS = {
     "schema", "finding_id", "version", "project_id", "title", "raw_observation",
     "affected_workflow", "expected_behavior", "observed_behavior", "impact",
