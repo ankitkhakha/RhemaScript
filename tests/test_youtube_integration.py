@@ -766,7 +766,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["video_id"], "video-reconciled")
         self.assertEqual(status_queries, 1)
         self.assertEqual(len(put_ranges), 2)
-        self.assertEqual(put_ranges[1], f"bytes {simulated_received - len(payload[simulated_received:])}-{len(payload)-1}/{len(payload)}")
+        self.assertEqual(put_ranges[1], f"bytes 131072-{len(payload)-1}/{len(payload)}")
 
     def test_indeterminate_upload_session_creation_is_not_replayed(self):
         calls = []
