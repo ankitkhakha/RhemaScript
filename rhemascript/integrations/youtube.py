@@ -662,6 +662,22 @@ class YouTubeClient:
                 or not str(category_id).isdigit()):
             raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
+        from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+        from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
+        if not isinstance(
+            getattr(self._gateway, "publish_session_registry", None),
+            SQLitePublishSessionRegistry,
+        ):
+            raise YouTubeIntegrationError(
+                "durable SQLite publish-session registry is required before approval consumption"
+            )
+        if not isinstance(
+            getattr(self._gateway, "session_url_vault", None),
+            SQLiteEncryptedSessionUrlVault,
+        ):
+            raise YouTubeIntegrationError(
+                "encrypted SQLite session URL vault is required before approval consumption"
+            )
         project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
@@ -673,22 +689,6 @@ class YouTubeClient:
             publish_session_registry=getattr(self._gateway, "publish_session_registry", None),
         )
         with verified_video_stream as video:
-            from rhemascript.core.approval_store import SQLitePublishSessionRegistry
-            from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
-            if not isinstance(
-                getattr(self._gateway, "publish_session_registry", None),
-                SQLitePublishSessionRegistry,
-            ):
-                raise YouTubeIntegrationError(
-                    "durable SQLite publish-session registry is required before provider upload"
-                )
-            if not isinstance(
-                getattr(self._gateway, "session_url_vault", None),
-                SQLiteEncryptedSessionUrlVault,
-            ):
-                raise YouTubeIntegrationError(
-                    "encrypted SQLite session URL vault is required before provider upload"
-                )
             self._gateway_project_id = project_id
             self._gateway_source_version = project_version
             self._gateway_authority = {"verified_approvals": verified_approvals}
