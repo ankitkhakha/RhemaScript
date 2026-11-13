@@ -73,6 +73,15 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         self.assertIsNone(result["metrics"]["views"]["percentage_change"])
         self.assertEqual(result["metrics"]["views"]["absolute_change"], "5")
 
+    def test_weighted_average_duration_has_explicit_zero_denominator_status(self):
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 0, 0.0, 0, 0.0]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1, 12.0]])
+        result = compare_analytics_periods(current, previous)
+        metric = result["metrics"]["averageViewDuration"]
+        self.assertEqual(metric["status"], "ZERO_DENOMINATOR")
+        self.assertIsNone(metric["previous_value"])
+        self.assertIsNone(metric["percentage_change"])
+
     def test_no_data_is_not_converted_to_zero(self):
         previous = snapshot("2026-10-01", "2026-10-01", None)
         current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1, 12.0]])
