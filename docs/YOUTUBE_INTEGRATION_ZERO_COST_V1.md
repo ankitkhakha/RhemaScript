@@ -62,10 +62,15 @@ uploaded = client.upload_video(
     description="Approved description",
     evidence_pack=approved_project_evidence_pack,
     final_film_evidence_ref="EVIDENCE-REF-FOR-FINAL-FILM",
-    human_director_acceptance=True,
+    evidence_root="/absolute/path/to/verified/evidence",
+    approval_verifier=production_approval_verifier,
+    approval_credentials=(
+        externally_issued_final_acceptance_credential,
+        externally_issued_publish_credential,
+    ),
+    approval_request_id="owner-issued-request-id",
     tags=["RhemaScript", "Bible"],
     privacy_status="private",
-    publishing_authorisation=True,
 )
 verified = client.verify_video(uploaded["video_id"])
 ```
