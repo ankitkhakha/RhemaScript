@@ -33,11 +33,20 @@ class ApprovalVerifierTests(unittest.TestCase):
             verification_keys={"key-2026-01": self.key},
             consume_many_once=consume_many_once,
             clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {
+                    "FINAL_ACCEPTANCE": ["director"],
+                    "PUBLISH": ["publisher"],
+                },
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
 
     def credential(self, **overrides):
         payload = {
-            "schema": "RhemaScript.ApprovalCredential.v1",
+            "schema": "RhemaScript.ApprovalCredential.v3",
             "approval_id": "approval-0001",
             "issuer": "RhemaScript-Approval-Service",
             "actor_id": "director-0001",
@@ -51,6 +60,21 @@ class ApprovalVerifierTests(unittest.TestCase):
             "key_id": "key-2026-01",
         }
         payload.update(overrides)
+        if payload["schema"] == "RhemaScript.ApprovalCredential.v3":
+            action = payload["action"]
+            payload.update({
+                "artifact_id": "ART-FINAL-001",
+                "artifact_version": "7",
+                "artifact_sha256": "a" * 64,
+                "artifact_size_bytes": 987654,
+                "subject_id": "subject-" + payload["actor_id"],
+                "actor_role": "director" if action == "FINAL_ACCEPTANCE" else "publisher",
+                "authn_context": "mfa",
+                "authenticated_at": self.now.isoformat(),
+                "identity_session_id": "session-" + payload["actor_id"],
+                "identity_policy_version": "identity-policy-v1",
+                "identity_provider_id": "test-idp",
+            })
         payload["signature"] = self.private_key.sign(
             json.dumps(payload, sort_keys=True, separators=(",", ":"),
                        ensure_ascii=False, allow_nan=False).encode()
@@ -58,14 +82,15 @@ class ApprovalVerifierTests(unittest.TestCase):
         return payload
 
     def verify(self, credential):
-        return self.verifier.verify_and_consume(
-            credential, action="PUBLISH", project_id="RS-PWW-001",
-            project_version="3.2", request_id="publish-request-0001",
-        )
+        return self.verifier.verify_many_and_consume(
+            (credential,), (self.expectations("PUBLISH"),),
+        )[0]
 
     def expectations(self, action):
         return {"action": action, "project_id": "RS-PWW-001",
-                "project_version": "3.2", "request_id": "publish-request-0001"}
+                "project_version": "3.2", "request_id": "publish-request-0001",
+                "artifact_binding": {"artifact_id": "ART-FINAL-001", "artifact_version": "7",
+                                     "sha256": "a" * 64, "size_bytes": 987654}}
 
     def test_accepts_valid_signed_scoped_approval_once(self):
         result = self.verify(self.credential())
@@ -245,7 +270,7 @@ class ApprovalVerifierTests(unittest.TestCase):
     def test_accepts_v2_approval_bound_to_exact_final_film_bytes(self):
         binding = self.artifact_binding()
         token = self.credential(
-            schema="RhemaScript.ApprovalCredential.v2",
+            schema="RhemaScript.ApprovalCredential.v3",
             artifact_id=binding["artifact_id"],
             artifact_version=binding["artifact_version"],
             artifact_sha256=binding["sha256"],
@@ -262,7 +287,7 @@ class ApprovalVerifierTests(unittest.TestCase):
     def test_rejects_v2_approval_for_different_artifact_digest(self):
         binding = self.artifact_binding()
         token = self.credential(
-            schema="RhemaScript.ApprovalCredential.v2",
+            schema="RhemaScript.ApprovalCredential.v3",
             artifact_id=binding["artifact_id"],
             artifact_version=binding["artifact_version"],
             artifact_sha256="b" * 64,
@@ -279,7 +304,7 @@ class ApprovalVerifierTests(unittest.TestCase):
             {"artifact_version": binding["artifact_version"], "artifact_size_bytes": binding["size_bytes"] + 1},
         )):
             token = self.credential(
-                schema="RhemaScript.ApprovalCredential.v2",
+                schema="RhemaScript.ApprovalCredential.v3",
                 artifact_id=binding["artifact_id"],
                 artifact_version=overrides["artifact_version"],
                 artifact_sha256=binding["sha256"],
@@ -294,7 +319,7 @@ class ApprovalVerifierTests(unittest.TestCase):
     def test_rejects_v2_credential_without_exact_artifact_expectation(self):
         binding = self.artifact_binding()
         token = self.credential(
-            schema="RhemaScript.ApprovalCredential.v2",
+            schema="RhemaScript.ApprovalCredential.v3",
             artifact_id=binding["artifact_id"],
             artifact_version=binding["artifact_version"],
             artifact_sha256=binding["sha256"],
@@ -304,9 +329,9 @@ class ApprovalVerifierTests(unittest.TestCase):
             self.verify(token)
 
     def test_rejects_legacy_v1_credential_when_artifact_binding_is_required(self):
-        with self.assertRaisesRegex(ApprovalError, "schema v2"):
+        with self.assertRaisesRegex(ApprovalError, "schema v2 or v3"):
             self.verifier.verify_many_and_consume(
-                (self.credential(),), (self.v2_expectation(),),
+                (self.credential(schema="RhemaScript.ApprovalCredential.v1"),), (self.v2_expectation(),),
             )
 
 if __name__ == "__main__":
