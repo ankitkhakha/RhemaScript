@@ -68,6 +68,49 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             lease, request_fingerprint="a" * 64,
         ))
 
+    def test_repeated_revocation_is_idempotent_and_does_not_advance_fence(self):
+        lease = self.acquire(nonce="dispatch-revoke-idempotent")
+        with sqlite3.connect(self.model.path) as db:
+            before = db.execute(
+                "SELECT generation FROM resource_fences WHERE resource_id=?",
+                (lease.resource_id,),
+            ).fetchone()[0]
+        self.model.revoke("approval-publisher")
+        with sqlite3.connect(self.model.path) as db:
+            after_first = db.execute(
+                "SELECT generation FROM resource_fences WHERE resource_id=?",
+                (lease.resource_id,),
+            ).fetchone()[0]
+        self.model.revoke("approval-publisher")
+        with sqlite3.connect(self.model.path) as db:
+            after_second = db.execute(
+                "SELECT generation FROM resource_fences WHERE resource_id=?",
+                (lease.resource_id,),
+            ).fetchone()[0]
+        self.assertEqual(after_first, before + 1)
+        self.assertEqual(after_second, after_first)
+        self.assertFalse(self.model.accept_dispatch(
+            lease, request_fingerprint="a" * 64,
+        ))
+
+    def test_read_only_dispatch_state_lookup_supports_lost_response_recovery(self):
+        lease = self.acquire(nonce="dispatch-state-inspection")
+        self.assertIsNone(self.model.get_dispatch_state("unknown-nonce"))
+        issued = self.model.get_dispatch_state(lease.dispatch_nonce)
+        self.assertEqual(issued["lease_id"], lease.lease_id)
+        self.assertEqual(issued["lease_state"], "ISSUED")
+        self.assertIsNone(issued["outcome_state"])
+        self.assertTrue(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
+        self.assertTrue(self.model.mark_indeterminate(
+            lease.lease_id, reason_code="RESPONSE_LOST_AFTER_SEND",
+        ))
+        indeterminate = self.model.get_dispatch_state(lease.dispatch_nonce)
+        self.assertEqual(indeterminate["lease_state"], "INDETERMINATE")
+        self.assertEqual(indeterminate["outcome_state"], "INDETERMINATE")
+        self.assertEqual(indeterminate["reason_code"], "RESPONSE_LOST_AFTER_SEND")
+        # Inspection is read-only and cannot make an ambiguous dispatch retryable.
+        self.assertFalse(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
+
     def test_revoked_approval_cannot_acquire_future_lease(self):
         self.model.revoke("approval-director")
         with self.assertRaisesRegex(LeaseStateError, "revoked approval"):
