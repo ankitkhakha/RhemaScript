@@ -78,6 +78,12 @@ def _open_parent(root: str | os.PathLike[str], relative_path: str) -> tuple[int,
                 raise YouTubeAnalyticsArtifactStoreError("artifact parent is not a directory")
             parent_fd = child_fd
         return parent_fd, rel.parts[-1], opened
+    except OSError:
+        for fd in reversed(opened):
+            os.close(fd)
+        raise YouTubeAnalyticsArtifactStoreError(
+            "artifact parent is unavailable or contains a symlink"
+        ) from None
     except Exception:
         for fd in reversed(opened):
             os.close(fd)
