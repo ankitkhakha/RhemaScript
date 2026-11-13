@@ -207,9 +207,21 @@ class ApprovalVerifierTests(unittest.TestCase):
                 )
 
         registry = Registry()
+        class SnapshotStore:
+            def __init__(inner):
+                inner.entries = set()
+
+            def consume_many_once(inner, entries):
+                inner.entries.update((item.approval_id, item.nonce) for item in entries)
+                return True
+
+            def read_consumption_state(inner, approval_id, nonce):
+                return ((approval_id, nonce) in inner.entries, False)
+
+        store = SnapshotStore()
         verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service", key_registry=registry,
-            key_registry_environment="production", consume_many_once=lambda entries: True,
+            key_registry_environment="production", consume_many_once=store.consume_many_once,
             clock=lambda: self.now,
             identity_policies={"identity-policy-v1": {
                 "provider_id": "test-idp",
@@ -520,6 +532,25 @@ class ApprovalVerifierTests(unittest.TestCase):
             (self.credential(),), (self.expectations("PUBLISH"),),
         )[0]
         with self.assertRaisesRegex(ApprovalError, "consistent consumption/revocation snapshot"):
+            verifier.revalidate_consumed_approval(approval)
+
+    def test_plain_callback_without_durable_snapshot_fails_closed_at_write_boundary(self):
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service",
+            verification_keys={"key-2026-01": self.key},
+            consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {"PUBLISH": ["publisher"]},
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
+        )
+        approval = verifier.verify_many_and_consume(
+            (self.credential(),), (self.expectations("PUBLISH"),),
+        )[0]
+        with self.assertRaisesRegex(ApprovalError, "durable approval consumption/revocation snapshot is required"):
             verifier.revalidate_consumed_approval(approval)
 
     def test_successfully_consumed_approval_has_consumed_capability(self):
