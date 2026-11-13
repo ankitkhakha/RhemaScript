@@ -154,27 +154,30 @@ class SQLiteLeaseStateModel:
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
-            db.execute(
+            inserted = db.execute(
                 "INSERT OR IGNORE INTO revoked_approvals VALUES(?,?)",
                 (approval_id, datetime.now(timezone.utc).isoformat()),
-            )
-            resources = db.execute(
-                """SELECT DISTINCT l.resource_id FROM leases l
-                   JOIN lease_approvals a ON a.lease_id=l.lease_id
-                   WHERE a.approval_id=?""", (approval_id,),
-            ).fetchall()
-            for (resource_id,) in resources:
+            ).rowcount
+            # A repeated revoke is an idempotent acknowledgement, not a new
+            # fencing event. Only the first transition advances generations.
+            if inserted:
+                resources = db.execute(
+                    """SELECT DISTINCT l.resource_id FROM leases l
+                       JOIN lease_approvals a ON a.lease_id=l.lease_id
+                       WHERE a.approval_id=?""", (approval_id,),
+                ).fetchall()
+                for (resource_id,) in resources:
+                    db.execute(
+                        """INSERT INTO resource_fences VALUES(?,1)
+                           ON CONFLICT(resource_id) DO UPDATE
+                           SET generation=generation+1""", (resource_id,),
+                    )
                 db.execute(
-                    """INSERT INTO resource_fences VALUES(?,1)
-                       ON CONFLICT(resource_id) DO UPDATE
-                       SET generation=generation+1""", (resource_id,),
+                    """UPDATE leases SET state='REVOKED'
+                       WHERE lease_id IN (
+                         SELECT lease_id FROM lease_approvals WHERE approval_id=?
+                       )""", (approval_id,),
                 )
-            db.execute(
-                """UPDATE leases SET state='REVOKED'
-                   WHERE lease_id IN (
-                     SELECT lease_id FROM lease_approvals WHERE approval_id=?
-                   )""", (approval_id,),
-            )
             db.execute("COMMIT")
         except sqlite3.Error:
             if db.in_transaction:
