@@ -780,6 +780,8 @@ class YouTubeIntegrationTests(unittest.TestCase):
             {**base, "filters": "country==U\x00S"},
             {**base, "filters": "country==U\x1fS"},
             {**base, "filters": "country==U\x7fS"},
+            {**base, "filters": "country==U\x85S"},
+            {**base, "filters": "country==U\x9fS"},
             {**base, "alt": "csv"},
             {**base, "ids": "channel==OTHER"},
             {**base, "startDate": "2026-2-1"},
