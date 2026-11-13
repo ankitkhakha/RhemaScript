@@ -350,7 +350,7 @@ def list_findings(
                 or not isinstance(binding, dict)
                 or auth.get("artifact_sha256") != binding.get("sha256")
                 or auth.get("artifact_size_bytes") != binding.get("size_bytes")
-                or not isinstance(refs, list) or len(refs) != 1
+                or not isinstance(refs, list) or len(refs) != 1 or not isinstance(refs[0], dict)
                 or refs[0].get("evidence_id") != binding.get("evidence_id")
                 or refs[0].get("version") != binding.get("evidence_version")
                 or refs[0].get("sha256") != binding.get("sha256")
