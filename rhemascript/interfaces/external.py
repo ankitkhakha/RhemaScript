@@ -12,12 +12,89 @@ from urllib.parse import unquote, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 import json
 import math
+import re
 import threading
+import uuid
 from types import MappingProxyType
 
 
 class ExternalIntegrationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
+
+def _header_value(headers: dict[str, str], name: str) -> str | None:
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == name.lower():
+            return value if isinstance(value, str) else None
+    return None
+
+
+def _publish_approval_fingerprint(approvals: tuple[Any, ...]) -> str:
+    fields = (
+        "approval_id", "nonce", "issuer", "actor_id", "action", "project_id",
+        "project_version", "request_id", "issued_at", "expires_at", "key_id",
+        "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes",
+        "credential_schema", "signature", "subject_id", "actor_role", "authn_context",
+        "authenticated_at", "identity_session_id", "identity_policy_version",
+        "identity_provider_id", "identity_max_authentication_age_seconds",
+        "identity_clock_skew_seconds",
+    )
+    records = []
+    for approval in approvals:
+        record = {}
+        for field in fields:
+            value = getattr(approval, field, None)
+            record[field] = value.isoformat() if hasattr(value, "isoformat") else value
+        records.append(record)
+    records.sort(key=lambda item: (str(item["action"]), str(item["approval_id"])))
+    canonical = json.dumps(
+        records, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
+
+
+def _parse_upload_content_range(headers: dict[str, str], body: bytes) -> tuple[str, int | None, int | None, int]:
+    value = _header_value(headers, "Content-Range")
+    if not isinstance(value, str):
+        raise ExternalIntegrationError("upload chunk requires Content-Range")
+    status_match = re.fullmatch(r"bytes \*/(\d+)", value.strip())
+    if status_match:
+        total = int(status_match.group(1))
+        if body:
+            raise ExternalIntegrationError("upload status reconciliation must not contain a body")
+        return "RECONCILE", None, None, total
+    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", value.strip())
+    if match is None:
+        raise ExternalIntegrationError("upload chunk Content-Range is invalid")
+    start, end, total = (int(part) for part in match.groups())
+    if (start < 0 or end < start or total <= end or len(body) != end - start + 1):
+        raise ExternalIntegrationError("upload chunk byte range does not match its body")
+    content_length = _header_value(headers, "Content-Length")
+    if content_length is not None and content_length != str(len(body)):
+        raise ExternalIntegrationError("upload chunk Content-Length does not match its body")
+    return "CHUNK", start, end, total
+
+
+def _trusted_upload_session_url(location: object, spec: Mapping[str, Any]) -> bool:
+    if not isinstance(location, str) or not location:
+        return False
+    try:
+        parsed = urlparse(location)
+        path = _safe_decoded_path(parsed.path)
+        prefix = _safe_decoded_path(spec.get("path_prefix"))
+    except (ValueError, ExternalIntegrationError):
+        return False
+    hosts = {host.rstrip(".").lower() for host in spec.get("hosts", ())}
+    root = prefix.rstrip("/") or "/"
+    return (
+        parsed.scheme.lower() == "https" and parsed.hostname is not None
+        and parsed.hostname.rstrip(".").lower() in hosts
+        and parsed.port in (None, 443) and not parsed.username and not parsed.password
+        and not parsed.fragment
+        and (path == root or path.startswith(root.rstrip("/") + "/"))
+    )
 
 
 def _safe_decoded_path(path: str) -> str:
@@ -145,6 +222,7 @@ class ExternalIntegrationGateway:
                  transport: Transport | None = None,
                  credential_resolver: Callable[[str], dict[str, str]] | None = None,
                  audit_sink: Callable[[dict[str, Any]], None] | None = None,
+                 publish_session_registry: Any | None = None,
                  enabled: bool = False):
         configured_bindings = {}
         for binding in bindings:
@@ -177,6 +255,8 @@ class ExternalIntegrationGateway:
         self.transport = transport or UrllibTransport()
         self.credential_resolver = credential_resolver or (lambda _provider: {})
         self.audit_sink = audit_sink
+        self.publish_session_registry = publish_session_registry
+        self._session_owner_id = uuid.uuid4().hex
         self.enabled = enabled
         self._lock = threading.Lock()
         self._responses = {}
