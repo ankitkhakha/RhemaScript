@@ -32,6 +32,9 @@ YOUTUBE_INTERFACE_ID = "IF-18"
 API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3/videos"
 ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2/reports"
+
+# Bound local calendar-coverage/comparison work while covering the platform history.
+MAX_ANALYTICS_DATE_RANGE_DAYS = 10_000
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REQUIRED_SCOPES = (
     "https://www.googleapis.com/auth/youtube.upload",
@@ -82,6 +85,7 @@ def _validate_analytics_request(params: dict[str, Any]) -> tuple[list[str], list
     dimensions = _analytics_identifiers(params.get("dimensions", ""), "dimensions", required=False)
     if params.get("ids") != "channel==MINE":
         raise YouTubeIntegrationError("Analytics channel identity must be channel==MINE")
+    parsed_dates: dict[str, date] = {}
     for field in ("startDate", "endDate"):
         value = params.get(field)
         if not isinstance(value, str):
@@ -92,8 +96,14 @@ def _validate_analytics_request(params: dict[str, Any]) -> tuple[list[str], list
             raise YouTubeIntegrationError(f"{field} must be an ISO date") from None
         if parsed.isoformat() != value:
             raise YouTubeIntegrationError(f"{field} must use YYYY-MM-DD format")
-    if params["endDate"] < params["startDate"]:
+        parsed_dates[field] = parsed
+    if parsed_dates["endDate"] < parsed_dates["startDate"]:
         raise YouTubeIntegrationError("endDate cannot precede startDate")
+    inclusive_days = (parsed_dates["endDate"] - parsed_dates["startDate"]).days + 1
+    if inclusive_days > MAX_ANALYTICS_DATE_RANGE_DAYS:
+        raise YouTubeIntegrationError(
+            f"Analytics date range cannot exceed {MAX_ANALYTICS_DATE_RANGE_DAYS} inclusive days"
+        )
     filters = params.get("filters")
     if filters is not None:
         if not isinstance(filters, str) or not filters or len(filters) > 500:

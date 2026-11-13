@@ -9,6 +9,7 @@ This stage creates deterministic descriptive comparisons from two already-built,
 Both inputs must pass the V1 snapshot verifier. They must have:
 - The same channel selector, metrics, dimensions, and filters.
 - Equal inclusive date-range lengths.
+- Each inclusive date range is capped at 10,000 days to bound local diagnostic work.
 - Non-overlapping chronological periods, with the current period strictly after the previous period.
 
 The comparison binds both source snapshot digests. A changed or unverified input is rejected.

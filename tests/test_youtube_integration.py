@@ -745,6 +745,22 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
 
+    def test_analytics_date_range_is_bounded_before_diagnostic_enumeration(self):
+        from rhemascript.integrations.youtube import (
+            MAX_ANALYTICS_DATE_RANGE_DAYS,
+            _validate_analytics_request,
+        )
+
+        base = {
+            "ids": "channel==MINE", "startDate": "2000-01-01",
+            "endDate": "2027-05-18", "metrics": "views", "dimensions": "day",
+        }
+        self.assertEqual(MAX_ANALYTICS_DATE_RANGE_DAYS, 10_000)
+        _validate_analytics_request(base)  # inclusive boundary is accepted
+        oversized = {**base, "endDate": "2027-05-19"}
+        with self.assertRaisesRegex(YouTubeIntegrationError, "cannot exceed 10000 inclusive days"):
+            _validate_analytics_request(oversized)
+
     def test_upload_rejects_invalid_tags_and_category_before_network(self):
         client = YouTubeClient(
             self.config(),

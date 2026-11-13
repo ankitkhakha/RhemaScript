@@ -7,7 +7,7 @@ This contract hardens the response boundary for the channel-scoped YouTube Analy
 ## Request validation
 
 - The query is restricted to the authenticated channel selector `channel==MINE`.
-- Dates must be canonical `YYYY-MM-DD` values, and the end date cannot precede the start date.
+- Dates must be canonical `YYYY-MM-DD` values, and the end date cannot precede the start date. The inclusive range is capped at 10,000 days to bound local calendar-coverage and comparison work.
 - Metrics must contain at least one unique identifier. Dimensions may be omitted; when supplied, identifiers must be unique.
 - Identifiers are syntax-checked and cannot contain query delimiters, whitespace, or injected parameters.
 - Filters are limited to semicolon-separated `dimension==value` clauses. Empty clauses, malformed operators, control characters and oversized values are rejected.
