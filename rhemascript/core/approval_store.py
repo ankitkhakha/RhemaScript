@@ -118,7 +118,8 @@ class SQLiteApprovalConsumptionStore:
                     artifact_sha256 TEXT,
                     artifact_size_bytes INTEGER,
                     credential_schema TEXT,
-                    signature TEXT
+                    signature TEXT,
+                    identity_claims_json TEXT
                 )
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(consumed_approvals)")}
@@ -126,6 +127,7 @@ class SQLiteApprovalConsumptionStore:
                 ("artifact_id", "TEXT"), ("artifact_version", "TEXT"),
                 ("artifact_sha256", "TEXT"), ("artifact_size_bytes", "INTEGER"),
                 ("credential_schema", "TEXT"), ("signature", "TEXT"),
+                ("identity_claims_json", "TEXT"),
             ):
                 if name not in columns:
                     db.execute(f"ALTER TABLE consumed_approvals ADD COLUMN {name} {sql_type}")
@@ -195,14 +197,29 @@ class SQLiteApprovalConsumptionStore:
                 if (credential_schema not in {
                     "RhemaScript.ApprovalCredential.v1",
                     "RhemaScript.ApprovalCredential.v2",
+                    "RhemaScript.ApprovalCredential.v3",
                 } or not isinstance(signature, str)
                         or len(signature) != 128
                         or any(ch not in "0123456789abcdef" for ch in signature)):
                     return False
+            identity_values = (
+                item.subject_id, item.actor_role, item.authn_context,
+                self._utc(item.authenticated_at) if item.authenticated_at is not None else None,
+                item.identity_session_id, item.identity_policy_version, item.identity_provider_id,
+            )
+            if credential_schema == "RhemaScript.ApprovalCredential.v3":
+                if any(not isinstance(value, str) or not value.strip() for value in identity_values):
+                    return False
+            elif any(value is not None for value in identity_values):
+                return False
+            identity_json = json.dumps(dict(zip((
+                "subject_id", "actor_role", "authn_context", "authenticated_at",
+                "identity_session_id", "identity_policy_version", "identity_provider_id",
+            ), identity_values)), sort_keys=True, separators=(",", ":"))
             normalized.append((
                 item.approval_id, item.nonce, item.issuer, item.actor_id, item.action,
                 item.project_id, item.project_version, item.request_id, issued_at,
-                expires_at, item.key_id, *artifact_values, credential_schema, signature,
+                expires_at, item.key_id, *artifact_values, credential_schema, signature, identity_json,
             ))
         if (len({item[0] for item in normalized}) != len(normalized)
                 or len({item[1] for item in normalized}) != len(normalized)):
@@ -229,8 +246,8 @@ class SQLiteApprovalConsumptionStore:
                     approval_id, nonce, issuer, actor_id, action, project_id,
                     project_version, request_id, issued_at, expires_at, key_id,
                     consumed_at, artifact_id, artifact_version, artifact_sha256,
-                    artifact_size_bytes, credential_schema, signature
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    artifact_size_bytes, credential_schema, signature, identity_claims_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [( *entry[:11], consumed_at, *entry[11:] ) for entry in normalized],
             )
             db.execute("COMMIT")
@@ -281,14 +298,22 @@ class SQLiteApprovalConsumptionStore:
             "approval_id", "nonce", "issuer", "actor_id", "action", "project_id",
             "project_version", "request_id", "issued_at", "expires_at", "key_id",
             "consumed_at", "artifact_id", "artifact_version", "artifact_sha256",
-            "artifact_size_bytes", "credential_schema", "signature",
+            "artifact_size_bytes", "credential_schema", "signature", "identity_claims_json",
         )
         db = self._connect()
         try:
             rows = db.execute(
                 "SELECT " + ", ".join(columns) + " FROM consumed_approvals ORDER BY consumed_at, approval_id"
             ).fetchall()
-            return [dict(zip(columns, row)) for row in rows]
+            records = [dict(zip(columns, row)) for row in rows]
+            for record in records:
+                try:
+                    identity = json.loads(record.pop("identity_claims_json") or "{}")
+                    if isinstance(identity, dict):
+                        record.update(identity)
+                except (TypeError, json.JSONDecodeError):
+                    raise ApprovalStoreError("persisted identity assurance claims are malformed") from None
+            return records
         except sqlite3.Error:
             raise ApprovalStoreError("persisted approval records could not be read") from None
         finally:
@@ -325,7 +350,8 @@ class SQLiteApprovalConsumptionStore:
                 """SELECT approval_id, nonce, issuer, actor_id, action, project_id,
                           project_version, request_id, issued_at, expires_at, key_id,
                           consumed_at, artifact_id, artifact_version, artifact_sha256,
-                          artifact_size_bytes, credential_schema, signature
+                          artifact_size_bytes, credential_schema, signature,
+                          identity_claims_json
                    FROM consumed_approvals ORDER BY approval_id"""
             ).fetchall()
             revoked = db.execute(
