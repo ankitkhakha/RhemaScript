@@ -104,6 +104,21 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         )
         return issuer, signer, ledger, audit, now
 
+    def test_synthetic_issuer_can_issue_policy_authorized_finding_submit_credential(self):
+        issuer, signer, ledger, audit, now = self.make_trusted_issuer()
+        scope = ApprovalScope(
+            action="FINDING_SUBMIT", project_id="RS-PWW-001",
+            project_version="3.2", request_id="finding-submit-request-0001",
+            artifact_id="EV-FND-OBS-001", artifact_version="1.0",
+            artifact_sha256="a" * 64, artifact_size_bytes=1234,
+        )
+        credential = issuer.request_approval(scope)
+        self.assertEqual(credential["action"], "FINDING_SUBMIT")
+        self.assertEqual(credential["schema"], "RhemaScript.ApprovalCredential.v3")
+        self.assertEqual(credential["artifact_sha256"], "a" * 64)
+        self.assertEqual(len(ledger.entries), 1)
+        self.assertEqual(audit.events[-1]["event"], "approval_issued")
+
     def test_synthetic_issuer_emits_verifiable_v3_from_directory_identity(self):
         issuer, signer, ledger, audit, now = self.make_trusted_issuer()
         scope = required_publish_scopes(
