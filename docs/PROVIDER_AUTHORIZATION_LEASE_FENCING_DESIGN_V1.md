@@ -192,3 +192,8 @@ A durable checkpoint is JSON-serialized: SQLite row tuples are represented as JS
 ### Transaction and concurrent checkpoint fault-injection coverage
 
 Additional synthetic tests force the event-history insert to fail during lease acquisition and verify that the lease row, resource-fence advance and event append all roll back together. Concurrent checkpoint creation is also exercised with four simultaneous callers; the separate local anchor serializes sequence advancement and each committed checkpoint receives a distinct monotonically increasing sequence. These tests establish SQLite-local transaction behavior only, not a distributed transaction across an independent audit service or production lease coordinator.
+
+
+### Event-history high-water anti-rollback
+
+The recovery anchor now retains both the resource-generation high-water mark and the event-history sequence high-water mark. This matters because lifecycle events such as accepted-dispatch outcome transitions can advance the event chain without advancing a resource generation. A delayed or rolled-back checkpoint with an older event sequence is therefore rejected even when its resource generation equals the previously anchored generation. A regression test deletes a later event after anchoring while leaving the generation unchanged and confirms that a new checkpoint fails closed. The anchor remains a second local SQLite file and therefore does not protect against an attacker able to rewrite both local databases; production still requires an independently administered monotonic anchor and external audit evidence.
