@@ -122,7 +122,11 @@ class ReadinessRunRegistryTests(unittest.TestCase):
             self.registry.checkpoint(b"short")
 
     def test_readiness_record_also_appends_exact_evidence_event(self):
-        self.registry.record("RUN-1", self.report, self.evidence)
+        evidence = ({
+            "evidence_id": "ART-1", "relative_path": "proof.txt", "version": "v1",
+            "sha256": "a" * 64, "size_bytes": 12,
+        },)
+        self.registry.record("RUN-1", self.report, evidence)
         events = self.registry.list_activity_events()
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["event_type"], "READINESS_RUN_RECORDED")
