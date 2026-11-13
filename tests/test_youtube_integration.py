@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport, ExternalIntegrationError
 from rhemascript.integrations.youtube import (
@@ -371,10 +372,13 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as registry_directory:
             os.chmod(registry_directory, 0o700)
             registry = SQLitePublishSessionRegistry(Path(registry_directory) / "approval.sqlite3")
+            vault = SQLiteEncryptedSessionUrlVault(
+                Path(registry_directory) / "session-url-vault.sqlite3", bytes(range(32)),
+            )
             gateway = ExternalIntegrationGateway(
                 (youtube_provider_binding(),), transport=transport,
                 credential_resolver=lambda provider: {}, audit_sink=events.append,
-                publish_session_registry=registry, enabled=True,
+                publish_session_registry=registry, session_url_vault=vault, enabled=True,
             )
             client = YouTubeClient(self.config(), gateway=gateway)
             with tempfile.NamedTemporaryFile() as video:
