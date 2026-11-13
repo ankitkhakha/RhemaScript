@@ -127,6 +127,39 @@ class CompositeCheckpointTests(unittest.TestCase):
                 manifest_key=self.manifest_key,
             )
 
+    def test_manifest_rejects_symlink_substitution(self):
+        retained = self.manifest.with_name("retained-manifest.json")
+        self.manifest.rename(retained)
+        self.manifest.symlink_to(retained)
+        with self.assertRaisesRegex(CompositeCheckpointError, "cannot be opened safely"):
+            self.verify()
+
+    def test_capture_aborts_if_readiness_store_changes_mid_capture(self):
+        original_checkpoint = self.readiness_registry.checkpoint
+        calls = {"count": 0}
+
+        def changing_checkpoint(key):
+            result = original_checkpoint(key)
+            calls["count"] += 1
+            if calls["count"] == 1:
+                self.readiness_registry.append_activity_event(
+                    "FINDING:RS-FND-901@1.0", "FINDING_CAPTURED",
+                    {"finding_id": "RS-FND-901", "status": "SUBMITTED"},
+                )
+            return result
+
+        with unittest.mock.patch.object(
+            self.readiness_registry, "checkpoint", side_effect=changing_checkpoint,
+        ):
+            with self.assertRaisesRegex(CompositeCheckpointError, "changed during"):
+                export_composite_checkpoint_manifest(
+                    self.approval_store, self.readiness_registry, self.archive,
+                    self.manifest_dir / "should-not-exist.json",
+                    approval_key=self.approval_key, readiness_key=self.readiness_key,
+                    archive_key=self.archive_key, manifest_key=self.manifest_key,
+                )
+        self.assertFalse((self.manifest_dir / "should-not-exist.json").exists())
+
     def test_independent_anchor_tracks_composite_manifest_digest(self):
         anchor = FakeAnchor()
         record = advance_composite_checkpoint_anchor(
@@ -141,6 +174,24 @@ class CompositeCheckpointTests(unittest.TestCase):
             ),
             record,
         )
+
+    def test_anchor_rejects_future_dated_record(self):
+        from dataclasses import replace
+
+        anchor = FakeAnchor()
+        advance_composite_checkpoint_anchor(
+            self.manifest, manifest_key=self.manifest_key, anchor=anchor,
+            expected_generation=0, now=anchor.now,
+        )
+        anchor.record = replace(
+            anchor.record,
+            recorded_at=anchor.now.replace(second=31),
+        )
+        with self.assertRaisesRegex(CompositeCheckpointError, "record is future-dated"):
+            verify_composite_checkpoint_against_anchor(
+                self.manifest, manifest_key=self.manifest_key,
+                anchor=anchor, now=anchor.now,
+            )
 
     def test_anchor_rejects_modified_or_stale_manifest(self):
         anchor = FakeAnchor()
