@@ -525,6 +525,73 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             )
         self.assertFalse(any(event["event_type"] == "FINDING_REOPENED" for event in self.registry.list_activity_events()))
 
+    def test_reopening_rejects_two_reviewers_sharing_one_identity_session(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        evidence = verify_artifact(
+            self.evidence_root, "effectiveness.json",
+            evidence_id="EV-FND-EFFECTIVENESS-001", version="1.0",
+        )
+        request_id = f"request-FINDING-REOPEN-SHARED-SESSION-{self.finding_id}"
+        credentials = (
+            self._credential(
+                "FINDING_REOPEN_REVIEW", evidence,
+                subject_id="subject-reopen-reviewer-shared-001",
+                actor_id="actor-reopen-reviewer-shared-001",
+                session_id="session-reopen-shared",
+                request_id=request_id,
+            ),
+            self._credential(
+                "FINDING_REOPEN_CONFIRM", evidence,
+                subject_id="subject-reopen-approver-shared-002",
+                actor_id="actor-reopen-approver-shared-002",
+                session_id="session-reopen-shared",
+                request_id=request_id,
+            ),
+        )
+        with self.assertRaisesRegex(Exception, "distinct authenticated subjects and sessions"):
+            record_finding_reopening(
+                self.registry, self.verifier, credentials,
+                finding_id=self.finding_id, finding_version=self.finding_version,
+                new_finding_version="1.1", project_id=self.project_id,
+                project_version=self.project_version, request_id=request_id,
+                rationale="Reject two reviewers authenticated in one shared session.",
+                evidence_root=str(self.evidence_root), evidence=evidence,
+            )
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_REOPENED"
+            for event in self.registry.list_activity_events()
+        ))
+
+    def test_reopening_approval_replay_does_not_append_a_second_event(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        self._record_closure()
+        first = self._record_reopening()
+        before = [
+            event for event in self.registry.list_activity_events()
+            if event["event_type"] == "FINDING_REOPENED"
+        ]
+        self.assertEqual(len(before), 1)
+        with self.assertRaises(Exception):
+            self._record_reopening()
+        after = [
+            event for event in self.registry.list_activity_events()
+            if event["event_type"] == "FINDING_REOPENED"
+        ]
+        self.assertEqual(len(after), 1)
+        self.assertEqual(after[0]["event_id"], first["event_id"])
+        self.assertTrue(self.registry.verify())
+
     def _inherit_closed_knowledge(self):
         events = {
             event["event_type"]: event
