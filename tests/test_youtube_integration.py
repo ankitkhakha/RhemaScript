@@ -172,19 +172,28 @@ class YouTubeIntegrationTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         private_key = Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
         public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
-        consumed = set()
+        class SyntheticSnapshotConsumptionStore:
+            """In-memory test double; never a production approval ledger."""
+            def __init__(self):
+                self.consumed = set()
 
-        def consume_once(entries):
-            identities = [(item.approval_id, item.nonce) for item in entries]
-            if len(set(identities)) != len(identities) or any(item in consumed for item in identities):
-                return False
-            consumed.update(identities)
-            return True
+            def consume_many_once(self, entries):
+                identities = [(item.approval_id, item.nonce) for item in entries]
+                if len(set(identities)) != len(identities) or any(
+                    item in self.consumed for item in identities
+                ):
+                    return False
+                self.consumed.update(identities)
+                return True
 
+            def read_consumption_state(self, approval_id, nonce):
+                return ((approval_id, nonce) in self.consumed, False)
+
+        synthetic_store = SyntheticSnapshotConsumptionStore()
         approval_verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
             verification_keys={"key-2026-01": public_key},
-            consume_many_once=consume_once,
+            consume_many_once=synthetic_store.consume_many_once,
             clock=lambda: now,
             identity_policies={"identity-policy-v1": {
                 "provider_id": "test-idp",
