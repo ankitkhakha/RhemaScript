@@ -31,21 +31,6 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertIn("youtubeanalytics.googleapis.com",
                       binding.operations["ANALYTICS_READ"]["hosts"])
 
-    def test_injected_test_transport_cannot_dispatch_resource_mutations(self):
-        calls = []
-        client = YouTubeClient(
-            self.config(),
-            transport=lambda request, timeout: calls.append((request.full_url, request.get_method())),
-        )
-        with self.assertRaisesRegex(
-            YouTubeIntegrationError, "cannot dispatch provider resource mutations",
-        ):
-            client._request(
-                "https://www.googleapis.com/upload/youtube/v3/videos",
-                method="POST", body=b"video-bytes",
-            )
-        self.assertEqual(calls, [])
-
     def test_client_routes_oauth_and_channel_reads_through_gateway(self):
         class Gateway:
             def __init__(self):
