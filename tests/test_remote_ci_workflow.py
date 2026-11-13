@@ -11,16 +11,16 @@ class RemoteCIWorkflowTests(unittest.TestCase):
         cls.workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
 
     def test_push_event_is_enabled(self):
-        self.assertRegex(self.workflow, r"(?m)^  push:\\s*$")
+        self.assertRegex(self.workflow, r"(?m)^  push:\s*$")
 
     def test_pull_request_event_is_enabled(self):
-        self.assertRegex(self.workflow, r"(?m)^  pull_request:\\s*$")
+        self.assertRegex(self.workflow, r"(?m)^  pull_request:\s*$")
 
     def test_manual_dispatch_is_enabled(self):
-        self.assertRegex(self.workflow, r"(?m)^  workflow_dispatch:\\s*$")
+        self.assertRegex(self.workflow, r"(?m)^  workflow_dispatch:\s*$")
 
     def test_least_privilege_permissions(self):
-        self.assertRegex(self.workflow, r"(?ms)^permissions:\\s*\\n\\s+contents:\\s*read\\s*$")
+        self.assertRegex(self.workflow, r"(?ms)^permissions:\s*\n\s+contents:\s*read\s*$")
 
     def test_if18_validation_harness_is_invoked(self):
         self.assertIn(
@@ -32,7 +32,7 @@ class RemoteCIWorkflowTests(unittest.TestCase):
         self.assertRegex(self.workflow, r"(?m)^    timeout-minutes: 10$")
 
     def test_test_job_waits_for_generated_lock(self):
-        self.assertRegex(self.workflow, r"(?ms)^  test:\\n    needs: generate-lock-candidate$")
+        self.assertRegex(self.workflow, r"(?ms)^  test:\n    needs: generate-lock-candidate$")
 
     def test_clean_environment_uses_hash_locked_dependencies(self):
         self.assertIn("--require-hashes -r lock-candidate/requirements-ci.lock", self.workflow)
