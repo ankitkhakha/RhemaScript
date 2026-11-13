@@ -56,11 +56,11 @@ ETHICS_CASES = [
 BIBLICAL_WISDOM_UNITS = [
     (
         "BWSF-01", "Solomon: a listening heart and discerning judgement",
-        ["1 Kings 3:5-15", "1 Kings 1-4", "2 Chronicles 1:7-12", "Proverbs 2:1-11"],
-        ["Explain the listening-heart request in its kingship and justice context",
-         "Distinguish discernment for service from knowledge sought for status",
-         "Consider Solomon's later failures when evaluating his example"],
-        "Prepare a contextual study of Solomon's request; apply listening, evidence discrimination and justice to a RhemaScript decision without treating the narrative as a software manual.",
+        ["1 Kings 3:1-28", "1 Kings 1-4", "2 Chronicles 1:3-13", "Proverbs 2:1-11"],
+        ["Explain the listening-heart request in its kingship, worship and justice context",
+         "Connect the following judgement narrative with discernment and protection of the vulnerable",
+         "Distinguish discernment for service from knowledge sought for status and consider Solomon's later failures"],
+        "Prepare a contextual study of Solomon's request and the following justice case; apply listening, evidence discrimination and justice to a RhemaScript decision without treating the narrative as a software manual.",
     ),
     (
         "BWSF-02", "Bezalel, Oholiab and God-enabled craftsmanship",
