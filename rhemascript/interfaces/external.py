@@ -386,7 +386,19 @@ class ExternalIntegrationGateway:
                 first.artifact_id, first.artifact_version,
                 first.artifact_sha256, first.artifact_size_bytes,
             )
-            if (first.action != "FINAL_ACCEPTANCE" or second.action != "PUBLISH"
+            if (first.credential_schema != "RhemaScript.ApprovalCredential.v3"
+                    or second.credential_schema != "RhemaScript.ApprovalCredential.v3"
+                    or not first.subject_id or not second.subject_id
+                    or first.subject_id == second.subject_id
+                    or not first.actor_role or not second.actor_role
+                    or not first.authn_context or not second.authn_context
+                    or not first.identity_session_id or not second.identity_session_id
+                    or not first.identity_policy_version
+                    or first.identity_policy_version != second.identity_policy_version
+                    or not first.identity_provider_id
+                    or first.identity_provider_id != second.identity_provider_id
+                    or first.authenticated_at is None or second.authenticated_at is None
+                    or first.action != "FINAL_ACCEPTANCE" or second.action != "PUBLISH"
                     or first.actor_id == second.actor_id
                     or first.approval_id == second.approval_id
                     or first.issuer != second.issuer
