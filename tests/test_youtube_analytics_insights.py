@@ -19,7 +19,7 @@ HEADERS = [
 ]
 
 
-def snapshot(start, end, rows, *, metrics="views,estimatedMinutesWatched,subscribersGained",
+def snapshot(start, end, rows, *, metrics="views,estimatedMinutesWatched,averageViewDuration,subscribersGained",
              dimensions="day", filters=None):
     params = {
         "ids": "channel==MINE", "startDate": start, "endDate": end,
