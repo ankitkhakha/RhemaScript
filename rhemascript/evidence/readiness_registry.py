@@ -245,6 +245,7 @@ class ReadinessRunRegistry:
             }
             for item in payload["byte_verified_evidence"]
             if isinstance(item, dict)
+            and {"evidence_id", "relative_path", "version", "sha256", "size_bytes"}.issubset(item)
         ]
         project_id = payload["report"].get("project_id")
         if not isinstance(project_id, str) or not project_id.strip():
