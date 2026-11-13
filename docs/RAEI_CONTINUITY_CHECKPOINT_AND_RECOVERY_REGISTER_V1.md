@@ -1,0 +1,177 @@
+# RAEI Continuity, Priority and Recovery Register V1.0
+
+**Status:** Controlled operating register; documentation baseline on PR #62 feature branch.  
+**Recorded:** 13 November 2026.  
+**Repository:** `ankitkhakha/RhemaScript`.  
+**Scope:** RAEI engineering continuity and evidence-governed execution. This register does not grant repository, production, account, provider or publishing authority.
+
+## 1. Purpose and governing principles
+
+This register prevents loss of decisions, evidence, implementation state and authority boundaries between work sessions. It is subordinate to the RhemaScript Engineering Constitution, RAEI governance, project approval gates and the Human Director's authority.
+
+The required work cycle is:
+
+1. Idea and observation.
+2. Research and learning.
+3. Knowledge-gap analysis.
+4. Evidence acquisition or explicit evidence-design.
+5. Verification and independent review.
+6. Findings and confidence/limitations.
+7. Decision and explicit approval.
+8. Planning with exact approved scope.
+9. Controlled implementation.
+10. Independent outcome/effectiveness assessment.
+11. Governed closure, reopening where justified, and evidence-preserving learning.
+
+Do not collapse these stages. A plan is not implementation authority; implementation is not proof of effectiveness; CI success is not production certification; a technical approval is not Google authorization or permission to publish.
+
+## 2. Verified continuity checkpoint — 13 November 2026
+
+The following state was read from GitHub during this checkpoint:
+
+| Item | Verified state |
+|---|---|
+| Repository | `ankitkhakha/RhemaScript` |
+| Default branch | `main` |
+| Main commit | `c44d8e9c0847bd220167945b967db74fcf12635f` |
+| Principal integration PR | #62 — authenticated IEIF–RAEI governance and YouTube approvals |
+| PR #62 head at checkpoint | `1e267ccb9138fdab5f22f80ebcf496c64c1487c9` |
+| PR #62 base | `main` at the commit above |
+| PR state | Open, draft, unmerged |
+| Compare at checkpoint | 441 commits ahead, 0 behind |
+| Exact-head CI | Runs #1561 and #1562 succeeded on the checkpoint head |
+| Deployment / live writes | Not performed |
+
+The exact-head CI result applies to `1e267ccb9138fdab5f22f80ebcf496c64c1487c9`, not to any later commit. A documentation or code change creates a new head and must receive its own validation before it is described as validated.
+
+Older open drafts based on previous mainline commits must not be merged wholesale or treated as current. Reconcile each change against the current main and PR #62 before considering integration. Preserve their history and evidence; do not delete branches or close drafts as a shortcut.
+
+## 3. Current capability and evidence distinctions
+
+The PR #62 candidate records implementation and exact-head CI for authenticated finding research, independent reproduction, governed disposition, planning, implementation, independent effectiveness assessment, governed closure, closed-finding knowledge inheritance and controlled reopening/new-version resumption.
+
+The inherited knowledge record begins as pending review and unverified; inheritance does not certify truth, source authenticity or relevance.
+
+Use these evidence labels consistently:
+
+- **Observed:** directly read from a live repository, tool result or supplied artifact.
+- **Implemented:** code or documentation exists at a specific commit; this alone does not imply runtime deployment.
+- **Tested:** a named test or CI run completed on an exact commit.
+- **Proposed:** design or acceptance criteria exist but implementation is not established.
+- **Synthetic:** test fixtures or simulated adapters; never represent them as real-world identity, provider or production evidence.
+- **Owner action required:** requires a human-controlled account, credential, policy, approval or operational decision.
+- **Unknown / not verified:** evidence is absent or was not checked. Do not infer success.
+
+Every assessment must identify the exact evidence ID/version, artifact path, SHA-256 and byte length where applicable. Bind results to the precise source commit and test run. Retain failed runs and explain their correction; never rewrite a failure as a pass.
+
+## 4. Priority backlog and acceptance rules
+
+Work in this order unless new evidence or a Human Director decision changes priority:
+
+### P0 — Continuity and safe resumption
+- Keep this register current at each meaningful checkpoint.
+- Record branch, base, exact head, PR state, latest exact-head CI, changed artifacts and outstanding owner decisions.
+- Preserve prior approved work and never overwrite a checkpoint with an unverified status.
+- Acceptance: another operator can resume from this register without guessing or repeating already verified work.
+
+### P1 — Evidence and history assurance
+- Verify evidence artifact existence, exact bytes, SHA-256 and byte length.
+- Bind assessments and decisions to immutable evidence versions and source commits.
+- Verify append-only history, event IDs, hash-chain continuity and independently retained checkpoint anchors.
+- Add adversarial tests for forged verification, artifact substitution, rewritten/truncated history, replay and stale assessments.
+- Acceptance: each negative test demonstrates rejection without an unauthorized state transition or history append.
+
+### P2 — Integration and dependency assurance
+- Revalidate the combined candidate against the current main commit.
+- Review dependency and supply-chain exposure, secrets boundaries, key custody, identity-policy configuration, failure modes and provider idempotency.
+- Distinguish synthetic adapter conformance from real provider/identity integration.
+- Acceptance: exact-head CI passes, security findings are dispositioned, and unresolved operational dependencies are explicitly recorded.
+
+### P3 — Operational interfaces and controlled handover
+- Review local operator/Codex instructions for least privilege, evidence capture, branch discipline and stop conditions.
+- Test stop/resume from a clean session using this register.
+- Document owner-side steps for Google authorization only when a specific read-only or write operation genuinely requires it.
+- Acceptance: the operator can identify what is executable now, what requires owner action and what remains prohibited.
+
+### P4 — Production readiness (separately approved)
+- Production identity provider and authoritative directory.
+- Owner-approved role and authentication assurance policy.
+- Issuer service, signing-key custody/HSM/KMS, revocation and independent audit operations.
+- Production environment, monitoring, recovery and independent security review.
+- Any deployment, Google authorization expansion, provider write, upload, thumbnail change or publishing.
+- Acceptance: explicit owner approval for each relevant boundary, operational evidence and a separate production-readiness decision. Passing CI alone never satisfies this gate.
+
+## 5. Checkpoint and recovery protocol
+
+At the start of a resumed session:
+
+1. Read the current `main` ref and all relevant open PR metadata from GitHub.
+2. Read the candidate branch head and confirm its base SHA.
+3. Fetch exact-head workflow runs; report only completed results for that exact SHA.
+4. Compare candidate with current main; inspect ahead/behind and changed files.
+5. Read this register and the governing documents from the candidate commit.
+6. Check for new commits, review comments, failing checks, changed approvals or revoked authority.
+7. Select one bounded next task and state its acceptance criteria before editing.
+
+Before a change:
+
+- Record the starting branch and exact head.
+- Preserve the prior head and all evidence.
+- Avoid parallel writes to the same branch or file.
+- Never force-push, rewrite history, merge, deploy or alter protected authority masters as a recovery shortcut.
+- Do not store secrets, tokens, private keys or credential material in repository files, logs or this register.
+
+After a change:
+
+- Record the resulting commit SHA and changed paths.
+- Verify artifact content and hashes where relevant.
+- Wait for and inspect CI on the exact resulting head.
+- Re-read branch/PR metadata and confirm no unexpected movement.
+- Update this register only with observed facts; clearly label any pending CI or owner action.
+
+Recovery is not automatic restoration. If the branch, database, checkpoint or evidence differs unexpectedly, stop writes, preserve the observed state, compare against independently retained evidence and request the required owner decision. Never overwrite a newer or ambiguous state.
+
+## 6. Stop conditions
+
+Stop immediately and report the exact blocker if any of these occurs:
+
+- Current branch, base or head cannot be established.
+- Evidence bytes, digest, byte length or source version do not match.
+- History verification fails, a replay is detected or a checkpoint anchor is unavailable.
+- CI is failing, pending, absent or belongs to a different commit.
+- A required identity, role, approval, policy or credential is missing or ambiguous.
+- A provider write outcome is indeterminate; do not blindly retry.
+- The requested action would exceed the approved scope, expose secrets, incur unapproved cost or cross an owner-only boundary.
+- A proposed action would merge, deploy, publish, upload, modify a live channel or change protected BEZALEL assets without explicit separate authorization.
+
+## 7. Zero-cost and authority constraints
+
+The operating target remains ₹0 additional monthly spend. Prefer existing repository tooling and deterministic local/synthetic tests. Do not introduce paid APIs, paid infrastructure, external integrations or subscriptions without a separate explicit decision.
+
+RAEI activation and a general instruction to continue do not authorize:
+- merging any pull request;
+- deploying or enabling production services;
+- connecting a production identity provider or expanding Google OAuth scopes;
+- YouTube uploads, edits, thumbnail changes or publishing;
+- generating or spending on external services;
+- changing the six existing RhemaScript approval gates or approval authority;
+- modifying or deleting BEZALEL protected/future-platform assets.
+
+## 8. Stop/resume acceptance test
+
+A continuity handover is accepted only when a fresh session can, without relying on conversational guesswork:
+
+1. identify the repository, main SHA, candidate branch, PR and exact head;
+2. distinguish the last passed CI head from any newer unvalidated head;
+3. identify the next bounded task, its acceptance criteria and dependencies;
+4. list owner-only actions and explicit prohibitions;
+5. verify that no merge, deployment, Google authorization expansion or live YouTube write occurred;
+6. resume without discarding prior work or silently changing authority.
+
+Record the test result as PASS, FAIL or NOT RUN with the exact checkpoint and evidence. Do not claim this test has passed merely because this protocol is documented.
+
+## 9. Change control
+
+This register is versioned. Amendments must preserve prior checkpoint facts, include the reason for change, identify the authorizing decision where one is required, and be validated on the resulting exact commit. Historical checkpoint entries are not silently rewritten.
+
+**End — RAEI Continuity, Priority and Recovery Register V1.0**
