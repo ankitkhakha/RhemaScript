@@ -1097,6 +1097,26 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             )
         self.assertEqual(list_findings(self.registry)[0]["status"], "SUBMITTED")
 
+    def test_reproduction_rejects_research_from_different_project_version(self):
+        self._record_research()
+        self.project_version = "3.3"
+        report = self._reproduction_report()
+        raw, evidence = self._write_report("reproduction-project-version-mismatch.json", report, report["evidence_id"])
+        credential = self._credential(
+            "FINDING_REPRODUCE", evidence, subject_id="subject-reproducer-version-mismatch",
+            actor_id="actor-reproducer-version-mismatch", session_id="session-reproducer-version-mismatch",
+        )
+        with self.assertRaisesRegex(RAEIFindingLifecycleError, "same project version"):
+            record_finding_reproduction(
+                self.registry, self.verifier, credential,
+                finding_id=self.finding_id, finding_version=self.finding_version,
+                project_id=self.project_id, project_version=self.project_version,
+                request_id=f"request-FINDING_REPRODUCE-{self.finding_id}",
+                evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
+            )
+        self.assertEqual(list_findings(self.registry)[0]["status"], "RESEARCHED")
+        self.assertTrue(self.registry.verify())
+
     def test_reproduction_requires_different_human_from_researcher(self):
         self._record_research()
         report = self._reproduction_report()
