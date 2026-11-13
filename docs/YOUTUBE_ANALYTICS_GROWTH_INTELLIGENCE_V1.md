@@ -15,9 +15,9 @@ The comparison binds both source snapshot digests. A changed or unverified input
 
 ## Calculation contract
 
-For each numeric metric column with a supported `INTEGER`, `FLOAT`, or `CURRENCY` data type, values from returned rows are summed using decimal arithmetic. Boolean, non-finite, malformed, or fractional values in an integer metric are rejected.
+V1 uses a metric-specific aggregation allowlist. Additive metrics such as views, estimated watch minutes and subscribers gained are summed using decimal arithmetic. `averageViewDuration` is not summed: it is calculated as total estimated watch minutes multiplied by 60, divided by total views, and is labelled as a weighted average in seconds. This requires views and estimated watch minutes in the same query. Other metrics without an explicit V1 aggregation contract are rejected rather than silently summed. Boolean, non-finite, malformed, or fractional values in an integer metric are rejected.
 
-The result reports current and previous returned-row totals, absolute difference, and percentage difference when both periods contain rows and the previous total is nonzero. A zero baseline receives `ZERO_BASELINE` and no percentage. If either period has no returned rows, the comparison reports `INSUFFICIENT_DATA` and does not substitute zero.
+The result reports current and previous metric values, their aggregation method, absolute difference, and percentage difference when both periods contain rows and the previous value is nonzero. A zero baseline receives `ZERO_BASELINE` and no percentage. If either period has no returned rows, the comparison reports `INSUFFICIENT_DATA` and does not substitute zero.
 
 The comparison also records period lengths and returned-row counts. It does not claim that every expected day or dimension bucket was returned. In particular, an absent recent daily row is not evidence of zero activity.
 
