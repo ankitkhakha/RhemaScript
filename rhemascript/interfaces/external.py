@@ -744,7 +744,27 @@ class ExternalIntegrationGateway:
                     )
             return status, raw, response_headers
         except Exception as exc:
-            if session_context is not None and transport_started and not response_received:
+            if session_context is not None and not transport_started:
+                try:
+                    if session_context["phase"] == "CREATE":
+                        self.publish_session_registry.mark_publish_session_failed(
+                            project_id=session_context["project_id"],
+                            project_version=session_context["project_version"],
+                            request_id=session_context["request_id"],
+                            owner_id=session_context["owner_id"],
+                        )
+                    else:
+                        self.publish_session_registry.mark_publish_session_indeterminate(
+                            project_id=session_context["project_id"],
+                            project_version=session_context["project_version"],
+                            request_id=session_context["request_id"],
+                            owner_id=session_context["owner_id"],
+                        )
+                except Exception:
+                    raise ExternalIntegrationError(
+                        "provider request was not sent but durable session state could not be resolved"
+                    ) from None
+            elif session_context is not None and transport_started and not response_received:
                 try:
                     self.publish_session_registry.mark_publish_session_indeterminate(
                         project_id=session_context["project_id"],
