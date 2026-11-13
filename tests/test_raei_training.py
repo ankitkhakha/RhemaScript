@@ -227,7 +227,7 @@ class RAEITrainingTests(unittest.TestCase):
     def test_record_attempt_rechecks_bytes_after_initial_verification(self):
         payload, evidence = self.make_artifact()
         (self.root / evidence.relative_path).write_bytes(b"tampered after verification")
-        with self.assertRaisesRegex(RAEITrainingError, "could not be reverified"):
+        with self.assertRaisesRegex(RAEITrainingError, "bytes changed after verification"):
             record_attempt(self.registry, payload, evidence, evidence_root=self.root)
 
 
