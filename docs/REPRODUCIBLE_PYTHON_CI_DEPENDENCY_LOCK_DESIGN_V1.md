@@ -23,6 +23,16 @@ The previous `cryptography==47.0.0` lock was inside affected version ranges for 
 
 The dependency input and project runtime constraint now both require `cryptography>=50.0.2,<51.0.0`. Version 50.0.2 is above both advisory patch floors. The package advisory scan lists 50.0.2 as the latest non-vulnerable release at review time; this is a point-in-time review, not a promise that future advisories will not emerge.
 
+## Artifact provenance review
+
+PyPI release metadata was checked for the selected versions:
+- `cryptography 50.0.2`: PyPI reports full provenance for all 59 release files, with Trusted Publishing for the release.
+- `cffi 2.1.1`: PyPI reports no provenance for its release files.
+- `pycparser 3.12`: PyPI reports no provenance for its release files.
+- `setuptools 84.2.1`: PyPI reports no provenance for its release files.
+
+The lock hashes and clean-install CI constrain and verify the exact downloaded bytes, but hashes alone do not prove publisher identity or build provenance. This leaves a documented supply-chain assurance gap for cffi, pycparser and setuptools, and for the separately bootstrapped pip/pip-tools generator environment. Do not describe the dependency set as fully provenance-attested. A future hardening increment should add verified provenance/attestation policy where upstream publishers provide it, and an independently pinned/hash-locked generator-toolchain environment.
+
 ## Clean-install CI sequence
 
 The primary `.github/workflows/ci.yml` checks out the committed lock directly, verifies `requirements-ci.lock.sha256`, creates a fresh virtual environment, installs the complete hash-pinned dependency closure with `--require-hashes`, installs the project editable with `--no-deps --no-build-isolation`, runs `pip check`, and executes the full contract and synthetic integration suite. The primary CI does not generate or consume an ephemeral lock artifact.
