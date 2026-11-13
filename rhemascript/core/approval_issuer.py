@@ -188,9 +188,10 @@ class IssuanceLedger(Protocol):
     """Enforce one-time issuance and separation of human subjects for a request."""
 
     def reserve(
-        self, approval_id: str, nonce: str, scope: ApprovalScope, subject_id: str,
+        self, approval_id: str, nonce: str, scope: ApprovalScope,
+        subject_id: str, identity_session_id: str,
     ) -> bool:
-        """Atomically reserve the approval and reject replay or same-subject dual approval."""
+        """Atomically reserve and reject replay, same-subject or same-session dual approval."""
         ...
 
 
@@ -348,7 +349,7 @@ class TrustedApprovalIssuer:
             if not isinstance(signature, str) or not _SIGNATURE.fullmatch(signature):
                 raise ApprovalIssuerError("signing service returned an invalid signature")
             credential = {**payload, "signature": signature}
-            if self._ledger.reserve(approval_id, nonce, scope, identity.subject_id) is not True:
+            if self._ledger.reserve(approval_id, nonce, scope, identity.subject_id, identity.identity_session_id) is not True:
                 raise ApprovalIssuerError("approval is replayed or violates subject separation")
             reserved = True
             self._audit.record({
