@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if valid else 2
 
         if args.command == "status":
-            progress = get_progress(registry)
+            progress = get_progress(registry, evidence_root=args.evidence_root)
             counts: dict[str, int] = {}
             for item in progress.values():
                 status = item.get("status", "NOT_STARTED")
@@ -153,15 +153,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "next":
-            print(_json(next_unit(registry)))
+            print(_json(next_unit(registry, evidence_root=args.evidence_root)))
             return 0
 
         if args.command == "brief":
-            print(_json(build_training_brief(args.unit_id, registry)))
+            print(_json(build_training_brief(args.unit_id, registry, evidence_root=args.evidence_root)))
             return 0
 
         if args.command == "knowledge-search":
-            print(_json(search_knowledge(registry, args.query, include_pending=args.include_pending)))
+            print(_json(search_knowledge(registry, args.query, evidence_root=args.evidence_root, include_pending=args.include_pending)))
             return 0
 
         if args.command == "finding-list":
@@ -178,9 +178,9 @@ def main(argv: list[str] | None = None) -> int:
         artifact, artifact_bytes = verify_json_artifact(root, args.artifact_path)
         payload = json.loads(artifact_bytes)
         if args.command == "record-attempt":
-            result = record_attempt(registry, payload, artifact)
+            result = record_attempt(registry, payload, artifact, evidence_root=args.evidence_root)
         elif args.command == "record-knowledge":
-            result = record_knowledge(registry, payload, artifact)
+            result = record_knowledge(registry, payload, artifact, evidence_root=args.evidence_root)
         else:
             raise RAEICLIError("unsupported command")
         print(_json(result))

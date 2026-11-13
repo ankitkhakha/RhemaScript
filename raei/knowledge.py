@@ -5,12 +5,13 @@ Intake is always PENDING_REVIEW. RAEI cannot approve its own knowledge.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 import hashlib
 import json
 import re
 from typing import Any
 
-from rhemascript.evidence.artifact_verification import EvidenceVersion, is_verified_evidence_version
+from rhemascript.evidence.artifact_verification import EvidenceVersion, is_verified_evidence_version, verify_artifact
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 
 SCHEMA = "raei-knowledge-item-v1"
@@ -24,6 +25,20 @@ SOURCE_AUTHORITY = {"BIBLE": "SCRIPTURE", "OFFICIAL_DOC": "OFFICIAL_PRIMARY", "I
 
 class RAEIKnowledgeError(ValueError):
     """Knowledge intake, provenance or approval-boundary violation."""
+
+
+def _verify_current_evidence(evidence_root: str | Path, evidence: EvidenceVersion) -> None:
+    if not is_verified_evidence_version(evidence):
+        raise RAEIKnowledgeError("knowledge intake requires an exact EvidenceVersion from verify_artifact")
+    try:
+        current = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+    except (OSError, ValueError, TypeError):
+        raise RAEIKnowledgeError("knowledge evidence bytes could not be reverified") from None
+    if current.sha256 != evidence.sha256 or current.size_bytes != evidence.size_bytes:
+        raise RAEIKnowledgeError("knowledge evidence bytes changed after verification")
 
 
 def canonical_knowledge_bytes(payload: dict[str, Any]) -> bytes:
@@ -181,8 +196,8 @@ def _validate_inherited_lineage(registry: ReadinessRunRegistry, payload: dict[st
         raise RAEIKnowledgeError("stored inherited knowledge is detached from its exact closed finding lineage")
 
 
-def list_knowledge(registry: ReadinessRunRegistry) -> list[dict[str, Any]]:
-    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
+def list_knowledge(registry: ReadinessRunRegistry, *, evidence_root: str | Path) -> list[dict[str, Any]]:
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify_artifacts(evidence_root):
         raise RAEIKnowledgeError("knowledge registry integrity verification failed")
     results = []
     for stored in registry.list_all():
@@ -245,15 +260,18 @@ def record_knowledge(
     registry: ReadinessRunRegistry,
     payload: dict[str, Any],
     evidence: EvidenceVersion,
+    *,
+    evidence_root: str | Path,
 ) -> dict[str, Any]:
-    if not is_verified_evidence_version(evidence):
-        raise RAEIKnowledgeError("knowledge intake requires an exact EvidenceVersion from verify_artifact")
+    _verify_current_evidence(evidence_root, evidence)
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify_artifacts(evidence_root):
+        raise RAEIKnowledgeError("knowledge registry or retained evidence integrity verification failed")
     encoded = canonical_knowledge_bytes(payload)
     digest = hashlib.sha256(encoded).hexdigest()
     if digest != evidence.sha256:
         raise RAEIKnowledgeError("knowledge payload does not match the verified artifact bytes")
     _validate_payload(payload, evidence)
-    existing = list_knowledge(registry)
+    existing = list_knowledge(registry, evidence_root=evidence_root)
     supersedes = _string_list(payload, "supersedes")
     known_versions = {f"{item['knowledge_id']}@{item['version']}" for item in existing}
     new_id = payload["knowledge_id"]
@@ -294,14 +312,16 @@ def inherit_closed_finding_as_knowledge(
     registry: ReadinessRunRegistry,
     payload: dict[str, Any],
     evidence: EvidenceVersion,
+    *,
+    evidence_root: str | Path,
 ) -> dict[str, Any]:
     """Register a proposed knowledge item only from a closed, effective finding lineage.
 
     The inherited item remains PENDING_REVIEW, source authentication NOT_CHECKED,
     claim relevance NOT_ASSESSED and authority UNVERIFIED.
     """
-    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
-        raise RAEIKnowledgeError("closed-finding inheritance requires a valid registry")
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify_artifacts(evidence_root):
+        raise RAEIKnowledgeError("closed-finding inheritance requires valid registry and retained evidence bytes")
     if not isinstance(payload, dict) or payload.get("source_type") != "RAEI_CLOSED_FINDING":
         raise RAEIKnowledgeError("inheritance requires source_type RAEI_CLOSED_FINDING")
     finding_id = payload.get("source_finding_id")
@@ -378,11 +398,12 @@ def inherit_closed_finding_as_knowledge(
         _required_text(payload, field)
     _string_list(payload, "applicability_conditions", required=True)
     _string_list(payload, "known_counterexamples")
-    return record_knowledge(registry, payload, evidence)
+    return record_knowledge(registry, payload, evidence, evidence_root=evidence_root)
 
 
 def search_knowledge(
-    registry: ReadinessRunRegistry, query: str, *, include_pending: bool = False
+    registry: ReadinessRunRegistry, query: str, *,
+    evidence_root: str | Path, include_pending: bool = False
 ) -> list[dict[str, Any]]:
     if not isinstance(query, str) or not query.strip():
         raise RAEIKnowledgeError("search query must be a non-empty string")
@@ -390,7 +411,7 @@ def search_knowledge(
     if not terms:
         return []
     matches = []
-    for item in list_knowledge(registry):
+    for item in list_knowledge(registry, evidence_root=evidence_root)
         if item["status"] != "APPROVED" and not include_pending:
             continue
         haystack = " ".join(

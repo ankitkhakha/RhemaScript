@@ -43,7 +43,7 @@ The sequence is enforced by prerequisites in the registry. The integrated capsto
 
 ## Evidence and tamper controls
 
-Assessment artifacts use canonical JSON. The caller builds a versioned assessment payload, writes its canonical JSON bytes to the configured local evidence root, and verifies that file. The resulting EvidenceVersion is tied to its exact in-process identity; caller-constructed or copied objects are rejected. The readiness registry stores the exact evidence digest and report, rejects replay with changed content, supports verification and HMAC checkpoints, and can create a backup.
+Assessment artifacts use canonical JSON. The caller builds a versioned assessment payload, writes its canonical JSON bytes to the configured local evidence root, and verifies that file. Every direct RAEI knowledge/training read or write API also requires `evidence_root` and re-verifies retained artifact bytes; CLI preflight is defense in depth, not the sole integrity boundary. The resulting EvidenceVersion is tied to its exact in-process identity; caller-constructed or copied objects are rejected. The readiness registry stores the exact evidence digest and report, rejects replay with changed content, supports verification and HMAC checkpoints, and can create a backup.
 
 SQLite plus a local hash is not immutable storage. Retain HMAC checkpoints independently from the database and protect the secret key separately. The process-local capability check is an application-layer guard, not a defense against arbitrary hostile code executing inside the same Python process.
 

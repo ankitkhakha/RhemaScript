@@ -97,9 +97,9 @@ class RAEIKnowledgeTests(unittest.TestCase):
 
     def test_records_exact_verified_knowledge_as_pending_review(self):
         payload, evidence = self.make_item()
-        report = record_knowledge(self.registry, payload, evidence)
+        report = record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
         self.assertEqual(report["record_type"], "RAEI_KNOWLEDGE_ITEM_V1")
-        items = list_knowledge(self.registry)
+        items = list_knowledge(self.registry, evidence_root=self.root)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["status"], "PENDING_REVIEW")
         self.assertEqual(items[0]["source_authentication_status"], "NOT_CHECKED")
@@ -108,28 +108,28 @@ class RAEIKnowledgeTests(unittest.TestCase):
     def test_internal_spec_is_not_assumed_approved_by_source_type(self):
         payload, evidence = self.make_item(source_type="INTERNAL_SPEC")
         self.assertEqual(payload["authority_level"], "UNVERIFIED")
-        record_knowledge(self.registry, payload, evidence)
-        self.assertEqual(search_knowledge(self.registry, "Python packaging"), [])
-        self.assertEqual(len(search_knowledge(self.registry, "Python packaging", include_pending=True)), 1)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
+        self.assertEqual(search_knowledge(self.registry, "Python packaging", evidence_root=self.root), [])
+        self.assertEqual(len(search_knowledge(self.registry, "Python packaging", include_pending=True, evidence_root=self.root)), 1)
 
     def test_search_tokenizes_multiple_terms(self):
         payload, evidence = self.make_item()
         payload["title"] = "Python engineering foundations"
         payload["summary"] = "Packaging and build reliability."
         evidence = self.reverify(payload, evidence)
-        record_knowledge(self.registry, payload, evidence)
-        self.assertEqual(len(search_knowledge(self.registry, "python build", include_pending=True)), 1)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
+        self.assertEqual(len(search_knowledge(self.registry, "python build", include_pending=True, evidence_root=self.root)), 1)
 
     def test_pending_knowledge_is_hidden_from_default_search(self):
         payload, evidence = self.make_item()
-        record_knowledge(self.registry, payload, evidence)
-        self.assertEqual(search_knowledge(self.registry, "Python packaging"), [])
-        self.assertEqual(len(search_knowledge(self.registry, "Python packaging", include_pending=True)), 1)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
+        self.assertEqual(search_knowledge(self.registry, "Python packaging", evidence_root=self.root), [])
+        self.assertEqual(len(search_knowledge(self.registry, "Python packaging", include_pending=True, evidence_root=self.root)), 1)
 
     def test_training_brief_surfaces_pending_knowledge_without_approving_it(self):
         payload, evidence = self.make_item()
-        record_knowledge(self.registry, payload, evidence)
-        brief = build_training_brief("CS-FOUND", self.registry)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
+        brief = build_training_brief("CS-FOUND", self.registry, evidence_root=self.root)
         self.assertEqual(brief["approved_knowledge"], [])
         self.assertEqual(len(brief["pending_knowledge_review"]), 1)
         self.assertEqual(brief["knowledge_status"], "NO_APPROVED_KNOWLEDGE")
@@ -138,28 +138,28 @@ class RAEIKnowledgeTests(unittest.TestCase):
         payload, evidence = self.make_item()
         changed = {**payload, "summary": "Changed after verification"}
         with self.assertRaisesRegex(RAEIKnowledgeError, "does not match"):
-            record_knowledge(self.registry, changed, evidence)
+            record_knowledge(self.registry, changed, evidence, evidence_root=self.root)
 
     def test_status_cannot_be_self_approved(self):
         payload, evidence = self.make_item()
         changed = {**payload, "status": "APPROVED"}
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "PENDING_REVIEW"):
-            record_knowledge(self.registry, changed, changed_evidence)
+            record_knowledge(self.registry, changed, changed_evidence, evidence_root=self.root)
 
     def test_hash_verification_cannot_claim_source_authenticity_or_relevance(self):
         payload, evidence = self.make_item()
         changed = {**payload, "source_authentication_status": "VERIFIED"}
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "source authentication"):
-            record_knowledge(self.registry, changed, changed_evidence)
+            record_knowledge(self.registry, changed, changed_evidence, evidence_root=self.root)
 
     def test_hindi_direct_scripture_quote_requires_hinovbsi(self):
         payload, evidence = self.make_item(source_type="BIBLE")
         changed = {**payload, "translation_version": "OTHER-HINDI-TRANSLATION"}
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "HINOVBSI"):
-            record_knowledge(self.registry, changed, changed_evidence)
+            record_knowledge(self.registry, changed, changed_evidence, evidence_root=self.root)
 
     def test_knowledge_search_supports_hindi_terms(self):
         payload, evidence = self.make_item(source_type="BIBLE")
@@ -168,8 +168,8 @@ class RAEIKnowledgeTests(unittest.TestCase):
         payload["claims"] = ["यीशु के जीवन का बाइबिलीय संदर्भ"]
         payload["tags"] = ["यीशु", "बाइबल"]
         evidence = self.reverify(payload, evidence)
-        record_knowledge(self.registry, payload, evidence)
-        self.assertEqual(len(search_knowledge(self.registry, "यीशु", include_pending=True)), 1)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
+        self.assertEqual(len(search_knowledge(self.registry, "यीशु", include_pending=True, evidence_root=self.root)), 1)
 
     def test_bwsf_bible_passage_record_uses_existing_pending_review_schema(self):
         # Synthetic schema fixture only; it does not verify the Bible passage text or source authenticity.
@@ -197,13 +197,13 @@ class RAEIKnowledgeTests(unittest.TestCase):
             "passage": "Exodus 31:1-11",
         })
         evidence = self.reverify(payload, evidence)
-        record_knowledge(self.registry, payload, evidence)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
 
-        self.assertEqual(list_knowledge(self.registry)[0]["status"], "PENDING_REVIEW")
-        self.assertEqual(search_knowledge(self.registry, "biblical_wisdom"), [])
+        self.assertEqual(list_knowledge(self.registry, evidence_root=self.root)[0]["status"], "PENDING_REVIEW")
+        self.assertEqual(search_knowledge(self.registry, "biblical_wisdom", evidence_root=self.root), [])
         pending = search_knowledge(
             self.registry, "biblical_wisdom", include_pending=True
-        )
+        , evidence_root=self.root)
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["translation_version"], "HINOVBSI")
         self.assertEqual(pending[0]["passage"], "Exodus 31:1-11")
@@ -214,66 +214,66 @@ class RAEIKnowledgeTests(unittest.TestCase):
         del changed["root_cause"]
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "root_cause"):
-            record_knowledge(self.registry, changed, changed_evidence)
+            record_knowledge(self.registry, changed, changed_evidence, evidence_root=self.root)
 
     def test_supersedes_must_reference_existing_knowledge_version(self):
         payload, evidence = self.make_item(version="2.0")
         changed = {**payload, "supersedes": ["RS-KNOW-OLD@1.0"]}
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "does not exist"):
-            record_knowledge(self.registry, changed, changed_evidence)
+            record_knowledge(self.registry, changed, changed_evidence, evidence_root=self.root)
 
     def test_valid_new_version_supersedes_existing_item_without_overwriting_it(self):
         first, evidence1 = self.make_item()
-        record_knowledge(self.registry, first, evidence1)
+        record_knowledge(self.registry, first, evidence1, evidence_root=self.root)
         second, evidence2 = self.make_item(version="2.0")
         second["supersedes"] = ["RS-KNOW-001@1.0"]
         evidence2 = self.reverify(second, evidence2)
-        record_knowledge(self.registry, second, evidence2)
-        self.assertEqual([x["version"] for x in list_knowledge(self.registry)], ["1.0", "2.0"])
+        record_knowledge(self.registry, second, evidence2, evidence_root=self.root)
+        self.assertEqual([x["version"] for x in list_knowledge(self.registry, evidence_root=self.root)], ["1.0", "2.0"])
 
     def test_supersedes_rejects_different_knowledge_id(self):
         first, evidence1 = self.make_item()
-        record_knowledge(self.registry, first, evidence1)
+        record_knowledge(self.registry, first, evidence1, evidence_root=self.root)
         second, evidence2 = self.make_item(knowledge_id="RS-KNOW-002", version="2.0")
         second["supersedes"] = ["RS-KNOW-001@1.0"]
         evidence2 = self.reverify(second, evidence2)
         with self.assertRaisesRegex(RAEIKnowledgeError, "same knowledge_id"):
-            record_knowledge(self.registry, second, evidence2)
+            record_knowledge(self.registry, second, evidence2, evidence_root=self.root)
 
     def test_supersedes_requires_strictly_older_version(self):
         first, evidence1 = self.make_item(version="2.0")
-        record_knowledge(self.registry, first, evidence1)
+        record_knowledge(self.registry, first, evidence1, evidence_root=self.root)
         for candidate_version in ("2.0", "1.0"):
             candidate, evidence = self.make_item(version=candidate_version)
             candidate["supersedes"] = ["RS-KNOW-001@2.0"]
             evidence = self.reverify(candidate, evidence)
             with self.assertRaisesRegex(RAEIKnowledgeError, "strictly older"):
-                record_knowledge(self.registry, candidate, evidence)
+                record_knowledge(self.registry, candidate, evidence, evidence_root=self.root)
 
     def test_supersedes_rejects_duplicate_targets(self):
         payload, evidence = self.make_item()
         changed = {**payload, "supersedes": ["RS-KNOW-001@1.0", "RS-KNOW-001@1.0"]}
         changed_evidence = self.reverify(changed, evidence)
         with self.assertRaisesRegex(RAEIKnowledgeError, "must be unique"):
-            record_knowledge(self.registry, changed, changed_evidence)
+            record_knowledge(self.registry, changed, changed_evidence, evidence_root=self.root)
 
     def test_supersedes_rejects_competing_successors(self):
         first, evidence1 = self.make_item()
-        record_knowledge(self.registry, first, evidence1)
+        record_knowledge(self.registry, first, evidence1, evidence_root=self.root)
         second, evidence2 = self.make_item(version="2.0")
         second["supersedes"] = ["RS-KNOW-001@1.0"]
         evidence2 = self.reverify(second, evidence2)
-        record_knowledge(self.registry, second, evidence2)
+        record_knowledge(self.registry, second, evidence2, evidence_root=self.root)
         third, evidence3 = self.make_item(version="3.0")
         third["supersedes"] = ["RS-KNOW-001@1.0"]
         evidence3 = self.reverify(third, evidence3)
         with self.assertRaisesRegex(RAEIKnowledgeError, "already has a successor"):
-            record_knowledge(self.registry, third, evidence3)
+            record_knowledge(self.registry, third, evidence3, evidence_root=self.root)
 
     def test_rewritten_approved_status_is_rejected_on_read(self):
         payload, evidence = self.make_item()
-        record_knowledge(self.registry, payload, evidence)
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
         run_id = "KNOWLEDGE:RS-KNOW-001:1.0"
         stored = self.registry.get(run_id)
         stored["report"]["knowledge_payload"]["status"] = "APPROVED"
@@ -286,7 +286,7 @@ class RAEIKnowledgeTests(unittest.TestCase):
             )
         self.assertFalse(self.registry.verify())
         with self.assertRaisesRegex(ValueError, "integrity verification failed"):
-            list_knowledge(self.registry)
+            list_knowledge(self.registry, evidence_root=self.root)
 
     def test_forged_evidence_dataclass_is_rejected(self):
         payload, evidence = self.make_item()
@@ -295,7 +295,21 @@ class RAEIKnowledgeTests(unittest.TestCase):
             evidence.sha256, evidence.size_bytes,
         )
         with self.assertRaisesRegex(RAEIKnowledgeError, "exact EvidenceVersion"):
-            record_knowledge(self.registry, payload, forged)
+            record_knowledge(self.registry, payload, forged, evidence_root=self.root)
+
+
+    def test_direct_knowledge_reads_reverify_retained_evidence_bytes(self):
+        payload, evidence = self.make_item()
+        record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
+        (self.root / evidence.relative_path).write_bytes(b"tampered after intake")
+        with self.assertRaisesRegex(RAEIKnowledgeError, "integrity verification failed"):
+            list_knowledge(self.registry, evidence_root=self.root)
+
+    def test_record_knowledge_rechecks_bytes_after_initial_verification(self):
+        payload, evidence = self.make_item()
+        (self.root / evidence.relative_path).write_bytes(b"tampered after verification")
+        with self.assertRaisesRegex(RAEIKnowledgeError, "could not be reverified"):
+            record_knowledge(self.registry, payload, evidence, evidence_root=self.root)
 
 
 if __name__ == "__main__":

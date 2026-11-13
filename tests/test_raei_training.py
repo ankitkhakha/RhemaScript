@@ -107,32 +107,32 @@ class RAEITrainingTests(unittest.TestCase):
         self.assertEqual(payload["assessor_role"], "RAEI_SELF")
 
     def test_next_unit_starts_with_first_engineering_unit(self):
-        self.assertEqual(next_unit(self.registry)["id"], "CS-FOUND")
+        self.assertEqual(next_unit(self.registry, evidence_root=self.root)["id"], "CS-FOUND")
 
     def test_brief_cannot_bypass_cross_domain_prerequisites(self):
         with self.assertRaisesRegex(RAEITrainingError, "prerequisites"):
-            build_training_brief("BIBLE-01", self.registry)
+            build_training_brief("BIBLE-01", self.registry, evidence_root=self.root)
 
     def test_verified_canonical_attempt_is_recorded_as_provisional(self):
         payload, evidence = self.make_artifact()
-        report = record_attempt(self.registry, payload, evidence)
+        report = record_attempt(self.registry, payload, evidence, evidence_root=self.root)
         self.assertEqual(report["status"], "PROVISIONAL_PASS")
         self.assertEqual(report["overall_score"], 4)
         self.assertTrue(report["assessment_binding"].evidence_sha256 == evidence.sha256)
-        progress = get_progress(self.registry)
+        progress = get_progress(self.registry, evidence_root=self.root)
         self.assertEqual(progress["CS-FOUND"]["status"], "PROVISIONAL_PASS")
-        self.assertEqual(next_unit(self.registry)["id"], "PROG-CORE")
+        self.assertEqual(next_unit(self.registry, evidence_root=self.root)["id"], "PROG-CORE")
         self.assertTrue(self.registry.verify())
 
     def test_low_score_requires_remediation(self):
         payload, evidence = self.make_artifact(score=2)
-        report = record_attempt(self.registry, payload, evidence)
+        report = record_attempt(self.registry, payload, evidence, evidence_root=self.root)
         self.assertEqual(report["status"], "NEEDS_REMEDIATION")
-        self.assertEqual(next_unit(self.registry)["id"], "CS-FOUND")
+        self.assertEqual(next_unit(self.registry, evidence_root=self.root)["id"], "CS-FOUND")
 
     def test_critical_failure_overrides_high_score(self):
         payload, evidence = self.make_artifact(critical_failures=["SECURITY_TEST_FAILED"])
-        report = record_attempt(self.registry, payload, evidence)
+        report = record_attempt(self.registry, payload, evidence, evidence_root=self.root)
         self.assertEqual(report["status"], "NEEDS_REMEDIATION")
 
     def test_forged_evidence_dataclass_is_rejected(self):
@@ -142,19 +142,19 @@ class RAEITrainingTests(unittest.TestCase):
             evidence.sha256, evidence.size_bytes,
         )
         with self.assertRaisesRegex(RAEITrainingError, "exact EvidenceVersion"):
-            record_attempt(self.registry, payload, forged)
+            record_attempt(self.registry, payload, forged, evidence_root=self.root)
 
     def test_dataclass_copy_of_verified_evidence_is_rejected(self):
         payload, evidence = self.make_artifact()
         copied = replace(evidence, sha256="a" * 64)
         with self.assertRaisesRegex(RAEITrainingError, "exact EvidenceVersion"):
-            record_attempt(self.registry, payload, copied)
+            record_attempt(self.registry, payload, copied, evidence_root=self.root)
 
     def test_assessment_payload_must_match_exact_artifact_digest(self):
         payload, evidence = self.make_artifact()
         changed = {**payload, "assessor_note": "tampered"}
         with self.assertRaisesRegex(RAEITrainingError, "does not match"):
-            record_attempt(self.registry, changed, evidence)
+            record_attempt(self.registry, changed, evidence, evidence_root=self.root)
 
     def test_evidence_identity_and_version_must_match_artifact(self):
         payload, evidence = self.make_artifact()
@@ -162,17 +162,17 @@ class RAEITrainingTests(unittest.TestCase):
             self.root, evidence.relative_path, evidence_id="EV-OTHER", version="v2"
         )
         with self.assertRaisesRegex(RAEITrainingError, "does not identify"):
-            record_attempt(self.registry, payload, changed_evidence)
+            record_attempt(self.registry, payload, changed_evidence, evidence_root=self.root)
 
     def test_human_review_cannot_be_self_asserted(self):
         payload, evidence = self.make_artifact(assessor_role="HUMAN_INDEPENDENT")
         with self.assertRaisesRegex(RAEITrainingError, "authenticated approval"):
-            record_attempt(self.registry, payload, evidence)
+            record_attempt(self.registry, payload, evidence, evidence_root=self.root)
 
     def test_status_only_or_non_json_assessment_is_rejected(self):
         payload, evidence = self.make_artifact()
         with self.assertRaises(RAEITrainingError):
-            record_attempt(self.registry, {"status": "PROVISIONAL_PASS"}, evidence)
+            record_attempt(self.registry, {"status": "PROVISIONAL_PASS"}, evidence, evidence_root=self.root)
         with self.assertRaises(RAEITrainingError):
             canonical_assessment_bytes({"score": float("nan")})
 
@@ -185,14 +185,14 @@ class RAEITrainingTests(unittest.TestCase):
 
     def test_replay_with_changed_assessment_is_rejected(self):
         first, evidence1 = self.make_artifact(attempt_id="ATT-REPLAY", score=4)
-        record_attempt(self.registry, first, evidence1)
+        record_attempt(self.registry, first, evidence1, evidence_root=self.root)
         changed, evidence2 = self.make_artifact(attempt_id="ATT-REPLAY", score=3)
         with self.assertRaises(ReadinessReplayError):
-            record_attempt(self.registry, changed, evidence2)
+            record_attempt(self.registry, changed, evidence2, evidence_root=self.root)
 
     def test_rewritten_status_cannot_self_grant_independent_review(self):
         payload, evidence = self.make_artifact()
-        record_attempt(self.registry, payload, evidence)
+        record_attempt(self.registry, payload, evidence, evidence_root=self.root)
         stored = self.registry.get("ATT-1")
         stored["report"]["status"] = "INDEPENDENTLY_REVIEWED"
         encoded = json.dumps(stored, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -204,17 +204,31 @@ class RAEITrainingTests(unittest.TestCase):
             )
         self.assertFalse(self.registry.verify())
         with self.assertRaisesRegex(ValueError, "integrity verification failed"):
-            get_progress(self.registry)
+            get_progress(self.registry, evidence_root=self.root)
 
     def test_external_checkpoint_protects_learning_history(self):
         payload, evidence = self.make_artifact()
-        record_attempt(self.registry, payload, evidence)
+        record_attempt(self.registry, payload, evidence, evidence_root=self.root)
         key = b"raei-learning-checkpoint-secret-32bytes!"
         checkpoint = self.registry.checkpoint(key)
         self.assertTrue(self.registry.verify_checkpoint(checkpoint, key))
         with sqlite3.connect(self.registry.database) as db:
             db.execute("UPDATE readiness_runs SET payload_json='{}' WHERE run_id='ATT-1'")
         self.assertFalse(self.registry.verify_checkpoint(checkpoint, key))
+
+
+    def test_direct_training_reads_reverify_retained_evidence_bytes(self):
+        payload, evidence = self.make_artifact()
+        record_attempt(self.registry, payload, evidence, evidence_root=self.root)
+        (self.root / evidence.relative_path).write_bytes(b"tampered after intake")
+        with self.assertRaisesRegex(RAEITrainingError, "integrity verification failed"):
+            get_progress(self.registry, evidence_root=self.root)
+
+    def test_record_attempt_rechecks_bytes_after_initial_verification(self):
+        payload, evidence = self.make_artifact()
+        (self.root / evidence.relative_path).write_bytes(b"tampered after verification")
+        with self.assertRaisesRegex(RAEITrainingError, "could not be reverified"):
+            record_attempt(self.registry, payload, evidence, evidence_root=self.root)
 
 
 if __name__ == "__main__":

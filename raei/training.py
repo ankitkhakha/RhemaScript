@@ -6,6 +6,7 @@ reserved until an authenticated human-approval credential is integrated.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 import hashlib
 import json
 from typing import Any
@@ -15,6 +16,7 @@ from rhemascript.evidence.artifact_verification import (
     bind_assessment,
     is_verified_evidence_version,
     verify_assessment_binding,
+    verify_artifact,
 )
 from rhemascript.evidence.readiness_registry import ReadinessRunRegistry
 
@@ -84,11 +86,11 @@ def _units_by_id() -> dict[str, dict]:
     return {unit["id"]: unit for unit in build_registry()}
 
 
-def get_progress(registry: ReadinessRunRegistry) -> dict[str, dict[str, Any]]:
+def get_progress(registry: ReadinessRunRegistry, *, evidence_root: str | Path) -> dict[str, dict[str, Any]]:
     if not isinstance(registry, ReadinessRunRegistry):
         raise RAEITrainingError("a ReadinessRunRegistry is required")
-    if not registry.verify():
-        raise RAEITrainingError("learning registry integrity verification failed")
+    if not registry.verify_artifacts(evidence_root):
+        raise RAEITrainingError("learning registry or retained evidence integrity verification failed")
     progress: dict[str, dict[str, Any]] = {}
     units = _units_by_id()
     for stored in registry.list_all():
@@ -146,8 +148,8 @@ def _prerequisites_met(unit: dict, progress: dict[str, dict[str, Any]]) -> bool:
     return all(progress.get(item, {}).get("status") in PASS_STATUSES for item in prerequisites)
 
 
-def next_unit(registry: ReadinessRunRegistry) -> dict | None:
-    progress = get_progress(registry)
+def next_unit(registry: ReadinessRunRegistry, *, evidence_root: str | Path) -> dict | None:
+    progress = get_progress(registry, evidence_root=evidence_root)
     for unit in build_registry():
         status = progress.get(unit["id"], {}).get("status")
         if status in PASS_STATUSES:
@@ -157,15 +159,15 @@ def next_unit(registry: ReadinessRunRegistry) -> dict | None:
     return None
 
 
-def build_training_brief(unit_id: str, registry: ReadinessRunRegistry) -> dict[str, Any]:
+def build_training_brief(unit_id: str, registry: ReadinessRunRegistry, *, evidence_root: str | Path) -> dict[str, Any]:
     unit = _units_by_id().get(unit_id)
     if unit is None:
         raise RAEITrainingError(f"unknown curriculum unit: {unit_id}")
-    progress = get_progress(registry)
+    progress = get_progress(registry, evidence_root=evidence_root)
     if not _prerequisites_met(unit, progress):
         raise RAEITrainingError("curriculum prerequisites are not yet satisfied")
-    approved_knowledge = search_knowledge(registry, unit["domain"])
-    pending_knowledge = search_knowledge(registry, unit["domain"], include_pending=True)
+    approved_knowledge = search_knowledge(registry, unit["domain"], evidence_root=evidence_root)
+    pending_knowledge = search_knowledge(registry, unit["domain"], evidence_root=evidence_root, include_pending=True)
     return {
         **unit,
         "approved_knowledge": approved_knowledge,
@@ -197,10 +199,23 @@ def record_attempt(
     registry: ReadinessRunRegistry,
     artifact_payload: dict[str, Any],
     evidence: EvidenceVersion,
+    *,
+    evidence_root: str | Path,
 ) -> dict[str, Any]:
-    """Record one self-assessment only when its canonical bytes match verified evidence."""
+    """Record one self-assessment only after re-verifying exact retained evidence bytes."""
     if not is_verified_evidence_version(evidence):
         raise RAEITrainingError("assessment requires an exact EvidenceVersion from verify_artifact")
+    try:
+        current = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+    except (OSError, ValueError, TypeError):
+        raise RAEITrainingError("assessment evidence bytes could not be reverified") from None
+    if current.sha256 != evidence.sha256 or current.size_bytes != evidence.size_bytes:
+        raise RAEITrainingError("assessment evidence bytes changed after verification")
+    if not isinstance(registry, ReadinessRunRegistry) or not registry.verify_artifacts(evidence_root):
+        raise RAEITrainingError("learning registry or retained evidence integrity verification failed")
     encoded = canonical_assessment_bytes(artifact_payload)
     digest = hashlib.sha256(encoded).hexdigest()
     if digest != evidence.sha256:
