@@ -939,8 +939,29 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
     def verify_checkpoint(self, checkpoint: object, key: bytes) -> bool:
         if not isinstance(key, bytes) or len(key) < 32 or not isinstance(checkpoint, dict):
             return False
-        if (set(checkpoint) != {"schema", "snapshot_sha256", "hmac_sha256"}
-                or checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v4"):
+        if set(checkpoint) != {"schema", "snapshot_sha256", "hmac_sha256"}:
+            return False
+        schema = checkpoint.get("schema")
+        if schema == "RhemaScript.ApprovalStateCheckpoint.v3":
+            # Preserve verification of legacy approval-only checkpoints until
+            # the first publish-session row exists; V3 never covered that table.
+            try:
+                if self.list_publish_session_records():
+                    return False
+                payload = SQLiteApprovalConsumptionStore._snapshot_bytes(self)
+            except ApprovalStoreError:
+                return False
+            return (
+                hmac.compare_digest(
+                    str(checkpoint.get("snapshot_sha256", "")),
+                    hashlib.sha256(payload).hexdigest(),
+                )
+                and hmac.compare_digest(
+                    str(checkpoint.get("hmac_sha256", "")),
+                    hmac.new(key, payload, hashlib.sha256).hexdigest(),
+                )
+            )
+        if schema != "RhemaScript.ApprovalStateCheckpoint.v4":
             return False
         try:
             expected = self.checkpoint(key)
