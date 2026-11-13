@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
 from raei.governance import record_finding_disposition
 from raei.finding_lifecycle import (
-    RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation,
+    RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation, record_finding_effectiveness,
 )
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.evidence.artifact_verification import verify_artifact
@@ -49,6 +49,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                     "FINDING_REPRODUCE": ["reproducer"],
                     "FINDING_PLAN": ["planner"],
                     "FINDING_IMPLEMENT": ["implementer"],
+                    "FINDING_EFFECTIVENESS_ASSESS": ["assessor"],
                 },
                 "allowed_authn_contexts": ["mfa"],
                 "max_authentication_age_seconds": 300,
@@ -114,7 +115,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer"}[action],
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -295,6 +296,69 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             request_id=f"request-FINDING_IMPLEMENT-{self.finding_id}",
             evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
         )
+
+    def _effectiveness_report(self, outcome="EFFECTIVE"):
+        implementation_event = next(
+            event for event in self.registry.list_activity_events()
+            if event["event_type"] == "FINDING_IMPLEMENTED"
+            and event["payload"].get("finding_version") == self.finding_version
+        )
+        return {
+            "schema": "raei-finding-effectiveness-v1",
+            "finding_id": self.finding_id,
+            "finding_version": self.finding_version,
+            "implementation_event_id": implementation_event["event_id"],
+            "implementation_evidence_binding": implementation_event["payload"]["evidence_binding"],
+            "outcome": outcome,
+            "criteria_results": ["The requested portrait ratio is preserved in the candidate generation request."],
+            "observed_outcomes": ["Synthetic regression test confirms the request remains 9:16."],
+            "residual_risks": ["Live provider behavior has not been tested."],
+            "evidence_id": "EV-FND-EFFECTIVENESS-001",
+            "evidence_version": "1.0",
+            "created_at_utc": self.now.isoformat(),
+        }
+
+    def _record_effectiveness(self, *, outcome="EFFECTIVE", subject_id="subject-assessor-001", session_id="session-assessor-001"):
+        report = self._effectiveness_report(outcome)
+        raw, evidence = self._write_report("effectiveness.json", report, report["evidence_id"])
+        credential = self._credential(
+            "FINDING_EFFECTIVENESS_ASSESS", evidence, subject_id=subject_id,
+            actor_id="actor-assessor-001", session_id=session_id,
+        )
+        return record_finding_effectiveness(
+            self.registry, self.verifier, credential,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            project_id=self.project_id, project_version=self.project_version,
+            request_id=f"request-FINDING_EFFECTIVENESS_ASSESS-{self.finding_id}",
+            evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
+        )
+
+    def test_effectiveness_binds_exact_implementation_and_projects_outcome(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        implementation = self._record_implementation()
+        result = self._record_effectiveness(outcome="EFFECTIVE")
+        self.assertEqual(result["status"], "EFFECTIVE")
+        finding = list_findings(self.registry)[0]
+        self.assertEqual(finding["status"], "EFFECTIVE")
+        self.assertEqual(finding["implementation_event_id"], implementation["event_id"])
+        self.assertEqual(finding["effectiveness_event_id"], result["event_id"])
+
+    def test_effectiveness_rejects_implementer_reuse(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        with self.assertRaisesRegex(RAEIFindingLifecycleError, "independent assessor"):
+            self._record_effectiveness(subject_id="subject-implementer-001", session_id="session-assessor-new")
+        self.assertEqual(list_findings(self.registry)[0]["status"], "IMPLEMENTED")
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_EFFECTIVENESS_ASSESSED"
+            for event in self.registry.list_activity_events()
+        ))
 
     def test_implementation_requires_exact_plan_and_projects_implemented(self):
         self._record_research()
