@@ -1,7 +1,11 @@
-"""Durable local assessment registry with exact evidence binding and replay detection.
+"""Experimental local assessment store; not an authoritative RAEI history ledger.
 
-SQLite provides transactional local persistence, not tamper-proof or independently
-anchored storage. Back up signed checkpoints outside this database.
+This standalone helper has no independent checkpoint or external trust anchor.
+Its ``verify`` method checks internal row consistency only; a database editor can
+rewrite both columns and the duplicated JSON payload. Production lifecycle and
+governed assessment history must use ReadinessRunRegistry activity events and
+its independently retained HMAC checkpoint. Keep this helper isolated until it
+is explicitly integrated and independently reviewed.
 """
 from __future__ import annotations
 
@@ -90,6 +94,7 @@ class AssessmentRegistry:
         return AssessmentBinding(*row) if row else None
 
     def verify(self) -> bool:
+        """Check internal row/JSON consistency, not authenticity or tamper resistance."""
         with self._connect() as db:
             rows = db.execute(
                 """SELECT assessment_id,evidence_id,evidence_version,evidence_sha256,score,binding_json
