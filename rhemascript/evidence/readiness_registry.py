@@ -1143,6 +1143,26 @@ class ReadinessRunRegistry:
                     raise ReadinessReplayError("event_id already exists with different governed review data")
                 db.commit()
                 return False
+            # A consumed capability remains recognizable in this process, so
+            # enforce its one-event use again at the durable history boundary.
+            # The query runs under BEGIN IMMEDIATE to serialize competing appends.
+            prior_governed = db.execute(
+                """SELECT payload_json FROM activity_events
+                WHERE event_type IN (
+                    'FINDING_DISPOSITIONED','FINDING_CLOSED',
+                    'FINDING_REOPENED','KNOWLEDGE_REVIEWED'
+                )"""
+            ).fetchall()
+            requested_approval_ids = {item.approval_id for item in approvals}
+            for prior_row in prior_governed:
+                prior_payload = json.loads(prior_row[0])
+                prior_authorization = prior_payload.get("authorization", {})
+                prior_ids = prior_authorization.get("approval_ids", [])
+                if requested_approval_ids.intersection(prior_ids):
+                    db.rollback()
+                    raise ReadinessReplayError(
+                        "governed approval has already authorized another event"
+                    )
             if event_type == "FINDING_DISPOSITIONED":
                 captured = db.execute(
                     """SELECT payload_json FROM activity_events
