@@ -255,9 +255,21 @@ class ApprovalVerifierTests(unittest.TestCase):
                 )
 
         registry = Registry()
+        class SnapshotStore:
+            def __init__(inner):
+                inner.entries = set()
+
+            def consume_many_once(inner, entries):
+                inner.entries.update((item.approval_id, item.nonce) for item in entries)
+                return True
+
+            def read_consumption_state(inner, approval_id, nonce):
+                return ((approval_id, nonce) in inner.entries, False)
+
+        store = SnapshotStore()
         verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service", key_registry=registry,
-            key_registry_environment="production", consume_many_once=lambda entries: True,
+            key_registry_environment="production", consume_many_once=store.consume_many_once,
             clock=lambda: self.now,
             identity_policies={"identity-policy-v1": {
                 "provider_id": "test-idp",
