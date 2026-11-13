@@ -190,6 +190,22 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         tampered["state"]["revoked_approvals"] = [["forged-approval", "forged-time"]]
         self.assertFalse(self.model.verify_recovery_checkpoint(tampered))
 
+    def test_checkpoint_rejects_event_history_rollback_without_generation_change(self):
+        lease = self.acquire(nonce="dispatch-event-high-water")
+        self.assertTrue(self.model.accept_dispatch(lease, request_fingerprint="a" * 64))
+        checkpoint = self.model.create_recovery_checkpoint()
+        self.assertEqual(checkpoint["event_sequence_high_water"], 2)
+        self.assertTrue(self.model.mark_indeterminate(
+            lease.lease_id, reason_code="RESPONSE_LOST_AFTER_SEND",
+        ))
+        # This lifecycle change does not advance the resource generation.
+        with sqlite3.connect(self.model.path) as db:
+            db.execute("DELETE FROM event_history WHERE sequence=3")
+        with self.assertRaisesRegex(LeaseStateError, "below trusted recovery anchor"):
+            self.model.create_recovery_checkpoint()
+        self.assertFalse(self.model.verify_event_history())
+        self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint))
+
     def test_checkpoint_creation_rejects_generation_rollback_below_anchor(self):
         lease = self.acquire(nonce="dispatch-checkpoint-rollback")
         checkpoint = self.model.create_recovery_checkpoint()
