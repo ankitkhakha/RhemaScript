@@ -216,5 +216,60 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
             )
         self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
 
+
+    def test_v2_artifact_bound_approval_is_consumed_and_persisted_exactly(self):
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        now = datetime.now(timezone.utc)
+        payload = {
+            "schema": "RhemaScript.ApprovalCredential.v2",
+            "approval_id": "approval-v2-artifact-0001",
+            "issuer": "trusted-approval-issuer",
+            "actor_id": "director-0001",
+            "action": "PUBLISH",
+            "project_id": "RS-PWW-001",
+            "project_version": "3.2",
+            "request_id": "publish-request-0001",
+            "issued_at": now.isoformat(),
+            "expires_at": (now + timedelta(minutes=5)).isoformat(),
+            "nonce": "nonce-v2-artifact-0001",
+            "key_id": "key-2026-01",
+            "artifact_id": "ART-FINAL-001",
+            "artifact_version": "1",
+            "artifact_sha256": "a" * 64,
+            "artifact_size_bytes": 987654,
+        }
+        payload["signature"] = private_key.sign(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False, allow_nan=False).encode()
+        ).hex()
+        verifier = ApprovalVerifier(
+            issuer="trusted-approval-issuer",
+            verification_keys={"key-2026-01": public_key},
+            consume_many_once=self.store.consume_many_once,
+        )
+        binding = {
+            "artifact_id": "ART-FINAL-001",
+            "artifact_version": "1",
+            "sha256": "a" * 64,
+            "size_bytes": 987654,
+        }
+        verified = verifier.verify_many_and_consume(
+            (payload,),
+            ({
+                "action": "PUBLISH", "project_id": "RS-PWW-001",
+                "project_version": "3.2", "request_id": "publish-request-0001",
+                "artifact_binding": binding,
+            },),
+        )[0]
+        self.assertTrue(self.store.is_consumed(verified.approval_id, verified.nonce))
+        with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT artifact_id, artifact_version, artifact_sha256, artifact_size_bytes "
+                "FROM consumed_approvals WHERE approval_id=?",
+                (verified.approval_id,),
+            ).fetchone()
+        self.assertEqual(row, ("ART-FINAL-001", "1", "a" * 64, 987654))
+
 if __name__ == "__main__":
     unittest.main()
