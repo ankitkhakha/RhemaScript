@@ -1,12 +1,10 @@
-import contextlib
-import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
-
-from raei.cli import main
 from raei.curriculum import build_registry
 from raei.knowledge import SCHEMA as KNOWLEDGE_SCHEMA, canonical_knowledge_bytes
 from raei.training import build_self_assessment_payload, canonical_assessment_bytes
@@ -25,11 +23,16 @@ class RAEICLITests(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_cli(self, *args):
-        output = io.StringIO()
-        errors = io.StringIO()
-        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            code = main(list(args))
-        return code, output.getvalue(), errors.getvalue()
+        # Each command runs in a distinct interpreter process. This exercises
+        # durable state recovery rather than relying on process-local objects.
+        completed = subprocess.run(
+            [sys.executable, "-m", "raei", *args],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return completed.returncode, completed.stdout, completed.stderr
 
     def test_init_creates_private_registry(self):
         code, output, errors = self.run_cli("init", "--database", str(self.database))
