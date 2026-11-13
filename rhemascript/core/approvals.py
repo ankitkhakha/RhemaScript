@@ -70,6 +70,7 @@ class VerifiedApproval:
     identity_session_id: str | None = None
     identity_policy_version: str | None = None
     identity_provider_id: str | None = None
+    identity_max_authentication_age_seconds: int | None = None
     credential_schema: str | None = None
     signature: str | None = field(default=None, repr=False, compare=False)
     _verification_token: object | None = field(default=None, repr=False, compare=False)
@@ -233,8 +234,13 @@ class ApprovalVerifier:
         except (InvalidSignature, ValueError, TypeError):
             raise ApprovalError("approval signature is invalid") from None
 
+        now = self._clock()
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ApprovalError("verifier clock must return a timezone-aware datetime")
+        now = now.astimezone(timezone.utc)
         identity = {}
         authenticated_at = None
+        identity_max_age = None
         if token["action"] in _HIGH_RISK_ACTIONS and schema != _SCHEMA_V3:
             raise ApprovalError("high-risk approval requires credential schema v3 identity assurance")
         if schema == _SCHEMA_V3:
@@ -254,16 +260,15 @@ class ApprovalVerifier:
                     or token["authn_context"] not in policy["allowed_authn_contexts"]):
                 raise ApprovalError("approval role or authentication context is not authorized")
             authenticated_at = self._timestamp(token["authenticated_at"], "authenticated_at")
-            identity_age = (self._clock().astimezone(timezone.utc) - authenticated_at).total_seconds()
+            identity_age = (now - authenticated_at).total_seconds()
             if identity_age < -self._clock_skew.total_seconds() or identity_age > policy["max_authentication_age_seconds"]:
                 raise ApprovalError("approval authentication is stale or future-dated")
+            identity_max_age = policy["max_authentication_age_seconds"]
             identity = {name: token[name] for name in _IDENTITY_FIELDS}
         issued_at = self._timestamp(token["issued_at"], "issued_at")
         expires_at = self._timestamp(token["expires_at"], "expires_at")
-        now = self._clock()
-        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
-            raise ApprovalError("verifier clock must return a timezone-aware datetime")
-        now = now.astimezone(timezone.utc)
+        if authenticated_at is not None and authenticated_at > issued_at + self._clock_skew:
+            raise ApprovalError("approval authentication occurred after credential issuance")
         if issued_at > now + self._clock_skew:
             raise ApprovalError("approval was issued in the future")
         if expires_at <= now:
@@ -289,6 +294,7 @@ class ApprovalVerifier:
             identity_session_id=identity.get("identity_session_id"),
             identity_policy_version=identity.get("identity_policy_version"),
             identity_provider_id=identity.get("identity_provider_id"),
+            identity_max_authentication_age_seconds=identity_max_age,
             credential_schema=schema,
             signature=signature,
             _verification_token=_VERIFIED_APPROVAL_TOKEN,
