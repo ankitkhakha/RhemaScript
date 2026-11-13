@@ -217,6 +217,58 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
         self.assertEqual(len(ledger.entries), 1)
         self.assertEqual(audit.events[-1]["event"], "approval_denied")
 
+    def test_synthetic_issuer_rejects_policy_provider_and_role_mismatch(self):
+        scope = required_publish_scopes(
+            project_id="RS-PWW-001", project_version="3.2",
+            request_id="request-publish-006",
+            artifact_binding={"artifact_id": "ART-FINAL-001", "artifact_version": "7",
+                              "sha256": "a" * 64, "size_bytes": 987654},
+        )[0]
+        cases = (
+            (ApprovalPolicyDecision(
+                allowed=False, identity_policy_version="identity-policy-v1",
+                identity_provider_id="test-idp", max_authentication_age_seconds=300,
+                clock_skew_seconds=30,
+            ), "policy denied"),
+            (ApprovalPolicyDecision(
+                allowed=True, identity_policy_version="identity-policy-v1",
+                identity_provider_id="other-idp", max_authentication_age_seconds=300,
+                clock_skew_seconds=30, actor_role="director",
+            ), "provider or directory role"),
+            (ApprovalPolicyDecision(
+                allowed=True, identity_policy_version="identity-policy-v1",
+                identity_provider_id="test-idp", max_authentication_age_seconds=300,
+                clock_skew_seconds=30, actor_role="administrator",
+            ), "provider or directory role"),
+        )
+        for decision, message in cases:
+            with self.subTest(message=message):
+                issuer, signer, ledger, audit, _ = self.make_trusted_issuer(decision=decision)
+                with self.assertRaisesRegex(ApprovalIssuerError, message):
+                    issuer.request_approval(scope)
+                self.assertEqual(signer.calls, [])
+                self.assertEqual(ledger.entries, [])
+                self.assertEqual(audit.events[-1]["event"], "approval_denied")
+
+    def test_synthetic_issuer_fails_closed_when_directory_is_unavailable(self):
+        class UnavailableDirectory:
+            def resolve_subject(self, subject_id):
+                raise ConnectionError("directory unavailable")
+
+        issuer, signer, ledger, audit, now = self.make_trusted_issuer()
+        issuer._directory = UnavailableDirectory()
+        scope = required_publish_scopes(
+            project_id="RS-PWW-001", project_version="3.2",
+            request_id="request-publish-007",
+            artifact_binding={"artifact_id": "ART-FINAL-001", "artifact_version": "7",
+                              "sha256": "a" * 64, "size_bytes": 987654},
+        )[0]
+        with self.assertRaisesRegex(ApprovalIssuerError, "dependency failed"):
+            issuer.request_approval(scope)
+        self.assertEqual(signer.calls, [])
+        self.assertEqual(ledger.entries, [])
+        self.assertEqual(audit.events[-1]["event"], "approval_denied")
+
     def test_synthetic_issuer_does_not_return_credential_if_audit_fails(self):
         audit = FakeAuditSink(fail=True)
         issuer, signer, ledger, _, _ = self.make_trusted_issuer(audit=audit)
