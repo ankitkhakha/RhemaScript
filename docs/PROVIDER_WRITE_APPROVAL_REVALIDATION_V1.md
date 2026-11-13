@@ -9,7 +9,7 @@ Close the time gap between atomic approval consumption and the first external pr
 - `ApprovalVerifier` attaches an opaque reference to the exact verifier instance that created each `VerifiedApproval`.
 - `revalidate_consumed_verified_approval` accepts only the exact in-process approval object already marked as consumed by the verifier.
 - `ApprovalVerifier.revalidate_consumed_approval` rechecks:
-  - when the atomic-consumption callback is the bound durable SQLite store, `read_consumption_state` reads consumed and revoked flags in one SQLite read transaction/snapshot; ledger read failures fail closed;
+  - a provider-write recheck requires a bound store exposing `read_consumption_state`; missing stores and legacy stores without a consistent snapshot fail closed. The production implementation uses the durable SQLite store, whose `read_consumption_state` reads consumed and revoked flags in one SQLite read transaction/snapshot; ledger read failures fail closed. Plain callbacks and in-memory test doubles are synthetic-only and cannot establish production durability;
   - that the credential remains unexpired;
   - that the signing key still resolves from the verifier's configured trust source;
   - that the current key fingerprint matches the key used during signature verification;
