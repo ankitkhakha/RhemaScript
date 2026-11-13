@@ -194,7 +194,7 @@ class ApprovalVerifier:
             if schema not in {_SCHEMA_V2, _SCHEMA_V3} or set(artifact_binding) != {
                 "artifact_id", "artifact_version", "sha256", "size_bytes"
             }:
-                raise ApprovalError("approval must bind the exact final artifact using credential schema v2 or v3 or v3")
+                raise ApprovalError("approval must bind the exact final artifact using credential schema v2 or v3")
             if (token.get("artifact_id") != artifact_binding.get("artifact_id")
                     or token.get("artifact_version") != artifact_binding.get("artifact_version")
                     or token.get("artifact_sha256") != artifact_binding.get("sha256")
@@ -250,7 +250,7 @@ class ApprovalVerifier:
             if token["identity_provider_id"] != policy["provider_id"]:
                 raise ApprovalError("approval identity provider does not match trusted policy")
             roles = policy["allowed_roles_by_action"].get(token["action"], ())
-            if (not isinstance(roles, (tuple, list, set)) or token["actor_role"] not in roles
+            if (not isinstance(roles, (tuple, list, set, frozenset)) or token["actor_role"] not in roles
                     or token["authn_context"] not in policy["allowed_authn_contexts"]):
                 raise ApprovalError("approval role or authentication context is not authorized")
             authenticated_at = self._timestamp(token["authenticated_at"], "authenticated_at")
