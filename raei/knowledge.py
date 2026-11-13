@@ -120,6 +120,54 @@ def _validate_payload(payload: dict[str, Any], evidence: EvidenceVersion) -> Non
         _string_list(payload, "affected_unit_ids", required=True)
 
 
+def _validate_inherited_lineage(registry: ReadinessRunRegistry, payload: dict[str, Any]) -> None:
+    finding_id = payload.get("source_finding_id")
+    finding_version = payload.get("source_finding_version")
+    lineage = payload.get("source_lifecycle_lineage")
+    if (not isinstance(finding_id, str) or not finding_id.strip()
+            or not isinstance(finding_version, str) or not finding_version.strip()
+            or not isinstance(lineage, dict)):
+        raise RAEIKnowledgeError("stored inherited knowledge lineage is malformed")
+    events = {event["event_id"]: event for event in registry.list_activity_events()}
+    fields = (
+        ("plan_event_id", "FINDING_PLANNED"),
+        ("implementation_event_id", "FINDING_IMPLEMENTED"),
+        ("effectiveness_event_id", "FINDING_EFFECTIVENESS_ASSESSED"),
+        ("closure_event_id", "FINDING_CLOSED"),
+    )
+    selected = {}
+    for field, event_type in fields:
+        event = events.get(lineage.get(field))
+        if (not event or event.get("event_type") != event_type
+                or event.get("subject_id") != finding_id
+                or event.get("payload", {}).get("finding_version") != finding_version):
+            raise RAEIKnowledgeError("stored inherited knowledge references an invalid source lifecycle event")
+        selected[field] = event
+    plan = selected["plan_event_id"]
+    implementation = selected["implementation_event_id"]
+    effectiveness = selected["effectiveness_event_id"]
+    closure = selected["closure_event_id"]
+    expected = {
+        "plan_event_id": plan["event_id"],
+        "implementation_event_id": implementation["event_id"],
+        "effectiveness_event_id": effectiveness["event_id"],
+        "closure_event_id": closure["event_id"],
+        "plan_evidence_binding": plan["payload"].get("evidence_binding"),
+        "implementation_evidence_binding": implementation["payload"].get("evidence_binding"),
+        "effectiveness_evidence_binding": effectiveness["payload"].get("evidence_binding"),
+    }
+    if (lineage != expected
+            or effectiveness["payload"].get("outcome") != "EFFECTIVE"
+            or closure["payload"].get("closure_decision") != "CLOSED"
+            or closure["payload"].get("evidence_binding") != effectiveness["payload"].get("evidence_binding")
+            or closure["payload"].get("lifecycle_lineage") != {
+                "plan_event_id": plan["event_id"],
+                "implementation_event_id": implementation["event_id"],
+                "effectiveness_event_id": effectiveness["event_id"],
+            }):
+        raise RAEIKnowledgeError("stored inherited knowledge is detached from its exact closed finding lineage")
+
+
 def list_knowledge(registry: ReadinessRunRegistry) -> list[dict[str, Any]]:
     if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
         raise RAEIKnowledgeError("knowledge registry integrity verification failed")
@@ -161,6 +209,8 @@ def list_knowledge(registry: ReadinessRunRegistry) -> list[dict[str, Any]]:
                 or payload.get("evidence_id") != evidence_item.get("evidence_id")
                 or payload.get("evidence_version") != evidence_item.get("version")):
             raise RAEIKnowledgeError("stored knowledge status or evidence provenance was altered")
+        if payload.get("source_type") == "RAEI_CLOSED_FINDING":
+            _validate_inherited_lineage(registry, payload)
         results.append(dict(payload))
     # Review events are a separate, signed governance stream. The immutable
     # intake record remains PENDING_REVIEW; this projection never rewrites it.
