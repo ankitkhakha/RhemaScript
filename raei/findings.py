@@ -328,11 +328,12 @@ def list_findings(
     finding_by_version = {(entry["finding_id"], entry["version"]): entry for entry in results}
     lifecycle_events = [
         event for event in registry.list_activity_events()
-        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED"}
+        if event["event_type"] in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED"}
     ]
     latest_research = {}
     latest_reproduction = {}
     latest_plan = {}
+    latest_implementation = {}
     for event in lifecycle_events:
         payload = event.get("payload", {})
         key = (event.get("subject_id"), payload.get("finding_version"))
@@ -340,6 +341,7 @@ def list_findings(
             "FINDING_RESEARCHED": "FINDING_RESEARCH",
             "FINDING_REPRODUCED": "FINDING_REPRODUCE",
             "FINDING_PLANNED": "FINDING_PLAN",
+            "FINDING_IMPLEMENTED": "FINDING_IMPLEMENT",
         }[event["event_type"]]
         auth = payload.get("authorization")
         binding = payload.get("evidence_binding")
@@ -407,13 +409,53 @@ def list_findings(
             ):
                 raise RAEIFindingError("finding plan is not independently authenticated")
             latest_plan[key] = event
+        else:
+            if key not in latest_plan or key in latest_implementation:
+                raise RAEIFindingError("finding implementation is missing an approved plan or is duplicated")
+            plan_payload = latest_plan[key]["payload"]
+            if (payload.get("plan_event_id") != latest_plan[key]["event_id"]
+                    or payload.get("plan_evidence_binding") != plan_payload.get("evidence_binding")):
+                raise RAEIFindingError("finding implementation does not bind the exact approved plan")
+            impl_binding = payload.get("evidence_binding")
+            impl_refs = payload.get("evidence_refs")
+            if (not isinstance(impl_binding, dict)
+                    or not isinstance(impl_refs, list) or len(impl_refs) != 1
+                    or not isinstance(impl_refs[0], dict)
+                    or impl_refs[0].get("evidence_id") != impl_binding.get("evidence_id")
+                    or impl_refs[0].get("version") != impl_binding.get("evidence_version")
+                    or impl_refs[0].get("sha256") != impl_binding.get("sha256")
+                    or impl_refs[0].get("size_bytes") != impl_binding.get("size_bytes")):
+                raise RAEIFindingError("finding implementation evidence binding is invalid")
+            prior_auth = [
+                latest_research[key]["payload"]["authorization"],
+                latest_reproduction[key]["payload"]["authorization"],
+                latest_plan[key]["payload"]["authorization"],
+            ]
+            captured_finding = finding_by_version.get(key, {})
+            if captured_finding.get("submitter_identity"):
+                prior_auth.append(captured_finding["submitter_identity"])
+            if any(
+                auth.get("subject_id") == prior.get("subject_id")
+                or auth.get("identity_session_id") == prior.get("identity_session_id")
+                or auth.get("identity_provider_id") != prior.get("identity_provider_id")
+                or auth.get("identity_policy_version") != prior.get("identity_policy_version")
+                for prior in prior_auth
+            ):
+                raise RAEIFindingError("finding implementation is not independently authenticated")
+            latest_implementation[key] = event
     for item in results:
         key = (item["finding_id"], item["version"])
         disposition = latest_by_version.get(key)
         research = latest_research.get(key)
         reproduction = latest_reproduction.get(key)
         plan = latest_plan.get(key)
-        if plan:
+        implementation = latest_implementation.get(key)
+        if implementation:
+            item["status"] = "IMPLEMENTED"
+            item["implementation_event_id"] = implementation["event_id"]
+            item["implementation_evidence_binding"] = implementation["payload"].get("evidence_binding")
+            item["plan_event_id"] = implementation["payload"].get("plan_event_id")
+        elif plan:
             item["status"] = "PLANNED"
             item["plan_event_id"] = plan["event_id"]
             item["plan_evidence_binding"] = plan["payload"].get("evidence_binding")
