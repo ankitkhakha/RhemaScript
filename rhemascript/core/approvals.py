@@ -211,7 +211,7 @@ class ApprovalVerifier:
         if self._key_registry is None:
             public_key = self._keys.get(key_id)
             if public_key is None:
-                raise ApprovalError("approval signing key is not trusted")
+                raise ApprovalError("approval signing key is not trusted; trusted issuer key is unavailable")
             return public_key, None
         try:
             record = self._key_registry.resolve_key(
