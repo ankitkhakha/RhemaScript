@@ -382,6 +382,20 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.registry.backup_to(alias_parent / "backup.sqlite3")
 
+    def test_backup_refuses_public_destination_directory(self):
+        import os
+        public_parent = Path(self.tmp.name) / "public-backups"
+        public_parent.mkdir()
+        os.chmod(public_parent, 0o755)
+        with self.assertRaisesRegex(ValueError, "owner-owned and private"):
+            self.registry.backup_to(public_parent / "backup.sqlite3")
+
+    def test_backup_file_is_owner_only(self):
+        import os
+        destination = Path(self.tmp.name) / "private-backup.sqlite3"
+        self.registry.backup_to(destination)
+        self.assertEqual(os.stat(destination).st_mode & 0o777, 0o600)
+
     def test_rejects_symlink_database(self):
         alias = Path(self.tmp.name) / "alias.sqlite3"
         alias.symlink_to(self.path)
