@@ -184,7 +184,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             ),), transport=transport, audit_sink=lambda event: None, enabled=True,
         )
         with self.assertRaisesRegex(
-            ExternalIntegrationError, "consequential operation lacks explicit authority",
+            ExternalIntegrationError, "signed external-write authority",
         ):
             gateway.request(
                 "IF-18", "CUSTOM_MUTATION",
@@ -247,7 +247,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         gateway = ExternalIntegrationGateway(
             (ProviderBinding(
                 interface_id="IF-18", provider_name="youtube",
-                endpoint="https://www.googleapis.com",
+                endpoint="https://oauth2.googleapis.com",
                 allowed_hosts=("oauth2.googleapis.com",),
                 operations={"OAUTH_TOKEN": {
                     "method": "POST", "hosts": ("oauth2.googleapis.com",),
