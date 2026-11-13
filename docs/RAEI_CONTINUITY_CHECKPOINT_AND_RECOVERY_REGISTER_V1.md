@@ -323,3 +323,12 @@ The method now calls `verify()` before reading and raises an integrity error whe
 - The correction does not change the checkpoint key model, provide independent checkpoint custody, or establish production readiness.
 
 PR #62 remains open and draft. At this checkpoint the candidate compares 457 commits ahead and 0 behind the recorded main SHA. No merge, deployment, Google authorization or live YouTube write occurred.
+
+
+## Atomic read-snapshot hardening — 13 November 2026
+
+A concurrency review found that integrity verification and checkpoint construction read related SQLite tables in separate autocommit SELECTs. Under WAL, a valid writer can commit between those reads, causing a mixed-time view (for example, readiness rows from before a commit and its event row from after it). This is a consistency defect, not evidence that an attacker can forge a valid HMAC.
+
+The readiness registry now holds one explicit read transaction while it reads readiness rows, activity events and append-only trigger metadata for `verify()`, and while it reads both tables for checkpoint snapshot digests. The approval-consumption store likewise holds one explicit read transaction across consumed and revoked approval tables when constructing checkpoint bytes. SQLite WAL readers retain a stable snapshot while concurrent writers commit; this behavior is documented by SQLite: https://www.sqlite.org/isolation.html.
+
+Adversarial interleaving tests arrange a real second-connection commit after the first table has been read. They assert that the in-flight verification/checkpoint snapshot remains internally consistent and that the concurrent commit is visible to a subsequent read. This does not replace independent HMAC checkpoint custody, and it does not make local SQLite storage tamper-proof.
