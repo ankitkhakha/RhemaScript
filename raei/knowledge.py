@@ -411,7 +411,7 @@ def search_knowledge(
     if not terms:
         return []
     matches = []
-    for item in list_knowledge(registry, evidence_root=evidence_root)
+    for item in list_knowledge(registry, evidence_root=evidence_root):
         if item["status"] != "APPROVED" and not include_pending:
             continue
         haystack = " ".join(
