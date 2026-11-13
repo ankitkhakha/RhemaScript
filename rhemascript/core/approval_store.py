@@ -290,7 +290,8 @@ class SQLiteApprovalConsumptionStore:
             consumed = db.execute(
                 """SELECT approval_id, nonce, issuer, actor_id, action, project_id,
                           project_version, request_id, issued_at, expires_at, key_id,
-                          consumed_at
+                          consumed_at, artifact_id, artifact_version, artifact_sha256,
+                          artifact_size_bytes
                    FROM consumed_approvals ORDER BY approval_id"""
             ).fetchall()
             revoked = db.execute(
