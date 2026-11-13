@@ -375,6 +375,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         self.assertEqual(list_governed_reviews(self.registry, evidence_root=self.evidence_root), [])
 
     def test_direct_governed_review_listing_reverifies_retained_evidence_bytes(self):
+        self.register_pending_knowledge("BWSF-01")
         result = record_knowledge_review(
             self.registry, self.verifier,
             self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"),
