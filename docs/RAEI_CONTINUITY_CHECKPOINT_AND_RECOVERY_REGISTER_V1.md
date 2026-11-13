@@ -291,3 +291,17 @@ The previously missing observation of resolved package versions is now captured 
 ### Remaining boundary
 
 This exact-head pass validates the repository's local contracts and synthetic tests. It does not close P1 evidence/history assurance, complete the clean-session human handover test, provide production identity/key custody, establish live YouTube authorization, or authorize merge, deployment or publishing.
+
+## 13. Validation of the continuity-register update — 13 November 2026
+
+The section 12 update was committed as `4c3f6902ef6389db85ed8dc2062ba13f4a06c1b4`. Both workflows completed successfully on that exact SHA:
+
+- Push CI run #1584: `43398537906` — success.
+- Pull-request CI run #1585: `43398545339` — success.
+- In both runs, dependency installation, the full local CI suite and IF-18 report upload succeeded.
+
+The IF-18 artifact from run #1583 was downloaded and its JSON inspected independently. The JSON file is 889 bytes and has SHA-256 `a7b11a7e5130fe1c99ac925ed32663772a1325ff328ff7a0952ab3140d43e7c6`. It records synthetic-only validation, read-only IF-18 operations, publishing disabled and no live Google connection attempt.
+
+At this observation, PR #62 remains open and draft, its head is `4c3f6902ef6389db85ed8dc2062ba13f4a06c1b4`, GitHub reports mergeable/clean, and the compare against main SHA `c44d8e9c0847bd220167945b967db74fcf12635f` is 454 commits ahead and 0 behind. This is a point-in-time repository state; recheck before any future integration decision.
+
+The next bounded work remains dependency reproducibility and adversarial review of evidence/history persistence. No lockfile has been invented, and no production or owner-only action has been performed.
