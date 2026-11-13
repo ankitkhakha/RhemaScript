@@ -62,11 +62,14 @@ class ApprovalVerifierTests(unittest.TestCase):
         payload.update(overrides)
         if payload["schema"] == "RhemaScript.ApprovalCredential.v3":
             action = payload["action"]
-            payload.update({
+            for name, value in {
                 "artifact_id": "ART-FINAL-001",
                 "artifact_version": "7",
                 "artifact_sha256": "a" * 64,
                 "artifact_size_bytes": 987654,
+            }.items():
+                payload.setdefault(name, value)
+            payload.update({
                 "subject_id": "subject-" + payload["actor_id"],
                 "actor_role": "director" if action == "FINAL_ACCEPTANCE" else "publisher",
                 "authn_context": "mfa",
