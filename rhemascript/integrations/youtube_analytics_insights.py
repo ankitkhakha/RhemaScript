@@ -267,7 +267,7 @@ def compare_analytics_periods(
                 change_pct = None
                 status = "ZERO_BASELINE"
             else:
-                change_pct = _decimal_text(delta_value / abs(previous_value) * 100)
+                change_pct = _decimal_text(delta_value / previous_value * 100)
                 status = "COMPARABLE"
         metrics[name] = {
             "aggregation": aggregation,
