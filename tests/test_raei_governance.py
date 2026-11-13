@@ -272,5 +272,86 @@ class RAEIGovernanceTests(unittest.TestCase):
             )
         self.assertEqual(self.used, set())
 
+    def resign(self, credential):
+        payload = {key: value for key, value in credential.items() if key != "signature"}
+        credential["signature"] = self.private_key.sign(
+            json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False, allow_nan=False).encode()
+        ).hex()
+        return credential
+
+    def test_disposition_rejects_same_authenticated_subject_even_with_distinct_actor_ids(self):
+        self.capture_finding("RS-FND-SUBJECT")
+        credentials = list(self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM"))
+        credentials[1]["subject_id"] = credentials[0]["subject_id"]
+        self.resign(credentials[1])
+        with self.assertRaisesRegex(RAEIGovernanceError, "distinct V3 authenticated subjects"):
+            record_finding_disposition(
+                self.registry, self.verifier, credentials,
+                finding_id="RS-FND-SUBJECT", finding_version="1.0",
+                project_id="RS-PWW-001", project_version="3.2",
+                request_id="review-request-0001", disposition="ACCEPTED",
+                rationale="Identity separation adversarial test.",
+                evidence_root=str(self.evidence_root), evidence=self.evidence,
+            )
+        self.assertEqual(list_governed_reviews(self.registry), [])
+
+    def test_knowledge_review_rejects_shared_authenticated_session(self):
+        self.register_pending_knowledge("BWSF-SHARED-SESSION")
+        credentials = list(self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"))
+        credentials[1]["identity_session_id"] = credentials[0]["identity_session_id"]
+        self.resign(credentials[1])
+        with self.assertRaisesRegex(RAEIGovernanceError, "distinct V3 authenticated subjects"):
+            record_knowledge_review(
+                self.registry, self.verifier, credentials,
+                knowledge_id="BWSF-SHARED-SESSION", knowledge_version="0.1",
+                project_id="RS-PWW-001", project_version="3.2",
+                request_id="review-request-0001", decision="APPROVED",
+                rationale="Shared-session adversarial test.",
+                evidence_root=str(self.evidence_root), evidence=self.evidence,
+            )
+        self.assertEqual(list_governed_reviews(self.registry), [])
+
+    def test_disposition_rejects_wrong_artifact_binding_before_consumption(self):
+        self.capture_finding("RS-FND-WRONG-ARTIFACT")
+        credentials = list(self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM"))
+        credentials[1]["artifact_sha256"] = "f" * 64
+        self.resign(credentials[1])
+        with self.assertRaisesRegex(RAEIGovernanceError, "binding does not match"):
+            record_finding_disposition(
+                self.registry, self.verifier, credentials,
+                finding_id="RS-FND-WRONG-ARTIFACT", finding_version="1.0",
+                project_id="RS-PWW-001", project_version="3.2",
+                request_id="review-request-0001", disposition="ACCEPTED",
+                rationale="Wrong artifact adversarial test.",
+                evidence_root=str(self.evidence_root), evidence=self.evidence,
+            )
+        self.assertEqual(self.used, set())
+        self.assertEqual(list_governed_reviews(self.registry), [])
+
+    def test_governed_review_rejects_legacy_v1_credentials(self):
+        self.capture_finding("RS-FND-LEGACY")
+        credentials = list(self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM"))
+        for item in credentials:
+            for field in (
+                "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes",
+                "subject_id", "actor_role", "authn_context", "authenticated_at",
+                "identity_session_id", "identity_policy_version", "identity_provider_id",
+            ):
+                item.pop(field, None)
+            item["schema"] = "RhemaScript.ApprovalCredential.v1"
+            self.resign(item)
+        with self.assertRaisesRegex(RAEIGovernanceError, "schema v2 or v3"):
+            record_finding_disposition(
+                self.registry, self.verifier, credentials,
+                finding_id="RS-FND-LEGACY", finding_version="1.0",
+                project_id="RS-PWW-001", project_version="3.2",
+                request_id="review-request-0001", disposition="ACCEPTED",
+                rationale="Legacy credential rejection test.",
+                evidence_root=str(self.evidence_root), evidence=self.evidence,
+            )
+        self.assertEqual(self.used, set())
+        self.assertEqual(list_governed_reviews(self.registry), [])
+
 if __name__ == "__main__":
     unittest.main()
