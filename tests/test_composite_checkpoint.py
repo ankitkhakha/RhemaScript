@@ -176,6 +176,31 @@ class CompositeCheckpointTests(unittest.TestCase):
             record,
         )
 
+    def test_stale_anchor_readback_reports_possible_committed_advance(self):
+        from dataclasses import replace
+        from datetime import timedelta
+
+        anchor = FakeAnchor()
+        original_read = anchor.read_latest
+
+        def stale_read():
+            record = original_read()
+            if record is None:
+                return None
+            return replace(record, resolved_at=anchor.now - timedelta(minutes=1))
+
+        anchor.read_latest = stale_read
+        with self.assertRaisesRegex(
+            CompositeCheckpointError, "advance may have committed.*reconcile latest generation",
+        ):
+            advance_composite_checkpoint_anchor(
+                self.manifest, manifest_key=self.manifest_key, anchor=anchor,
+                expected_generation=0, now=anchor.now,
+            )
+        # The remote compare-and-advance succeeded before its stale read-back
+        # was detected. Callers must reconcile; they must not blindly retry.
+        self.assertEqual(anchor.record.generation, 1)
+
     def test_anchor_rejects_future_dated_record(self):
         from dataclasses import replace
 
