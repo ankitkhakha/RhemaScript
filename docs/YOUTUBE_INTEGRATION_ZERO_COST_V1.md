@@ -160,7 +160,7 @@ Before owner-led Cloud and OAuth setup, follow [Google Connection Readiness V1](
 
 ### Authority trust boundary — production blocker
 
-The current `human_director_acceptance` and `publishing_authorisation` inputs are in-process boolean assertions. They are not authenticated, actor-attributed approval credentials. The Evidence Pack and six-gate checks validate project evidence and approval state, but they do not prove who supplied these booleans. This is acceptable only as a trusted local prototype boundary; do not expose the provider gateway as a remote service or accept authority dictionaries from untrusted callers. Before production or multi-user deployment, replace boolean-only authority with authenticated, actor-attributed, project/version-scoped approval records, including request binding, expiry and revocation.
+The YouTube upload path requires two verifier-issued, externally signed approval credentials (`FINAL_ACCEPTANCE` and `PUBLISH`) bound to the exact project, version, request and final-film artifact, with distinct authenticated actors. The gateway revalidates the consumed approvals immediately before provider transport. This is still not production identity certification: the issuer, IdP, signing-key custody, live key registry and authorization fencing must be deployed and independently reviewed. Caller-supplied boolean fields and generic authority dictionaries are not authenticated approvals. Generic `GENERATE`, `SPEND`, and `EXTERNAL_WRITE` mutations are blocked at the gateway until signed, identity-bound operation authority is implemented. Do not expose the provider gateway to untrusted callers.
 
 ### Analytics evidence hand-off — provenance requirement
 
