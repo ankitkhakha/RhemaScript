@@ -568,43 +568,43 @@ class YouTubeClient:
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
         )
-        self._gateway_project_id = project_id
-        self._gateway_source_version = project_version
-        self._gateway_authority = {"verified_approvals": verified_approvals}
-        self._gateway_request_id = request_id
-        self._gateway_artifact_binding = artifact_binding
-
-        metadata: dict[str, Any] = {
-            "snippet": {"title": title.strip(), "description": description,
-                        "categoryId": str(category_id), "tags": tags or []},
-            "status": {"privacyStatus": privacy_status, "selfDeclaredMadeForKids": made_for_kids},
-        }
-        if publish_at:
-            metadata["status"]["publishAt"] = publish_at
-        query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
-        headers = {
-            "Authorization": f"Bearer {self._token()}",
-            "Content-Type": "application/json; charset=UTF-8",
-            "X-Upload-Content-Type": "video/*",
-            "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
-        }
-        status, raw, response_headers = self._authorized_request(
-            f"{UPLOAD_BASE}?{query}", method="POST",
-            body=json.dumps(metadata).encode(), headers=headers,
-        )
-        location = response_headers.get("Location") or response_headers.get("location")
-        if status not in (200, 201) or not location:
-            raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
-        parsed = urlparse(location)
-        if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
-                or parsed.username or parsed.password or parsed.port not in (None, 443)
-                or parsed.fragment):
-            raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
-
-        total = artifact_binding["size_bytes"]
-        offset = 0
-        final_raw = b""
         with verified_video_stream as video:
+            self._gateway_project_id = project_id
+            self._gateway_source_version = project_version
+            self._gateway_authority = {"verified_approvals": verified_approvals}
+            self._gateway_request_id = request_id
+            self._gateway_artifact_binding = artifact_binding
+
+            metadata: dict[str, Any] = {
+                "snippet": {"title": title.strip(), "description": description,
+                            "categoryId": str(category_id), "tags": tags or []},
+                "status": {"privacyStatus": privacy_status, "selfDeclaredMadeForKids": made_for_kids},
+            }
+            if publish_at:
+                metadata["status"]["publishAt"] = publish_at
+            query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
+            headers = {
+                "Authorization": f"Bearer {self._token()}",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-Upload-Content-Type": "video/*",
+                "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
+            }
+            status, raw, response_headers = self._authorized_request(
+                f"{UPLOAD_BASE}?{query}", method="POST",
+                body=json.dumps(metadata).encode(), headers=headers,
+            )
+            location = response_headers.get("Location") or response_headers.get("location")
+            if status not in (200, 201) or not location:
+                raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
+            parsed = urlparse(location)
+            if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
+                    or parsed.username or parsed.password or parsed.port not in (None, 443)
+                    or parsed.fragment):
+                raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
+
+            total = artifact_binding["size_bytes"]
+            offset = 0
+            final_raw = b""
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
                 end = offset + len(chunk) - 1
@@ -640,22 +640,22 @@ class YouTubeClient:
                     video.seek(offset)
                 else:
                     raise YouTubeIntegrationError(f"resumable upload returned HTTP {status}")
-        try:
-            result = json.loads(final_raw)
-            video_id = result["id"]
-        except (ValueError, KeyError, TypeError):
-            raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
-        if not isinstance(video_id, str) or not video_id:
-            raise YouTubeIntegrationError("upload response contained an invalid video ID")
-        self._last_upload_context = {
-            "video_id": video_id,
-            "project_id": project_id,
-            "project_version": project_version,
-            "final_film_artifact_id": final_films[0]["artifact_id"],
-        }
-        return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
-                "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
-                "upload_completed": True, "verification_required": True}
+            try:
+                result = json.loads(final_raw)
+                video_id = result["id"]
+            except (ValueError, KeyError, TypeError):
+                raise YouTubeIntegrationError("upload completed without a verifiable video ID") from None
+            if not isinstance(video_id, str) or not video_id:
+                raise YouTubeIntegrationError("upload response contained an invalid video ID")
+            self._last_upload_context = {
+                "video_id": video_id,
+                "project_id": project_id,
+                "project_version": project_version,
+                "final_film_artifact_id": final_films[0]["artifact_id"],
+            }
+            return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
+                    "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
+                    "upload_completed": True, "verification_required": True}
 
     def set_thumbnail(self, video_id: str, image_path: str, *,
                       evidence_pack: dict[str, Any],
