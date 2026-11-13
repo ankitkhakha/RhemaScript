@@ -180,3 +180,10 @@ The synthetic SQLite model now appends a SHA-256 hash-chained event row in the s
 Checkpoint persistence also stores the exact canonical checkpoint payload in the separate local anchor database. If the caller loses the response after the anchor transaction commits, `get_latest_recovery_checkpoint()` can retrieve and verify the exact anchored checkpoint instead of creating a new sequence or guessing whether the prior operation committed. The write to the anchor and payload are one SQLite transaction. A test verifies retrieval of the exact checkpoint after simulated response loss.
 
 These controls provide local transaction consistency and tamper evidence only relative to the retained chain/anchor. A local database attacker can truncate or rewrite an unanchored tail, and an attacker able to replace both SQLite files can rewrite the entire history. The event chain is not an independent audit sink, immutable archive, signed ledger or production-grade anti-rollback boundary. Production requires external signed checkpoints, independent append-only audit acknowledgement, independently administered monotonic anchoring, and restore/fault-injection drills across separate trust domains.
+
+
+### Checkpoint-anchored event-history verification
+
+`verify_event_history()` additionally compares the current local event rows against the event-history prefix retained in the latest local recovery checkpoint. This detects deletion, reordering or rewriting of events that were included in that checkpoint, while allowing later legitimate events to extend the chain. It does not detect deletion of events appended after the latest checkpoint until a subsequent checkpoint anchors them. It also cannot resist an attacker who can rewrite both the state database and the local anchor database. The test suite covers deletion of a checkpointed event and verifies that checkpoint-byte integrity and current-history integrity are distinct checks.
+
+A durable checkpoint is JSON-serialized: SQLite row tuples are represented as JSON arrays on retrieval. Consumers should compare canonical serialized values rather than relying on Python tuple/list identity.
