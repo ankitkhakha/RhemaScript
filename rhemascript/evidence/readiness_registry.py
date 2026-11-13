@@ -155,7 +155,7 @@ class ReadinessRunRegistry:
             raise ValueError("unsupported external activity event type")
         if event_type in {"FINDING_DISPOSITIONED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("governed review events require append_governed_activity_event")
-        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED"}:
+        if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED"}:
             raise ValueError("authenticated finding lifecycle events require append_authenticated_finding_lifecycle_event")
         for name, value in (("project_id", project_id), ("subject_id", subject_id)):
             if value is not None and (not isinstance(value, str) or not value.strip()):
@@ -666,9 +666,13 @@ class ReadinessRunRegistry:
                 raise ValueError("implementation requires the exact captured finding and approved plan")
             plan_event_id, plan_payload = plan
             actual_plan_binding = plan_payload.get("evidence_binding")
+            plan_auth = plan_payload.get("authorization", {})
             if (payload["plan_event_id"] != plan_event_id
                     or payload["plan_evidence_binding"] != actual_plan_binding
-                    or plan_payload.get("finding_version") != finding_version):
+                    or plan_payload.get("finding_version") != finding_version
+                    or plan_auth.get("project_version") != project_version
+                    or plan_auth.get("identity_provider_id") != approval.identity_provider_id
+                    or plan_auth.get("identity_policy_version") != approval.identity_policy_version):
                 db.rollback()
                 raise ValueError("implementation does not bind the exact approved plan event and evidence")
             if sum(1 for eid, raw in plans if json.loads(raw).get("finding_version") == finding_version) != 1:
