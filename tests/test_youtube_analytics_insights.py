@@ -199,6 +199,35 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "unverified snapshot"):
             compare_analytics_periods(current, previous)
 
+    def test_verifier_recomputes_comparison_from_exact_source_snapshots(self):
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 5, 1.0, 12.0, 1]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 12.0, 1]])
+        result = compare_analytics_periods(current, previous)
+        self.assertTrue(verify_analytics_period_comparison(result, current, previous))
+
+        forged = deepcopy(result)
+        forged["metrics"]["views"]["current_value"] = "999"
+        forged["metrics"]["views"]["absolute_change"] = "994"
+        forged["metrics"]["views"]["percentage_change"] = "19880"
+        from rhemascript.integrations.youtube_analytics_insights import _canonical_digest
+        forged["comparison_sha256"] = _canonical_digest({
+            key: value for key, value in forged.items() if key != "comparison_sha256"
+        })
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "exact source snapshots"):
+            verify_analytics_period_comparison(forged, current, previous)
+
+    def test_verifier_rejects_rehashed_internally_inconsistent_metric(self):
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 5, 1.0, 12.0, 1]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 12.0, 1]])
+        forged = compare_analytics_periods(current, previous)
+        forged["metrics"]["views"]["absolute_change"] = "100"
+        from rhemascript.integrations.youtube_analytics_insights import _canonical_digest
+        forged["comparison_sha256"] = _canonical_digest({
+            key: value for key, value in forged.items() if key != "comparison_sha256"
+        })
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "absolute change is inconsistent"):
+            verify_analytics_period_comparison(forged)
+
     def test_comparison_digest_detects_tampering(self):
         previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 5, 1.0, 12.0, 1]])
         current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 12.0, 1]])
