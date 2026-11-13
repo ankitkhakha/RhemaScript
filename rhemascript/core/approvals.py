@@ -571,26 +571,29 @@ class ApprovalVerifier:
         now = now.astimezone(timezone.utc)
         if approval.expires_at <= now:
             raise ApprovalError("approval expired before provider transport")
-        if self._consumption_state is not None:
-            try:
-                read_state = getattr(self._consumption_state, "read_consumption_state", None)
-                if not callable(read_state):
-                    raise ApprovalError(
-                        "approval store does not support a consistent consumption/revocation snapshot"
-                    )
-                still_consumed, revoked = read_state(
-                    approval.approval_id, approval.nonce,
-                )
-            except ApprovalError:
-                raise
-            except Exception:
+        if self._consumption_state is None:
+            raise ApprovalError(
+                "durable approval consumption/revocation snapshot is required before provider transport"
+            )
+        try:
+            read_state = getattr(self._consumption_state, "read_consumption_state", None)
+            if not callable(read_state):
                 raise ApprovalError(
-                    "approval consumption/revocation state is unavailable before provider transport"
-                ) from None
-            if still_consumed is not True or revoked is not False:
-                raise ApprovalError(
-                    "approval is no longer consumed or has been revoked before provider transport"
+                    "approval store does not support a consistent consumption/revocation snapshot"
                 )
+            still_consumed, revoked = read_state(
+                approval.approval_id, approval.nonce,
+            )
+        except ApprovalError:
+            raise
+        except Exception:
+            raise ApprovalError(
+                "approval consumption/revocation state is unavailable before provider transport"
+            ) from None
+        if still_consumed is not True or revoked is not False:
+            raise ApprovalError(
+                "approval is no longer consumed or has been revoked before provider transport"
+            )
         public_key, record = self._resolve_verification_key(approval.key_id)
         fingerprint = hashlib.sha256(public_key).hexdigest()
         if not hmac.compare_digest(fingerprint, approval.verification_key_fingerprint or ""):
