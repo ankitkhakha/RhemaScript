@@ -336,19 +336,6 @@ class YouTubeClient:
         if (parsed.scheme != "https" or parsed.hostname not in allowed_hosts
                 or parsed.username or parsed.password or parsed.port not in (None, 443)):
             raise YouTubeIntegrationError("request URL is outside the official HTTPS Google host allowlist")
-        if self._gateway is None and self._transport is not None:
-            safe_methods = {"GET", "HEAD", "OPTIONS"}
-            is_exact_token_exchange = (
-                method.upper() == "POST"
-                and parsed.hostname == "oauth2.googleapis.com"
-                and parsed.path == "/token"
-                and not parsed.query
-                and not parsed.fragment
-            )
-            if method.upper() not in safe_methods and not is_exact_token_exchange:
-                raise YouTubeIntegrationError(
-                    "injected test transport cannot dispatch provider resource mutations; configure the IF-18 gateway"
-                )
         req = Request(url, data=body, headers=headers or {}, method=method)
         try:
             if self._gateway is not None:
