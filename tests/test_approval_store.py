@@ -717,6 +717,44 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.assertEqual(record["state"], "CREATING")
         self.assertIsNone(record["session_url_sha256"])
 
+    def test_idle_active_session_can_be_status_probed_after_process_restart(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        restarted = SQLitePublishSessionRegistry(self.path)
+        self.assertTrue(restarted.begin_publish_reconciliation(
+            **args, owner_id="gateway-restarted", total=10, lease_seconds=60,
+        ))
+        self.assertTrue(restarted.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-restarted", status=308, range_header=None,
+        ))
+        self.assertTrue(restarted.finalize_publish_session_operation(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-restarted",
+        ))
+        record = restarted.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "ACTIVE")
+        self.assertEqual(record["acknowledged_offset"], 0)
+
+    def test_idle_active_status_probe_cannot_advance_acknowledged_offset(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        restarted = SQLitePublishSessionRegistry(self.path)
+        self.assertTrue(restarted.begin_publish_reconciliation(
+            **args, owner_id="gateway-restarted", total=10, lease_seconds=60,
+        ))
+        self.assertFalse(restarted.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-restarted", status=308, range_header="bytes=0-4",
+        ))
+        record = restarted.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "INDETERMINATE")
+        self.assertEqual(record["acknowledged_offset"], 0)
+
     def test_registry_state_survives_reopening_database(self):
         self.reserve_and_bind()
         reopened = SQLitePublishSessionRegistry(self.path)

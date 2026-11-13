@@ -197,6 +197,7 @@ def _authorise_project_publish(
     approval_verifier: Any, approval_credentials: tuple[object, ...],
     approval_request_id: str,
     upload_file_path: str | None = None,
+    publish_session_registry: Any | None = None,
 ) -> tuple[str, str, tuple[Any, ...], str, dict[str, Any], Any | None]:
     """Byte-verify the final film, then consume approvals signed for its exact digest."""
     from rhemascript.evidence import validate_evidence_pack, EvidencePackError
@@ -263,9 +264,40 @@ def _authorise_project_publish(
             "project_version": validated.project_version, "request_id": approval_request_id,
             "artifact_binding": artifact_binding,
         } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
-        approvals = approval_verifier.verify_many_and_consume(
-            approval_credentials, expected, require_distinct_actors=True,
-        )
+        existing_session = None
+        if publish_session_registry is not None:
+            try:
+                existing_session = publish_session_registry.get_publish_session(
+                    project_id=validated.project_id,
+                    project_version=validated.project_version,
+                    request_id=approval_request_id,
+                )
+            except Exception:
+                raise ApprovalError("existing publish-session state could not be verified") from None
+        if existing_session is not None:
+            try:
+                approvals = approval_verifier.verify_many_existing_consumed(
+                    approval_credentials, expected,
+                    consumed_records=publish_session_registry.list_consumed_approval_records(),
+                    is_revoked=publish_session_registry.is_revoked,
+                    require_distinct_actors=True,
+                )
+            except Exception as exc:
+                raise ApprovalError(f"existing consumed approvals cannot authorize session resume: {exc}") from None
+            from rhemascript.interfaces.external import _publish_approval_fingerprint
+            if _publish_approval_fingerprint(approvals) != existing_session.get("approval_fingerprint"):
+                raise ApprovalError("resume approvals do not match the existing publish-session fingerprint")
+            if (
+                existing_session.get("artifact_id") != artifact_binding["artifact_id"]
+                or existing_session.get("artifact_version") != artifact_binding["artifact_version"]
+                or existing_session.get("artifact_sha256") != artifact_binding["sha256"]
+                or existing_session.get("artifact_size_bytes") != artifact_binding["size_bytes"]
+            ):
+                raise ApprovalError("resume artifact does not match the existing publish-session binding")
+        else:
+            approvals = approval_verifier.verify_many_and_consume(
+                approval_credentials, expected, require_distinct_actors=True,
+            )
         return validated.project_id, validated.project_version, approvals, approval_request_id, artifact_binding, upload_stream
     except (EvidencePackError, EvidencePackIntegrityError, ApprovalError, GateError, ValueError, TypeError, OSError) as exc:
         if upload_stream is not None:
@@ -725,6 +757,26 @@ class YouTubeClient:
                 or not str(category_id).isdigit()):
             raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
+        if self._gateway is None:
+            raise YouTubeIntegrationError(
+                "YouTube publishing requires an explicitly configured IF-18 gateway"
+            )
+        from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+        from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
+        if not isinstance(
+            getattr(self._gateway, "publish_session_registry", None),
+            SQLitePublishSessionRegistry,
+        ):
+            raise YouTubeIntegrationError(
+                "durable SQLite publish-session registry is required before approval consumption"
+            )
+        if not isinstance(
+            getattr(self._gateway, "session_url_vault", None),
+            SQLiteEncryptedSessionUrlVault,
+        ):
+            raise YouTubeIntegrationError(
+                "encrypted SQLite session URL vault is required before approval consumption"
+            )
         project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
             evidence_pack=evidence_pack,
             final_film_evidence_ref=final_film_evidence_ref,
@@ -733,17 +785,9 @@ class YouTubeClient:
             approval_verifier=approval_verifier,
             approval_credentials=approval_credentials,
             approval_request_id=approval_request_id,
+            publish_session_registry=getattr(self._gateway, "publish_session_registry", None),
         )
         with verified_video_stream as video:
-            if self._gateway is not None:
-                from rhemascript.core.approval_store import SQLitePublishSessionRegistry
-                if not isinstance(
-                    getattr(self._gateway, "publish_session_registry", None),
-                    SQLitePublishSessionRegistry,
-                ):
-                    raise YouTubeIntegrationError(
-                        "durable SQLite publish-session registry is required before provider upload"
-                    )
             self._gateway_project_id = project_id
             self._gateway_source_version = project_version
             self._gateway_authority = {"verified_approvals": verified_approvals}
@@ -764,23 +808,52 @@ class YouTubeClient:
                 "X-Upload-Content-Type": "video/*",
                 "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
             }
-            status, raw, response_headers = self._authorized_request(
-                f"{UPLOAD_BASE}?{query}", method="POST",
-                body=json.dumps(metadata).encode(), headers=headers,
-            )
-            location = response_headers.get("Location") or response_headers.get("location")
-            if status not in (200, 201) or not location:
-                raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
-            parsed = urlparse(location)
-            if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
-                    or parsed.username or parsed.password or parsed.port not in (None, 443)
-                    or parsed.fragment):
-                raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
-
             total = artifact_binding["size_bytes"]
-            offset = 0
+            registry = self._gateway.publish_session_registry
+            existing_session = registry.get_publish_session(
+                project_id=project_id, project_version=project_version, request_id=request_id,
+            )
             final_raw = b""
+            offset = 0
             reconciliation_attempts = 0
+            if existing_session is not None:
+                location = self._gateway.recover_publish_session_url(
+                    project_id=project_id,
+                    project_version=project_version,
+                    request_id=request_id,
+                    verified_approvals=verified_approvals,
+                    artifact_binding={
+                        "artifact_id": artifact_binding["artifact_id"],
+                        "artifact_version": artifact_binding["artifact_version"],
+                        "artifact_sha256": artifact_binding["sha256"],
+                        "artifact_size_bytes": artifact_binding["size_bytes"],
+                    },
+                )
+                reconciled_offset, reconciled_result = self._query_upload_status(location, total)
+                if reconciled_result:
+                    final_raw = reconciled_result
+                    offset = total
+                else:
+                    if reconciled_offset >= total:
+                        raise YouTubeIntegrationError(
+                            "provider reports all bytes acknowledged without a completed video resource; refusing replay",
+                            code="INDETERMINATE_WRITE",
+                        )
+                    offset = reconciled_offset
+                    video.seek(offset)
+            else:
+                status, raw, response_headers = self._authorized_request(
+                    f"{UPLOAD_BASE}?{query}", method="POST",
+                    body=json.dumps(metadata).encode(), headers=headers,
+                )
+                location = response_headers.get("Location") or response_headers.get("location")
+                if status not in (200, 201) or not location:
+                    raise YouTubeIntegrationError("YouTube did not create a resumable upload session")
+                parsed = urlparse(location)
+                if (parsed.scheme != "https" or parsed.hostname not in {"www.googleapis.com", "youtube.googleapis.com"}
+                        or parsed.username or parsed.password or parsed.port not in (None, 443)
+                        or parsed.fragment or not (parsed.path == "/upload/youtube/v3/videos" or parsed.path.startswith("/upload/youtube/v3/videos/"))):
+                    raise YouTubeIntegrationError("YouTube returned an untrusted upload-session URL")
             while offset < total:
                 chunk = video.read(min(self.config.chunk_size, total - offset))
                 end = offset + len(chunk) - 1

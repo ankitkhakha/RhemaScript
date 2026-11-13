@@ -48,6 +48,7 @@ _VERIFIED_APPROVAL_TOKEN = object()
 _VERIFIED_APPROVAL_LOCK = threading.Lock()
 _VERIFIED_APPROVALS: weakref.WeakValueDictionary[int, "VerifiedApproval"] = weakref.WeakValueDictionary()
 _CONSUMED_APPROVALS: weakref.WeakValueDictionary[int, "VerifiedApproval"] = weakref.WeakValueDictionary()
+_RESUMED_APPROVALS: weakref.WeakValueDictionary[int, "VerifiedApproval"] = weakref.WeakValueDictionary()
 
 
 
@@ -97,6 +98,14 @@ def is_consumed_verified_approval(value: object) -> bool:
         return False
     with _VERIFIED_APPROVAL_LOCK:
         return _CONSUMED_APPROVALS.get(id(value)) is value
+
+
+def is_resumed_verified_approval(value: object) -> bool:
+    """Identify consumed approval objects authorized only to resume an existing session."""
+    if not is_consumed_verified_approval(value):
+        return False
+    with _VERIFIED_APPROVAL_LOCK:
+        return _RESUMED_APPROVALS.get(id(value)) is value
 
 
 class ApprovalVerifier:
@@ -545,4 +554,97 @@ class ApprovalVerifier:
         with _VERIFIED_APPROVAL_LOCK:
             for item in verified:
                 _CONSUMED_APPROVALS[id(item)] = item
+        return tuple(verified)
+
+    def verify_many_existing_consumed(
+        self,
+        credentials: Sequence[object],
+        expectations: Sequence[Mapping[str, str]],
+        *,
+        consumed_records: Sequence[Mapping[str, object]],
+        is_revoked: Callable[[str, str], bool],
+        require_distinct_actors: bool = True,
+    ) -> tuple[VerifiedApproval, ...]:
+        """Reverify already-consumed approvals for one existing publish session.
+
+        This method never consumes a credential and marks returned objects as
+        resume-only. The gateway must reject them for new session creation.
+        """
+        if (not isinstance(credentials, (tuple, list)) or not credentials
+                or not isinstance(expectations, (tuple, list))
+                or len(credentials) != len(expectations)
+                or not isinstance(consumed_records, (tuple, list))
+                or not callable(is_revoked)):
+            raise ApprovalError("existing-consumed approval batch has invalid inputs")
+        verified = []
+        for credential, expected in zip(credentials, expectations):
+            if (not isinstance(expected, Mapping)
+                    or set(expected) not in (
+                        {"action", "project_id", "project_version", "request_id"},
+                        {"action", "project_id", "project_version", "request_id", "artifact_binding"},
+                    )):
+                raise ApprovalError("approval expectation has an invalid shape")
+            scope = dict(expected)
+            artifact_binding = scope.pop("artifact_binding", None)
+            if any(not isinstance(scope.get(field), str) or not _ID.fullmatch(scope[field])
+                   for field in ("action", "project_id", "project_version", "request_id")):
+                raise ApprovalError("approval expectation contains an invalid scope value")
+            verified.append(self._verify_one(credential, artifact_binding=artifact_binding, **scope))
+        if self._key_registry is not None:
+            for item in verified:
+                current_key, current_record = self._resolve_verification_key(item.key_id)
+                if (current_record is None or current_record.status != "ACTIVE"
+                        or not hmac.compare_digest(
+                            hashlib.sha256(current_key).hexdigest(),
+                            item.verification_key_fingerprint or "",
+                        )):
+                    raise ApprovalError("verification key changed or was revoked before session resume")
+        approval_ids = [item.approval_id for item in verified]
+        nonces = [item.nonce for item in verified]
+        if len(set(approval_ids)) != len(approval_ids) or len(set(nonces)) != len(nonces):
+            raise ApprovalError("approval batch contains duplicate IDs or nonces")
+        if require_distinct_actors and len({item.actor_id for item in verified}) != len(verified):
+            raise ApprovalError("approval batch requires distinct authenticated actors")
+        records = [dict(record) for record in consumed_records if isinstance(record, Mapping)]
+        for item in verified:
+            matches = [
+                record for record in records
+                if record.get("approval_id") == item.approval_id or record.get("nonce") == item.nonce
+            ]
+            if len(matches) != 1:
+                raise ApprovalError("exact consumed approval record is unavailable for session resume")
+            record = matches[0]
+            if record.get("approval_id") != item.approval_id or record.get("nonce") != item.nonce:
+                raise ApprovalError("consumed approval ID/nonce pair does not match the signed credential")
+            if record.get("consumed_at") is None:
+                raise ApprovalError("approval has no durable consumption record")
+            scalar_fields = (
+                "issuer", "actor_id", "action", "project_id", "project_version",
+                "request_id", "key_id", "artifact_id", "artifact_version",
+                "artifact_sha256", "artifact_size_bytes", "credential_schema",
+                "signature", "subject_id", "actor_role", "authn_context",
+                "identity_session_id", "identity_policy_version", "identity_provider_id",
+                "identity_max_authentication_age_seconds", "identity_clock_skew_seconds",
+            )
+            for field in scalar_fields:
+                if record.get(field) != getattr(item, field, None):
+                    raise ApprovalError("persisted consumed approval differs from the signed credential")
+            for field in ("issued_at", "expires_at"):
+                if self._timestamp(record.get(field), field) != getattr(item, field):
+                    raise ApprovalError("persisted consumed approval timestamps do not match the signed credential")
+            if item.authenticated_at is None:
+                if record.get("authenticated_at") is not None:
+                    raise ApprovalError("persisted identity timestamp differs from the signed credential")
+            elif self._timestamp(record.get("authenticated_at"), "authenticated_at") != item.authenticated_at:
+                raise ApprovalError("persisted identity timestamp differs from the signed credential")
+            try:
+                revoked = is_revoked(item.approval_id, item.nonce)
+            except Exception:
+                raise ApprovalError("approval revocation state could not be verified for session resume") from None
+            if revoked is not False:
+                raise ApprovalError("revoked or unverifiable approval cannot resume a publish session")
+        with _VERIFIED_APPROVAL_LOCK:
+            for item in verified:
+                _CONSUMED_APPROVALS[id(item)] = item
+                _RESUMED_APPROVALS[id(item)] = item
         return tuple(verified)
