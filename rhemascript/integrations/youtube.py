@@ -521,17 +521,7 @@ class YouTubeClient:
         The credentials must be externally issued, independently authenticated,
         project/version/request-bound, distinct-actor approvals. The safe default is private.
         """
-        project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
-            evidence_pack=evidence_pack,
-            final_film_evidence_ref=final_film_evidence_ref,
-            evidence_root=evidence_root,
-            upload_file_path=file_path,
-            approval_verifier=approval_verifier,
-            approval_credentials=approval_credentials,
-            approval_request_id=approval_request_id,
-        )
-        # Resolve the exact final-film association before any provider request.
-        # Do not upload first and discover an invalid Evidence Pack afterwards.
+        # Resolve the evidence chain before approval consumption or provider access.
         from rhemascript.evidence import validate_evidence_pack
         try:
             validated_pack = validate_evidence_pack(evidence_pack)
@@ -548,11 +538,6 @@ class YouTubeClient:
             raise YouTubeIntegrationError(
                 "upload requires one approved final-film artifact matching the evidence reference"
             )
-        self._gateway_project_id = project_id
-        self._gateway_source_version = project_version
-        self._gateway_authority = {"verified_approvals": verified_approvals}
-        self._gateway_request_id = request_id
-        self._gateway_artifact_binding = artifact_binding
         if not isinstance(title, str) or not title.strip() or len(title) > 100:
             raise YouTubeIntegrationError("title must contain 1 to 100 characters")
         if not isinstance(description, str) or len(description) > 5000:
@@ -574,6 +559,21 @@ class YouTubeClient:
                 or not str(category_id).isdigit()):
             raise YouTubeIntegrationError("category_id must be a numeric YouTube category ID")
 
+        project_id, project_version, verified_approvals, request_id, artifact_binding, verified_video_stream = _authorise_project_publish(
+            evidence_pack=evidence_pack,
+            final_film_evidence_ref=final_film_evidence_ref,
+            evidence_root=evidence_root,
+            upload_file_path=file_path,
+            approval_verifier=approval_verifier,
+            approval_credentials=approval_credentials,
+            approval_request_id=approval_request_id,
+        )
+        self._gateway_project_id = project_id
+        self._gateway_source_version = project_version
+        self._gateway_authority = {"verified_approvals": verified_approvals}
+        self._gateway_request_id = request_id
+        self._gateway_artifact_binding = artifact_binding
+
         metadata: dict[str, Any] = {
             "snippet": {"title": title.strip(), "description": description,
                         "categoryId": str(category_id), "tags": tags or []},
@@ -586,7 +586,7 @@ class YouTubeClient:
             "Authorization": f"Bearer {self._token()}",
             "Content-Type": "application/json; charset=UTF-8",
             "X-Upload-Content-Type": "video/*",
-            "X-Upload-Content-Length": str(path.stat().st_size),
+            "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
         }
         status, raw, response_headers = self._authorized_request(
             f"{UPLOAD_BASE}?{query}", method="POST",
