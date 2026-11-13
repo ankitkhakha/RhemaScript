@@ -73,6 +73,9 @@ def _validate_analytics_request(params: dict[str, Any]) -> tuple[list[str], list
     """Validate query syntax only; Google's report-specific matrix remains authoritative."""
     if not isinstance(params, dict):
         raise YouTubeIntegrationError("Analytics query parameters must be an object")
+    allowed_parameters = {"ids", "startDate", "endDate", "metrics", "dimensions", "filters"}
+    if set(params) - allowed_parameters:
+        raise YouTubeIntegrationError("Analytics query contains unsupported parameters")
     metrics = _analytics_identifiers(params.get("metrics"), "metrics", required=True)
     dimensions = _analytics_identifiers(params.get("dimensions", ""), "dimensions", required=False)
     if params.get("ids") != "channel==MINE":
