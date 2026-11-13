@@ -75,6 +75,36 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ApprovalStoreError, "already exists"):
             export_checkpoint_archive(self.store, self.archive, key=self.key)
 
+    def test_archive_verification_rejects_symbolic_link(self):
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        link = self.archive_dir / "checkpoint-link.json"
+        link.symlink_to(self.archive)
+        with self.assertRaisesRegex(ApprovalStoreError, "symbolic link"):
+            verify_checkpoint_archive(link, key=self.key)
+
+    def test_archive_verification_rejects_oversized_file(self):
+        from rhemascript.core.approval_archive import MAX_ARCHIVE_BYTES
+        oversized = self.archive_dir / "oversized.json"
+        oversized.write_bytes(b"x" * (MAX_ARCHIVE_BYTES + 1))
+        os.chmod(oversized, 0o600)
+        with self.assertRaisesRegex(ApprovalStoreError, "bounded"):
+            verify_checkpoint_archive(oversized, key=self.key)
+
+    def test_archive_verification_rejects_malformed_timestamp(self):
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        envelope = json.loads(self.archive.read_text(encoding="utf-8"))
+        envelope["created_at"] = "not-a-timestamp"
+        signed = {name: envelope[name] for name in (
+            "schema", "created_at", "snapshot_sha256", "snapshot_b64"
+        )}
+        import hashlib, hmac
+        import rhemascript.core.approval_archive as archive_module
+        envelope["hmac_sha256"] = hmac.new(self.key, archive_module._canonical(signed), hashlib.sha256).hexdigest()
+        self.archive.write_text(json.dumps(envelope), encoding="utf-8")
+        os.chmod(self.archive, 0o600)
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
+
     def test_archive_requires_external_key(self):
         with self.assertRaisesRegex(ValueError, "at least 32 bytes"):
             export_checkpoint_archive(self.store, self.archive, key=b"short")
