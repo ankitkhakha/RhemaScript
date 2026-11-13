@@ -38,6 +38,10 @@ REQUIRED_SCOPES = (
 class YouTubeIntegrationError(RuntimeError):
     """Sanitised error for YouTube integration failures."""
 
+    def __init__(self, message: str, *, code: str | None = None):
+        super().__init__(message)
+        self.code = code
+
 
 class _NoRedirect(HTTPRedirectHandler):
     """Reject redirects so credentials and media never follow an untrusted hop."""
@@ -313,6 +317,30 @@ class YouTubeClient:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if status != 200:
+            code = None
+            try:
+                error_payload = json.loads(raw)
+                candidate = error_payload.get("error") if isinstance(error_payload, dict) else None
+                if candidate in {"invalid_grant", "invalid_client", "unauthorized_client",
+                                 "invalid_scope", "invalid_request"}:
+                    code = candidate
+            except (ValueError, TypeError):
+                pass
+            if code == "invalid_grant":
+                raise YouTubeIntegrationError(
+                    "Google rejected the stored refresh token (invalid_grant); reauthorization may be required after verifying the OAuth client configuration.",
+                    code=code,
+                )
+            if code == "invalid_client":
+                raise YouTubeIntegrationError(
+                    "Google rejected the OAuth client configuration (invalid_client); verify the matching Desktop client ID and secret.",
+                    code=code,
+                )
+            if code in {"unauthorized_client", "invalid_scope", "invalid_request"}:
+                raise YouTubeIntegrationError(
+                    "Google rejected the OAuth request configuration; inspect the local client and scope settings.",
+                    code=code,
+                )
             raise YouTubeIntegrationError("Google OAuth token refresh failed")
         try:
             token = json.loads(raw)["access_token"]
