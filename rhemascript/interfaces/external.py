@@ -365,10 +365,15 @@ class ExternalIntegrationGateway:
             except AuthorityError:
                 raise ExternalIntegrationError("consequential operation lacks explicit authority") from None
 
+        # Bind the query without persisting it: Google read and resumable
+        # endpoints use query parameters that can materially change the request.
+        # Hashing prevents secrets or opaque upload IDs from entering audit logs.
+        query_digest = sha256(parsed.query.encode("utf-8")).digest()
         fingerprint = sha256(
             interface_id.encode() + b":" + operation.upper().encode() + b":" +
             method.upper().encode() + b":" + parsed.hostname.encode() + b":" +
-            parsed.path.encode() + b":" + sha256(body or b"").digest()
+            parsed.path.encode() + b":" + query_digest + b":" +
+            sha256(body or b"").digest()
         ).hexdigest()
         event = {"interface_id": interface_id, "provider": binding.provider_name,
                  "request_id": request_id, "project_id": project_id,
