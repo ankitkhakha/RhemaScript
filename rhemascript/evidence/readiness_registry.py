@@ -345,12 +345,12 @@ class ReadinessRunRegistry:
             raise ValueError("finding lifecycle approval is not bound to its evidence or identity claims")
         if event_type == "FINDING_RESEARCHED":
             required = {
-                "finding_id", "finding_version", "research_question", "methodology",
-                "findings", "knowledge_gaps", "limitations", "evidence_binding",
-                "evidence_refs", "created_at_utc",
+                "schema", "finding_id", "finding_version", "research_question", "methodology",
+                "findings", "knowledge_gaps", "limitations", "evidence_id", "evidence_version",
+                "evidence_binding", "evidence_refs", "created_at_utc",
             }
-            if set(payload) != required:
-                raise ValueError("research event payload has an invalid field set")
+            if set(payload) != required or payload.get("schema") != "raei-finding-research-v1":
+                raise ValueError("research event payload has an invalid field set or schema")
             for field in ("research_question", "methodology", "created_at_utc"):
                 if not isinstance(payload.get(field), str) or not payload[field].strip():
                     raise ValueError(f"{field} must be non-empty text")
@@ -360,12 +360,12 @@ class ReadinessRunRegistry:
                     raise ValueError(f"{field} must be a list of non-empty strings")
         else:
             required = {
-                "finding_id", "finding_version", "outcome", "environment", "steps",
-                "expected_behavior", "observed_behavior", "evidence_binding",
-                "evidence_refs", "created_at_utc",
+                "schema", "finding_id", "finding_version", "outcome", "environment", "steps",
+                "expected_behavior", "observed_behavior", "evidence_id", "evidence_version",
+                "evidence_binding", "evidence_refs", "created_at_utc",
             }
-            if set(payload) != required:
-                raise ValueError("reproduction event payload has an invalid field set")
+            if set(payload) != required or payload.get("schema") != "raei-finding-reproduction-v1":
+                raise ValueError("reproduction event payload has an invalid field set or schema")
             if payload.get("outcome") not in {"REPRODUCED", "NOT_REPRODUCED", "INCONCLUSIVE"}:
                 raise ValueError("reproduction outcome is unsupported")
             for field in ("environment", "expected_behavior", "observed_behavior", "created_at_utc"):
@@ -374,6 +374,9 @@ class ReadinessRunRegistry:
             if (not isinstance(payload.get("steps"), list) or not payload["steps"]
                     or any(not isinstance(item, str) or not item.strip() for item in payload["steps"])):
                 raise ValueError("reproduction steps must be a non-empty list of strings")
+        if (payload.get("evidence_id") != binding["evidence_id"]
+                or payload.get("evidence_version") != binding["evidence_version"]):
+            raise ValueError("finding lifecycle evidence ID/version does not match its binding")
         enriched = dict(payload)
         enriched["authorization"] = {
             "issuer": approval.issuer,
@@ -399,6 +402,16 @@ class ReadinessRunRegistry:
             raise ValueError("cannot append to an invalid activity history")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT event_type,project_id,subject_id,payload_json FROM activity_events WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if existing:
+                if existing != (event_type, project_id, finding_id, encoded):
+                    db.rollback()
+                    raise ReadinessReplayError("finding lifecycle event ID was replayed with different data")
+                db.commit()
+                return False
             captured_rows = db.execute(
                 """SELECT payload_json FROM activity_events
                 WHERE event_type='FINDING_CAPTURED' AND project_id=? AND subject_id=?
@@ -457,16 +470,6 @@ class ReadinessRunRegistry:
                         or (submitter and approval.subject_id == submitter)):
                     db.rollback()
                     raise ValueError("reproduction requires an independent human subject")
-            row = db.execute(
-                "SELECT event_type,project_id,subject_id,payload_json FROM activity_events WHERE event_id=?",
-                (event_id,),
-            ).fetchone()
-            if row:
-                if row != (event_type, project_id, finding_id, encoded):
-                    db.rollback()
-                    raise ReadinessReplayError("finding lifecycle event ID was replayed with different data")
-                db.commit()
-                return False
             self._append_event_tx(db, event_id, event_type, normalised, project_id, finding_id)
             db.commit()
         return True
