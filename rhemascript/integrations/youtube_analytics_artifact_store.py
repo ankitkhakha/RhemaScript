@@ -1,7 +1,6 @@
 """Safe, offline persistence for verified YouTube Analytics evidence objects."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -43,7 +42,9 @@ def _canonical_json(value: Any) -> bytes:
 
 def _open_parent(root: str | os.PathLike[str], relative_path: str) -> tuple[int, str, list[int]]:
     if not isinstance(relative_path, str) or not relative_path.strip() or "\\" in relative_path:
-        raise YouTubeAnalyticsArtifactStoreError("artifact path must be a canonical relative POSIX path")
+        raise YouTubeAnalyticsArtifactStoreError(
+            "artifact path must be a canonical relative POSIX path"
+        )
     rel = PurePosixPath(relative_path)
     if rel.is_absolute() or not rel.parts or any(part in ("", ".", "..") for part in rel.parts):
         raise YouTubeAnalyticsArtifactStoreError("artifact path must stay beneath evidence root")
@@ -93,11 +94,12 @@ def persist_analytics_evidence_artifact(
     current_snapshot_artifact_id: str | None = None,
     previous_snapshot_artifact_id: str | None = None,
 ) -> dict[str, Any]:
-    """Persist a verified snapshot/comparison without overwriting existing evidence.
+    """Persist verified evidence without overwriting; return a DRAFT pack record.
 
-    The returned artifact record is DRAFT. File-byte SHA-256 and the payload's
-    internal digest are kept as separate values. Parent directories must already
-    exist; this routine never creates directories or follows symlinks.
+    Parent directories must already exist. No symlink is followed and an existing
+    destination is never replaced. The internal digest and file-byte digest are
+    separate values. DRAFT is retained even after byte verification; verification
+    does not confer approval or provider authenticity.
     """
     artifact_id = _required_text(artifact_id, "artifact_id")
     project_id = _required_text(project_id, "project_id")
@@ -108,11 +110,10 @@ def persist_analytics_evidence_artifact(
 
     artifact_type = payload.get("evidence_type")
     try:
-        if artifact_type == "YOUTUBE_ANALYTICS_EVIDENCE_SNAPSHOT":
+        if artifact_type == "YOUTUBE_ANALYTICS_REPORT_SNAPSHOT":
             verify_analytics_evidence_snapshot(payload)
-            internal_field = "snapshot_sha256"
             artifact_kind = "YOUTUBE_ANALYTICS_SNAPSHOT"
-            metadata: dict[str, Any] = {internal_field: payload[internal_field]}
+            metadata: dict[str, Any] = {"snapshot_sha256": payload["snapshot_sha256"]}
         elif artifact_type == "YOUTUBE_ANALYTICS_PERIOD_COMPARISON":
             verify_analytics_period_comparison(payload)
             artifact_kind = "YOUTUBE_ANALYTICS_COMPARISON"
@@ -134,7 +135,9 @@ def persist_analytics_evidence_artifact(
         else:
             raise YouTubeAnalyticsArtifactStoreError("unsupported Analytics evidence type")
     except (YouTubeAnalyticsEvidenceError, YouTubeAnalyticsInsightError) as exc:
-        raise YouTubeAnalyticsArtifactStoreError(f"payload verification failed: {exc}") from None
+        raise YouTubeAnalyticsArtifactStoreError(
+            f"payload verification failed: {exc}"
+        ) from None
 
     envelope = {
         "evidence_id": artifact_id,
@@ -148,6 +151,8 @@ def persist_analytics_evidence_artifact(
     parent_fd, filename, opened = _open_parent(evidence_root, relative_path)
     file_fd: int | None = None
     created = False
+    verified = None
+    failure: Exception | None = None
     try:
         file_fd = os.open(
             filename,
@@ -160,40 +165,36 @@ def persist_analytics_evidence_artifact(
         while view:
             written = os.write(file_fd, view)
             if written <= 0:
-                raise YouTubeAnalyticsArtifactStoreError("short write while persisting evidence")
+                raise OSError("short write")
             view = view[written:]
         os.fsync(file_fd)
-    except FileExistsError:
-        raise YouTubeAnalyticsArtifactStoreError("refusing to overwrite an existing evidence artifact") from None
-    except OSError:
-        raise YouTubeAnalyticsArtifactStoreError("evidence artifact could not be safely written") from None
-    finally:
-        if file_fd is not None:
-            os.close(file_fd)
-        if created:
-            try:
-                os.fsync(parent_fd)
-            except OSError:
-                pass
-        if created is False:
-            for fd in reversed(opened):
-                os.close(fd)
-    for fd in reversed(opened):
-        os.close(fd)
-
-    try:
+        os.fsync(parent_fd)
         verified = verify_artifact(
             evidence_root, relative_path, evidence_id=artifact_id, version=version
         )
+    except FileExistsError:
+        failure = YouTubeAnalyticsArtifactStoreError(
+            "refusing to overwrite an existing evidence artifact"
+        )
     except Exception:
-        try:
-            os.unlink(filename, dir_fd=parent_fd)
-        except OSError:
-            pass
-        raise YouTubeAnalyticsArtifactStoreError(
-            "persisted evidence artifact failed byte verification"
-        ) from None
+        failure = YouTubeAnalyticsArtifactStoreError(
+            "evidence artifact could not be safely written and byte-verified"
+        )
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if failure is not None and created:
+            try:
+                os.unlink(filename, dir_fd=parent_fd)
+                os.fsync(parent_fd)
+            except OSError:
+                pass
+        for fd in reversed(opened):
+            os.close(fd)
 
+    if failure is not None:
+        raise failure
+    assert verified is not None
     return {
         "artifact_id": artifact_id,
         "project_id": project_id,
