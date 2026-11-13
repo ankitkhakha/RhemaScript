@@ -22,6 +22,7 @@ class CheckpointAnchorRecord:
     generation: int
     snapshot_sha256: str
     recorded_at: datetime
+    resolved_at: datetime
     record_id: str
 
     def __post_init__(self) -> None:
@@ -33,6 +34,9 @@ class CheckpointAnchorRecord:
         if (not isinstance(self.recorded_at, datetime) or self.recorded_at.tzinfo is None
                 or self.recorded_at.utcoffset() is None):
             raise ValueError("checkpoint anchor timestamp must be timezone-aware")
+        if (not isinstance(self.resolved_at, datetime) or self.resolved_at.tzinfo is None
+                or self.resolved_at.utcoffset() is None):
+            raise ValueError("checkpoint anchor resolution timestamp must be timezone-aware")
         if not isinstance(self.record_id, str) or not record_id_is_valid(self.record_id):
             raise ValueError("checkpoint anchor record ID is invalid")
 
@@ -97,8 +101,14 @@ def advance_checkpoint_anchor(
     now = recorded_at or datetime.now(timezone.utc)
     if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("anchor verification clock must be timezone-aware")
-    if latest.recorded_at > now.astimezone(timezone.utc) + timedelta(seconds=30):
-        raise ValueError("independent checkpoint anchor timestamp is future-dated")
+    now_utc = now.astimezone(timezone.utc)
+    resolved_at = latest.resolved_at.astimezone(timezone.utc)
+    if resolved_at > now_utc + timedelta(seconds=30):
+        raise ValueError("independent checkpoint anchor response is future-dated")
+    if now_utc - resolved_at > timedelta(seconds=30):
+        raise ValueError("independent checkpoint anchor response is stale")
+    if latest.recorded_at > now_utc + timedelta(seconds=30):
+        raise ValueError("independent checkpoint anchor record is future-dated")
     return latest
 
 def verify_checkpoint_against_anchor(
@@ -123,4 +133,10 @@ def verify_checkpoint_against_anchor(
     if (latest.generation != archive_result["generation"]
             or latest.snapshot_sha256 != archive_result["snapshot_sha256"]):
         raise ValueError("checkpoint archive is stale or differs from the latest independent anchor")
+    now = datetime.now(timezone.utc)
+    resolved_at = latest.resolved_at.astimezone(timezone.utc)
+    if resolved_at > now + timedelta(seconds=30):
+        raise ValueError("independent checkpoint anchor response is future-dated")
+    if now - resolved_at > timedelta(seconds=30):
+        raise ValueError("independent checkpoint anchor response is stale")
     return latest
