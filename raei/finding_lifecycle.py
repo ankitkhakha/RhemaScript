@@ -167,7 +167,11 @@ def _record_transition(
         "event_id": event_id,
         "finding_id": finding_id,
         "finding_version": finding_version,
-        "status": "RESEARCHED" if event_type == "FINDING_RESEARCHED" else payload["outcome"],
+        "status": (
+            "RESEARCHED" if event_type == "FINDING_RESEARCHED"
+            else payload["outcome"] if event_type == "FINDING_REPRODUCED"
+            else "PLANNED"
+        ),
         "approval_id": approval.approval_id,
         "authenticated_subject_id": approval.subject_id,
         "evidence_binding": binding,
@@ -251,6 +255,50 @@ def record_finding_reproduction(
     return _record_transition(
         registry, verifier, credential,
         event_type="FINDING_REPRODUCED", action="FINDING_REPRODUCE",
+        finding_id=finding_id, finding_version=finding_version,
+        project_id=project_id, project_version=project_version,
+        request_id=request_id, evidence_root=evidence_root,
+        artifact_bytes=artifact_bytes, evidence=evidence, payload=payload,
+    )
+
+
+
+def record_finding_plan(
+    registry: ReadinessRunRegistry,
+    verifier: ApprovalVerifier,
+    credential: object,
+    *,
+    finding_id: str,
+    finding_version: str,
+    project_id: str,
+    project_version: str,
+    request_id: str,
+    evidence_root: str,
+    artifact_bytes: bytes,
+    evidence: EvidenceVersion,
+) -> dict[str, Any]:
+    """Record an approved execution plan after accepted disposition and reproduced evidence."""
+    payload = _load_exact_report(
+        registry, evidence_root, artifact_bytes, evidence,
+        schema="raei-finding-plan-v1",
+        finding_id=finding_id, finding_version=finding_version,
+    )
+    required = {
+        "schema", "finding_id", "finding_version", "plan_objective", "scope",
+        "tasks", "milestones", "acceptance_criteria", "dependencies", "risks",
+        "rollback_plan", "evidence_id", "evidence_version", "created_at_utc",
+    }
+    if set(payload) != required:
+        raise RAEIFindingLifecycleError("plan report has an invalid field set")
+    for field in ("plan_objective", "scope", "rollback_plan"):
+        _required_text(payload, field)
+    for field in ("tasks", "milestones", "acceptance_criteria"):
+        _string_list(payload, field, required=True)
+    for field in ("dependencies", "risks"):
+        _string_list(payload, field)
+    return _record_transition(
+        registry, verifier, credential,
+        event_type="FINDING_PLANNED", action="FINDING_PLAN",
         finding_id=finding_id, finding_version=finding_version,
         project_id=project_id, project_version=project_version,
         request_id=request_id, evidence_root=evidence_root,
