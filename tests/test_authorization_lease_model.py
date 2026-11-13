@@ -93,6 +93,43 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             lease, request_fingerprint="a" * 64,
         ))
 
+    def test_recovery_checkpoint_detects_tampering_and_stale_sequence(self):
+        first = self.acquire(nonce="dispatch-checkpoint-one")
+        checkpoint_one = self.model.create_recovery_checkpoint()
+        self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint_one))
+        second = self.model.acquire(
+            resource_id="youtube:channel-1:publish",
+            approval_ids=("approval-checkpoint-director", "approval-checkpoint-publisher"),
+            dispatch_nonce="dispatch-checkpoint-two",
+            request_fingerprint="b" * 64,
+            expires_at=self.expiry,
+        )
+        checkpoint_two = self.model.create_recovery_checkpoint()
+        self.assertGreater(checkpoint_two["sequence"], checkpoint_one["sequence"])
+        self.assertGreater(checkpoint_two["generation_high_water"], checkpoint_one["generation_high_water"])
+        self.assertFalse(self.model.verify_recovery_checkpoint(checkpoint_one))
+        self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint_two))
+        tampered = dict(checkpoint_two)
+        tampered["state"] = dict(checkpoint_two["state"])
+        tampered["state"]["revoked_approvals"] = [["forged-approval", "forged-time"]]
+        self.assertFalse(self.model.verify_recovery_checkpoint(tampered))
+
+    def test_checkpoint_creation_rejects_generation_rollback_below_anchor(self):
+        lease = self.acquire(nonce="dispatch-checkpoint-rollback")
+        checkpoint = self.model.create_recovery_checkpoint()
+        with sqlite3.connect(self.model.path) as db:
+            db.execute(
+                "UPDATE resource_fences SET generation=0 WHERE resource_id=?",
+                (lease.resource_id,),
+            )
+            db.execute(
+                "UPDATE leases SET generation=0 WHERE lease_id=?",
+                (lease.lease_id,),
+            )
+        with self.assertRaisesRegex(LeaseStateError, "below trusted recovery anchor"):
+            self.model.create_recovery_checkpoint()
+        self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint))
+
     def test_read_only_dispatch_state_lookup_supports_lost_response_recovery(self):
         lease = self.acquire(nonce="dispatch-state-inspection")
         self.assertIsNone(self.model.get_dispatch_state("unknown-nonce"))
