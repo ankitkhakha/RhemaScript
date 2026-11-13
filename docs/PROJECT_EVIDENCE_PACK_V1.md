@@ -26,7 +26,7 @@ Evidence payloads for the same CAP are merged only when repeated keys have ident
 - All artifact references resolve.
 - Provenance links resolve, cannot self-reference and form a directed acyclic graph.
 - Script and narration artefacts labelled as approved require an explicit APPROVED, VERIFIED or ACCEPTED status; approval is never inferred from the type name.
-- If an EDITED_FILM exists, the full ordered chain must exist and be connected: biblical source → approved script → approved narration → storyboard → audio-visual plan → prompt → asset → edited film.
+- If any EDITED_FILM exists, every final film must be reachable through one continuous, ordered path containing each stage: biblical source → approved script → approved narration → storyboard → audio-visual plan → prompt → asset → that edited film. Separate pairwise-connected branches cannot be spliced together to claim a complete chain, and an additional orphan final film is rejected.
 - Partial packs are valid before an edited film exists; the orchestrator reports capability evidence gaps.
 
 ## Run behaviour
@@ -54,3 +54,10 @@ References are caller-supplied opaque identifiers; remote files and source ident
 Successful resolution adds the immutable receipt to `ValidatedEvidencePack.source_resolution_receipts` and the verified byte version to `byte_verified_artifacts`. The receipt remains `CONTENT_VERIFIED` with source authentication and claim relevance both `NOT_CHECKED`. Resolver failure or any identity/version/digest disagreement rejects the pack before orchestration. No source reference is auto-discovered and no network lookup is performed.
 
 This is evidence resolution only. It does not change the six existing project gates, create approvals, infer human acceptance, grant generation authority, or enable external/publishing actions. Existing `gate_records` and the separate `generation_authorisation` input retain their current handling.
+
+
+## Continuous source-to-final lineage hardening — 13 November 2026
+
+The runtime graph validator now checks the ordered chain per final-film artifact, rather than accepting independent pairwise reachability across unrelated branches. Every EDITED_FILM must be the terminal node of a single directed path that visits every required artifact type in order. Adversarial tests reject (1) an orphan second final film when another film has a valid chain and (2) a chain assembled from disconnected source/script/narration segments. These checks establish structural path continuity only; they do not authenticate source publishers or prove that a claimed derivation is semantically genuine.
+
+Exact implementation/test head `4886efd07d13ef71d57d048979de1075d094fbe5` passed full contract and synthetic integration CI run #1692: https://github.com/ankitkhakha/RhemaScript/actions/runs/43417414768. The first run exposed a stale test assertion expecting the prior generic “disconnected” error; the assertion was aligned with the stricter per-film error and the exact-head run passed.
