@@ -6,7 +6,7 @@ The parent directory must already be owner-only (0700 or stricter).
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -560,7 +560,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             raise ValueError("lease_seconds must be finite and between 1 and 600")
         now = datetime.now(timezone.utc)
         created = self._utc(now)
-        lease = self._utc(now + __import__("datetime").timedelta(seconds=lease_seconds))
+        lease = self._utc(now + timedelta(seconds=lease_seconds))
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
@@ -862,11 +862,23 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             db.close()
 
     def _snapshot_bytes(self) -> bytes:
-        base = json.loads(super()._snapshot_bytes().decode("utf-8"))
+        """Read approvals, revocations and publish sessions from one SQLite snapshot."""
         db = self._connect()
         try:
             db.execute("BEGIN")
-            rows = db.execute(
+            consumed = db.execute(
+                """SELECT approval_id, nonce, issuer, actor_id, action, project_id,
+                          project_version, request_id, issued_at, expires_at, key_id,
+                          consumed_at, artifact_id, artifact_version, artifact_sha256,
+                          artifact_size_bytes, credential_schema, signature,
+                          identity_claims_json
+                   FROM consumed_approvals ORDER BY approval_id"""
+            ).fetchall()
+            revoked = db.execute(
+                """SELECT approval_id, nonce, revoked_at, reason, revoked_by
+                   FROM revoked_approvals ORDER BY approval_id"""
+            ).fetchall()
+            sessions = db.execute(
                 "SELECT " + ", ".join(self._SESSION_COLUMNS)
                 + " FROM publish_sessions ORDER BY project_id, project_version, request_id"
             ).fetchall()
@@ -874,14 +886,14 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         except sqlite3.Error:
             if db.in_transaction:
                 db.execute("ROLLBACK")
-            raise ApprovalStoreError("publish-session checkpoint snapshot could not be read") from None
+            raise ApprovalStoreError("approval and publish-session checkpoint snapshot could not be read") from None
         finally:
             db.close()
         payload = {
             "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
-            "consumed": base["consumed"],
-            "revoked": base["revoked"],
-            "publish_sessions": [list(row) for row in rows],
+            "consumed": [list(row) for row in consumed],
+            "revoked": [list(row) for row in revoked],
+            "publish_sessions": [list(row) for row in sessions],
         }
         return json.dumps(
             payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
