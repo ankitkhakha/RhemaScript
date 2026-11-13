@@ -15,7 +15,6 @@ import re
 import secrets
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SIGNATURE = re.compile(r"^[0-9a-f]{128}$")
 _SCHEMA_V3 = "RhemaScript.ApprovalCredential.v3"
 _HIGH_RISK_ACTIONS = frozenset({"FINAL_ACCEPTANCE", "PUBLISH"})
