@@ -54,14 +54,15 @@ Caller-supplied booleans or reconstructed dataclass objects do not satisfy this 
 
 ## Replay, revocation and history
 
-The SQLite approval store atomically consumes a batch or none, rejects replay/revocation/expiry, and stores approval metadata rather than private signing keys. It is separate from the RAEI readiness/activity registry.
+The SQLite approval store atomically consumes a batch or none, rejects replay/revocation/expiry, and stores the signed credential schema, original Ed25519 signature, issuer/actor/action/request scope and exact artifact tuple. It stores no private signing keys and remains separate from the RAEI readiness/activity registry. A verifier can re-check a persisted signature against the configured trusted public key after process restart; expiry is reported separately from cryptographic signature validity.
 
-A database-local hash or HMAC checkpoint is not immutable storage. Retain checkpoint keys and independently retained checkpoint records outside the database. This implementation does not claim protection against an attacker who can rewrite the database, the external checkpoint and its key.
+The V3 HMAC checkpoint snapshot includes the persisted credential schema, signature and exact artifact tuple. A database-local hash or HMAC checkpoint is not immutable storage. Retain checkpoint keys and independently retained checkpoint records outside the database. This implementation does not claim protection against an attacker who can rewrite the database, the external checkpoint and its key.
 
 ## Remaining prerequisites
 
 - A production trusted issuer must authenticate human identity and roles, derive actor identity from the authenticated session and protect private signing keys outside the repository.
 - Public-key rotation, revocation, issuer outage and recovery procedures require operational testing.
+- Signature re-verification is implemented for stored approval records, but independent checkpoint-anchor retention remains an operational responsibility and has not been automated.
 - Exact-head CI, adversarial tests, full Source-to-Final invalidation and independent security review must pass.
 - Live provider writes remain disabled until the owner separately authorizes the required Google permissions and live channel verification.
 - No credential or signing key was created by this implementation.
