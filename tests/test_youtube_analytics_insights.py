@@ -1,0 +1,117 @@
+import unittest
+from copy import deepcopy
+from datetime import datetime, timezone
+
+from rhemascript.integrations.youtube_analytics_evidence import build_analytics_evidence_snapshot
+from rhemascript.integrations.youtube_analytics_insights import (
+    YouTubeAnalyticsInsightError,
+    compare_analytics_periods,
+    verify_analytics_period_comparison,
+)
+
+
+HEADERS = [
+    {"name": "day", "dataType": "STRING", "columnType": "DIMENSION"},
+    {"name": "views", "dataType": "INTEGER", "columnType": "METRIC"},
+    {"name": "estimatedMinutesWatched", "dataType": "FLOAT", "columnType": "METRIC"},
+    {"name": "subscribersGained", "dataType": "INTEGER", "columnType": "METRIC"},
+]
+
+
+def snapshot(start, end, rows, *, metrics="views,estimatedMinutesWatched,subscribersGained",
+             dimensions="day", filters=None):
+    params = {
+        "ids": "channel==MINE", "startDate": start, "endDate": end,
+        "metrics": metrics, "dimensions": dimensions,
+    }
+    if filters is not None:
+        params["filters"] = filters
+    report = {"kind": "youtubeAnalytics#resultTable", "columnHeaders": deepcopy(HEADERS)}
+    if rows is not None:
+        report["rows"] = deepcopy(rows)
+    return build_analytics_evidence_snapshot(
+        params=params, report=report,
+        retrieved_at=datetime(2026, 11, 13, 12, 0, tzinfo=timezone.utc),
+    )
+
+
+class YouTubeAnalyticsInsightsTests(unittest.TestCase):
+    def test_compares_equal_length_periods_and_binds_source_digests(self):
+        previous = snapshot("2026-10-01", "2026-10-07", [
+            ["2026-10-01", 10, 2.5, 1],
+            ["2026-10-02", 20, 4.5, 2],
+        ])
+        current = snapshot("2026-10-08", "2026-10-14", [
+            ["2026-10-08", 15, 3.0, 1],
+            ["2026-10-09", 30, 6.0, 3],
+        ])
+        result = compare_analytics_periods(current, previous)
+        self.assertEqual(result["metrics"]["views"]["current_total"], "45")
+        self.assertEqual(result["metrics"]["views"]["previous_total"], "30")
+        self.assertEqual(result["metrics"]["views"]["absolute_change"], "15")
+        self.assertEqual(result["metrics"]["views"]["percentage_change"], "50")
+        self.assertEqual(result["metrics"]["views"]["status"], "COMPARABLE")
+        self.assertEqual(result["current_snapshot_sha256"], current["snapshot_sha256"])
+        self.assertEqual(result["previous_snapshot_sha256"], previous["snapshot_sha256"])
+        self.assertTrue(verify_analytics_period_comparison(result))
+
+    def test_zero_baseline_has_no_percentage_change(self):
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 0, 0.0, 0]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1]])
+        result = compare_analytics_periods(current, previous)
+        self.assertEqual(result["metrics"]["views"]["status"], "ZERO_BASELINE")
+        self.assertIsNone(result["metrics"]["views"]["percentage_change"])
+        self.assertEqual(result["metrics"]["views"]["absolute_change"], "5")
+
+    def test_no_data_is_not_converted_to_zero(self):
+        previous = snapshot("2026-10-01", "2026-10-01", None)
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1]])
+        result = compare_analytics_periods(current, previous)
+        self.assertEqual(result["previous_period"]["data_status"], "NO_DATA")
+        self.assertIsNone(result["metrics"]["views"]["previous_total"])
+        self.assertEqual(result["metrics"]["views"]["status"], "INSUFFICIENT_DATA")
+        self.assertIsNone(result["metrics"]["views"]["absolute_change"])
+
+    def test_rejects_different_channel_or_metric_scope(self):
+        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 5, 1.0, 1]])
+        previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5, 1.0, 1]],
+                            metrics="views")
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "identical channel"):
+            compare_analytics_periods(current, previous)
+
+    def test_rejects_unequal_or_overlapping_periods(self):
+        previous = snapshot("2026-10-01", "2026-10-06", [["2026-10-01", 5, 1.0, 1]])
+        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 6, 1.2, 1]])
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "equal inclusive"):
+            compare_analytics_periods(current, previous)
+        overlapping = snapshot("2026-10-06", "2026-10-12", [["2026-10-06", 6, 1.2, 1]])
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "must follow"):
+            compare_analytics_periods(overlapping, previous)
+
+    def test_rejects_tampered_snapshot_before_comparison(self):
+        previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5, 1.0, 1]])
+        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 6, 1.2, 1]])
+        current["response"]["rows"][0][1] = 900
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "unverified snapshot"):
+            compare_analytics_periods(current, previous)
+
+    def test_comparison_digest_detects_tampering(self):
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 5, 1.0, 1]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1]])
+        result = compare_analytics_periods(current, previous)
+        altered = deepcopy(result)
+        altered["metrics"]["views"]["current_total"] = "999"
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "digest does not match"):
+            verify_analytics_period_comparison(altered)
+
+    def test_rejects_boolean_and_fractional_integer_metric_values(self):
+        for invalid in (True, 1.5):
+            with self.subTest(invalid=invalid):
+                previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", invalid, 1.0, 1]])
+                current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1]])
+                with self.assertRaises(YouTubeAnalyticsInsightError):
+                    compare_analytics_periods(current, previous)
+
+
+if __name__ == "__main__":
+    unittest.main()
