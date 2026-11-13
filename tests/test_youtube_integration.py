@@ -442,7 +442,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             video.write(b"approved-video-bytes")
             video.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "durable publish-session registry"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "durable SQLite publish-session registry"):
                     client.upload_video(
                         video.name, title="Approved", description="Test",
                         **self.publish_context(final_film_bytes=b"approved-video-bytes"),
