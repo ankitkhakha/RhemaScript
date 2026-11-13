@@ -70,6 +70,9 @@ class SQLiteLeaseStateModel:
                     reason_code TEXT,
                     updated_at TEXT NOT NULL
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_lease_per_provider_operation
+                    ON dispatch_outcomes(provider_operation_id)
+                    WHERE provider_operation_id IS NOT NULL;
             """)
 
     def _connect(self):
