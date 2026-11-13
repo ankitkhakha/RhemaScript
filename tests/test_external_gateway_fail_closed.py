@@ -734,7 +734,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             audit_sink=lambda event: None, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
-            with self.assertRaisesRegex(ExternalIntegrationError, "safe relative provider path"):
+            with self.assertRaisesRegex(ExternalIntegrationError, "legacy generic POST invocation is disabled"):
                 gateway.invoke("IF-01", self.request())
         self.assertEqual(transport.calls, [])
 
