@@ -22,6 +22,6 @@ Synthetic tests cover:
 - an unclassified custom POST rejected without explicit external-write authority and with no transport call;
 - a custom POST and named `GENERATE` / `SPEND` / `EXTERNAL_WRITE` operations rejected even when forged caller-supplied booleans are true;
 - YouTube upload operations remaining on the PUBLISH dual-approval path;
-- OAuth-token aliases and path suffixes rejected before transport.
+- OAuth-token aliases, path suffixes, query strings and fragments rejected before transport.
 
 CI validates local code behavior and synthetic fixtures only. It does not establish production identity, authorization, or provider-write readiness.
