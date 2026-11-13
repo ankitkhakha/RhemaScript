@@ -34,6 +34,16 @@ class ReadinessRunRegistryTests(unittest.TestCase):
         self.assertTrue(reopened.verify())
 
 
+    def test_single_record_read_rejects_tampered_registry_payload(self):
+        self.registry.record("RUN-READ", self.report, self.evidence)
+        with self.registry._connect() as db:
+            db.execute(
+                "UPDATE readiness_runs SET payload_json=? WHERE run_id=?",
+                ('{"run_id":"RUN-READ","report":{"overall_status":"FORGED"}}', "RUN-READ"),
+            )
+        with self.assertRaisesRegex(ValueError, "integrity verification failed"):
+            self.registry.get("RUN-READ")
+
     def test_persists_exact_local_source_receipt_and_catalog_identity(self):
         from rhemascript.evidence.local_source_resolver import LocalSourceReceipt
         receipt = LocalSourceReceipt(
