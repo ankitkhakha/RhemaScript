@@ -100,3 +100,7 @@ The archive's authenticated `created_at` value is a signed timestamp, not a mono
 The readiness-registry HMAC checkpoint has the same fundamental limitation: verification is relative to the exact checkpoint object and key supplied by the caller. A valid old checkpoint remains valid for the old state it describes.
 
 Before production recovery is approved, an independent anti-rollback anchor is required. It must retain at least a monotonically increasing checkpoint generation and the corresponding snapshot digest in a separately administered append-only or hardware-backed system. Recovery must compare the candidate archive against that latest trusted anchor before any restore is considered. No such monotonic anchor is implemented or claimed by this repository.
+
+## Approval expiry under database contention — 13 November 2026
+
+A review of the durable single-use approval store identified a time-of-check/time-of-use edge case: a credential could pass its expiry check before opening the SQLite write transaction, wait behind another writer, and then be committed after expiry. The store now repeats the expiry check after `BEGIN IMMEDIATE` succeeds and uses that post-lock timestamp for `consumed_at`. A deterministic regression test holds a competing writer lock beyond the credential's expiry and asserts that the approval is not consumed. The pre-lock check remains as a fast rejection; the post-lock check is authoritative for the commit.
