@@ -523,10 +523,11 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         )
         self.assertEqual(record["state"], "COMPLETE")
         self.assertEqual(record["acknowledged_offset"], 10)
-        self.assertFalse(self.store.begin_publish_chunk(
-            **args, owner_id="gateway-A", start=10, end=10, total=10,
-            body_size=1, lease_seconds=60,
-        ))
+        with self.assertRaisesRegex(ValueError, "chunk byte range is invalid"):
+            self.store.begin_publish_chunk(
+                **args, owner_id="gateway-A", start=10, end=10, total=10,
+                body_size=1, lease_seconds=60,
+            )
 
     def test_wrong_session_url_and_out_of_order_ranges_are_rejected(self):
         self.reserve_and_bind()
