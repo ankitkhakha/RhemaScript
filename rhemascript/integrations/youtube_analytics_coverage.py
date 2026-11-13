@@ -104,3 +104,15 @@ def diagnose_daily_coverage(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     body["diagnostic_sha256"] = _canonical_digest(body)
     return body
+
+
+def verify_daily_coverage_diagnostic(
+    diagnostic: dict[str, Any], snapshot: dict[str, Any]
+) -> bool:
+    """Recompute a diagnostic from its exact source snapshot and compare all fields."""
+    if not isinstance(diagnostic, dict):
+        raise YouTubeAnalyticsCoverageError("diagnostic must be an object")
+    expected = diagnose_daily_coverage(snapshot)
+    if diagnostic != expected:
+        raise YouTubeAnalyticsCoverageError("coverage diagnostic does not match its source snapshot")
+    return True
