@@ -153,6 +153,16 @@ class ApprovalVerifier:
         self._key_registry_environment = key_registry_environment
         self._key_registry_max_age = key_registry_max_age
         self._consume_many_once = consume_many_once
+        # When the atomic-consumption callback is a bound durable store method,
+        # retain its read-only consumption/revocation interface for write-boundary
+        # checks. Plain callbacks remain useful only for isolated synthetic tests.
+        consumption_store = getattr(consume_many_once, "__self__", None)
+        self._consumption_state = (
+            consumption_store
+            if callable(getattr(consumption_store, "is_consumed", None))
+            and callable(getattr(consumption_store, "is_revoked", None))
+            else None
+        )
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_lifetime = max_lifetime
         self._clock_skew = clock_skew
@@ -560,6 +570,22 @@ class ApprovalVerifier:
         now = now.astimezone(timezone.utc)
         if approval.expires_at <= now:
             raise ApprovalError("approval expired before provider transport")
+        if self._consumption_state is not None:
+            try:
+                still_consumed = self._consumption_state.is_consumed(
+                    approval.approval_id, approval.nonce,
+                )
+                revoked = self._consumption_state.is_revoked(
+                    approval.approval_id, approval.nonce,
+                )
+            except Exception:
+                raise ApprovalError(
+                    "approval consumption/revocation state is unavailable before provider transport"
+                ) from None
+            if still_consumed is not True or revoked is not False:
+                raise ApprovalError(
+                    "approval is no longer consumed or has been revoked before provider transport"
+                )
         public_key, record = self._resolve_verification_key(approval.key_id)
         fingerprint = hashlib.sha256(public_key).hexdigest()
         if not hmac.compare_digest(fingerprint, approval.verification_key_fingerprint or ""):
