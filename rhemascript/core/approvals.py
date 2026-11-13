@@ -22,12 +22,16 @@ class ApprovalError(PermissionError):
     """An approval credential is missing, invalid, expired, revoked, or replayed."""
 
 
-_FIELDS = {
+_FIELDS_V1 = {
     "schema", "approval_id", "issuer", "actor_id", "action", "project_id",
     "project_version", "request_id", "issued_at", "expires_at", "nonce",
     "key_id", "signature",
 }
-_SCHEMA = "RhemaScript.ApprovalCredential.v1"
+_ARTIFACT_FIELDS = {"artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes"}
+_FIELDS_V2 = _FIELDS_V1 | _ARTIFACT_FIELDS
+_SCHEMA_V1 = "RhemaScript.ApprovalCredential.v1"
+_SCHEMA_V2 = "RhemaScript.ApprovalCredential.v2"
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _SIGNATURE_HEX = re.compile(r"^[0-9a-f]{128}$")
 _VERIFIED_APPROVAL_TOKEN = object()
@@ -49,6 +53,10 @@ class VerifiedApproval:
     expires_at: datetime
     nonce: str
     key_id: str
+    artifact_id: str | None = None
+    artifact_version: str | None = None
+    artifact_sha256: str | None = None
+    artifact_size_bytes: int | None = None
     _verification_token: object | None = field(default=None, repr=False, compare=False)
 
 
@@ -124,12 +132,35 @@ class ApprovalVerifier:
         project_id: str,
         project_version: str,
         request_id: str,
+        artifact_binding: Mapping[str, object] | None = None,
     ) -> VerifiedApproval:
-        if type(credential) is not dict or set(credential) != _FIELDS:
+        if type(credential) is not dict:
             raise ApprovalError("approval credential has an invalid shape")
         token = dict(credential)
-        if token.get("schema") != _SCHEMA:
-            raise ApprovalError("approval credential schema is unsupported")
+        schema = token.get("schema")
+        expected_fields = _FIELDS_V1 if schema == _SCHEMA_V1 else _FIELDS_V2 if schema == _SCHEMA_V2 else None
+        if expected_fields is None or set(token) != expected_fields:
+            raise ApprovalError("approval credential has an invalid shape or unsupported schema")
+        if artifact_binding is not None:
+            if schema != _SCHEMA_V2 or set(artifact_binding) != {
+                "artifact_id", "artifact_version", "sha256", "size_bytes"
+            }:
+                raise ApprovalError("approval must bind the exact final artifact using credential schema v2")
+            if (token.get("artifact_id") != artifact_binding.get("artifact_id")
+                    or token.get("artifact_version") != artifact_binding.get("artifact_version")
+                    or token.get("artifact_sha256") != artifact_binding.get("sha256")
+                    or token.get("artifact_size_bytes") != artifact_binding.get("size_bytes")):
+                raise ApprovalError("approval final-artifact binding does not match verified bytes")
+        elif schema == _SCHEMA_V2:
+            raise ApprovalError("artifact-bound approval requires an exact artifact expectation")
+        if schema == _SCHEMA_V2:
+            if (not isinstance(token.get("artifact_id"), str) or not _ID.fullmatch(token["artifact_id"])
+                    or not isinstance(token.get("artifact_version"), str) or not _ID.fullmatch(token["artifact_version"])
+                    or not isinstance(token.get("artifact_sha256"), str) or not _SHA256.fullmatch(token["artifact_sha256"])
+                    or not isinstance(token.get("artifact_size_bytes"), int)
+                    or isinstance(token.get("artifact_size_bytes"), bool)
+                    or token["artifact_size_bytes"] < 0):
+                raise ApprovalError("approval final-artifact binding is invalid")
         for field in ("approval_id", "actor_id", "project_id", "project_version",
                       "request_id", "nonce", "key_id", "issuer", "action"):
             value = token.get(field)
@@ -173,6 +204,10 @@ class ApprovalVerifier:
             project_id=token["project_id"], project_version=token["project_version"],
             request_id=token["request_id"], issued_at=issued_at,
             expires_at=expires_at, nonce=token["nonce"], key_id=token["key_id"],
+            artifact_id=token.get("artifact_id"),
+            artifact_version=token.get("artifact_version"),
+            artifact_sha256=token.get("artifact_sha256"),
+            artifact_size_bytes=token.get("artifact_size_bytes"),
             _verification_token=_VERIFIED_APPROVAL_TOKEN,
         )
         with _VERIFIED_APPROVAL_LOCK:
@@ -214,15 +249,18 @@ class ApprovalVerifier:
             raise ApprovalError("approval batch is empty or has mismatched expectations")
         verified = []
         for credential, expected in zip(credentials, expectations):
-            if not isinstance(expected, Mapping) or set(expected) != {
-                "action", "project_id", "project_version", "request_id"
-            }:
+            if (not isinstance(expected, Mapping)
+                    or set(expected) not in (
+                        {"action", "project_id", "project_version", "request_id"},
+                        {"action", "project_id", "project_version", "request_id", "artifact_binding"},
+                    )):
                 raise ApprovalError("approval expectation has an invalid shape")
             scope = dict(expected)
+            artifact_binding = scope.pop("artifact_binding", None)
             if any(not isinstance(scope.get(field), str) or not _ID.fullmatch(scope[field])
                    for field in ("action", "project_id", "project_version", "request_id")):
                 raise ApprovalError("approval expectation contains an invalid scope value")
-            result = self._verify_one(credential, **scope)
+            result = self._verify_one(credential, artifact_binding=artifact_binding, **scope)
             verified.append(result)
         approval_ids = [item.approval_id for item in verified]
         nonces = [item.nonce for item in verified]
