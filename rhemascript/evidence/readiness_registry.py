@@ -1111,6 +1111,9 @@ class ReadinessRunRegistry:
                         db.rollback()
                         raise ValueError("reopening must reference the exact closed finding event and its evidence")
                     prior_reviewers = closure[1].get("authorization", {})
+                    if prior_reviewers.get("project_version") != project_version:
+                        db.rollback()
+                        raise ValueError("reopening project version must match the exact prior closure scope")
                     if any(
                         approval.subject_id == prior_subject
                         or approval.identity_session_id == prior_session
