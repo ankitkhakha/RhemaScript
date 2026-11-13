@@ -1089,29 +1089,33 @@ class ReadinessRunRegistry:
                 or not isinstance(binding.get("size_bytes"), int)
                 or isinstance(binding.get("size_bytes"), bool) or binding["size_bytes"] < 0):
             raise ValueError("governed review requires an exact evidence ID/version/SHA-256/size binding")
-        if event_type in {"FINDING_CLOSED", "FINDING_REOPENED"}:
-            if event_type == "FINDING_CLOSED":
-                lineage = payload.get("lifecycle_lineage")
-                if (not isinstance(lineage, dict)
-                        or set(lineage) != {"plan_event_id", "implementation_event_id", "effectiveness_event_id"}
-                        or any(not isinstance(value, str) or not value.strip() for value in lineage.values())):
-                    raise ValueError("closure requires exact plan, implementation and effectiveness event IDs")
-            else:
-                new_version = payload.get("new_finding_version")
-                if not isinstance(new_version, str) or not new_version.strip() or new_version == version:
-                    raise ValueError("reopening requires a distinct proposed new finding version")
-            subjects = [item.subject_id for item in approvals]
-            sessions = [item.identity_session_id for item in approvals]
-            if (any(not value for value in subjects + sessions)
-                    or len(set(subjects)) != 2 or len(set(sessions)) != 2
-                    or any(item.artifact_id != binding["evidence_id"]
-                           or item.artifact_version != binding["evidence_version"]
-                           or item.artifact_sha256 != binding["sha256"]
-                           or item.artifact_size_bytes != binding["size_bytes"] for item in approvals)
-                    or len({item.identity_provider_id for item in approvals}) != 1
-                    or len({item.identity_policy_version for item in approvals}) != 1
-                    or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
-                raise ValueError("governed finding transition requires two distinct authenticated subjects and sessions in one trusted identity domain")
+        if event_type == "FINDING_CLOSED":
+            lineage = payload.get("lifecycle_lineage")
+            if (not isinstance(lineage, dict)
+                    or set(lineage) != {"plan_event_id", "implementation_event_id", "effectiveness_event_id"}
+                    or any(not isinstance(value, str) or not value.strip() for value in lineage.values())):
+                raise ValueError("closure requires exact plan, implementation and effectiveness event IDs")
+        elif event_type == "FINDING_REOPENED":
+            new_version = payload.get("new_finding_version")
+            if not isinstance(new_version, str) or not new_version.strip() or new_version == version:
+                raise ValueError("reopening requires a distinct proposed new finding version")
+        # Every governed disposition, knowledge decision, closure and reopening
+        # requires the same V3 human-identity assurance and exact evidence binding.
+        subjects = [item.subject_id for item in approvals]
+        sessions = [item.identity_session_id for item in approvals]
+        providers = [item.identity_provider_id for item in approvals]
+        policies = [item.identity_policy_version for item in approvals]
+        if (any(not value for value in subjects + sessions + providers + policies)
+                or len(set(subjects)) != 2 or len(set(sessions)) != 2
+                or len(set(providers)) != 1 or len(set(policies)) != 1
+                or any(not item.actor_role or not item.authn_context or item.authenticated_at is None
+                       for item in approvals)
+                or any(item.artifact_id != binding["evidence_id"]
+                       or item.artifact_version != binding["evidence_version"]
+                       or item.artifact_sha256 != binding["sha256"]
+                       or item.artifact_size_bytes != binding["size_bytes"] for item in approvals)
+                or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
+            raise ValueError("governed transition requires two distinct V3 authenticated subjects and sessions in one trusted identity domain, bound to exact evidence")
         enriched = dict(payload)
         enriched["authorization"] = {
             "issuer": approvals[0].issuer,
