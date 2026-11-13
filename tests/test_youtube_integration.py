@@ -43,7 +43,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     if kwargs["headers"].get("Authorization") != "Bearer gateway-token":
                         raise AssertionError("missing gateway access token")
                     return 200, b'{"items":[{"id":"channel-gateway"}]}', {}
-                raise AssertionError("unexpected gateway operation")
+                raise AssertionError("undedicated signed thumbnail-artifact approval contractway operation")
 
         gateway = Gateway()
         client = YouTubeClient(self.config(), gateway=gateway,
@@ -446,27 +446,27 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 )
         self.assertEqual(transport.calls, [])
 
-    def test_thumbnail_rejects_video_id_without_project_verification_evidence(self):
+    def test_thumbnail_write_remains_disabled_without_project_verification_evidence(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"thumbnail")
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "VERIFIED YouTube read-back artifact"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
                     client.set_thumbnail("video-123", image.name, **context)
 
-    def test_thumbnail_rejects_caller_fabricated_verification_artifact_without_live_readback(self):
+    def test_thumbnail_write_remains_disabled_for_caller_fabricated_verification(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.add_verified_video_evidence(self.publish_context())
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"thumbnail")
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "client session"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
                     client.set_thumbnail("video-123", image.name, **context)
 
-    def test_thumbnail_rejects_verified_video_bound_to_another_final_film(self):
+    def test_thumbnail_write_remains_disabled_for_mismatched_final_film(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.add_verified_video_evidence(self.publish_context())
         context["evidence_pack"]["artifacts"][-1]["verified_final_film_artifact_id"] = "ART-7"
@@ -474,27 +474,27 @@ class YouTubeIntegrationTests(unittest.TestCase):
             image.write(b"thumbnail")
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "not bound to verified project evidence"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
                     client.set_thumbnail("video-123", image.name, **context)
 
-    def test_thumbnail_rejects_oversized_file_before_network(self):
+    def test_thumbnail_write_remains_disabled_for_oversized_file(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".png") as image:
             image.write(b"x" * (2 * 1024 * 1024 + 1))
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "no larger than 2 MB"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
                     client.set_thumbnail("video-123", image.name, **self.add_verified_video_evidence(self.publish_context()))
 
-    def test_thumbnail_rejects_unknown_extension_before_network(self):
+    def test_thumbnail_write_remains_disabled_for_unknown_extension(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         self.mark_client_as_read_back_verified(client)
         with tempfile.NamedTemporaryFile(suffix=".gif") as image:
             image.write(b"image")
             image.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "PNG or JPEG"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
                     client.set_thumbnail("video-123", image.name, **self.add_verified_video_evidence(self.publish_context()))
 
     def test_request_rejects_non_google_hosts_before_transport(self):
@@ -529,11 +529,11 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile() as video:
             video.write(b"video")
             video.flush()
-            with self.assertRaisesRegex(YouTubeIntegrationError, "distinct authenticated actors"):
+            with self.assertRaisesRegex(YouTubeIntegrationError, "dedicated signed thumbnail-artifact approval contract"):
                 client.upload_video(video.name, title="Approved", description="Test",
                                     **self.publish_context(authorised=False))
 
-    def test_thumbnail_write_requires_full_project_authority(self):
+    def test_thumbnail_write_remains_disabled_without_project_authority(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context(authorised=False)
         with self.assertRaisesRegex(YouTubeIntegrationError, "distinct authenticated actors"):
@@ -546,7 +546,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(YouTubeIntegrationError, "does not match the approved final film"):
             client.upload_video("/not/read.mp4", title="Approved", description="Test", **context)
 
-    def test_thumbnail_write_rejects_out_of_order_gate_records(self):
+    def test_thumbnail_write_remains_disabled_for_out_of_order_gate_records(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         context = self.publish_context()
         context["evidence_pack"]["gate_records"][0], context["evidence_pack"]["gate_records"][1] = (
