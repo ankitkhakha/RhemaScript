@@ -655,6 +655,17 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
             )
         self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
 
+    def test_legacy_v3_checkpoint_is_valid_only_before_publish_session_state_exists(self):
+        base = SQLiteApprovalConsumptionStore(self.path)
+        key = b"publish-session-checkpoint-key-32-bytes!"
+        legacy = base.checkpoint(key)
+        registry = SQLitePublishSessionRegistry(self.path)
+        self.assertTrue(registry.verify_checkpoint(legacy, key))
+        self.assertTrue(registry.reserve_publish_session(
+            **self.identity, owner_id="gateway-A", lease_seconds=60,
+        ))
+        self.assertFalse(registry.verify_checkpoint(legacy, key))
+
     def test_registry_state_survives_reopening_database(self):
         self.reserve_and_bind()
         reopened = SQLitePublishSessionRegistry(self.path)
