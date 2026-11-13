@@ -34,9 +34,9 @@ The production issuer must:
 
 A login session proves authentication, not authorization. Role membership must be separately evaluated.
 
-## 4. Signed credential identity claims — proposed V3
+## 4. Signed credential identity claims — V3 schema and verifier implementation
 
-The next credential revision must preserve all V2 fields and add signed identity-assurance claims:
+Credential V3 preserves the V2 artifact-binding fields and adds these signed identity-assurance claims:
 
 - `subject_id`: stable, issuer-scoped pseudonymous subject identifier; avoid email addresses and other unnecessary personal data;
 - `actor_role`: one canonical role identifier resolved by the issuer;
@@ -48,7 +48,7 @@ The next credential revision must preserve all V2 fields and add signed identity
 
 All claims must be included in the Ed25519 signature. Missing or unknown identity claims, unrecognized roles, unsupported assurance values, stale authentication, or a policy version not trusted by the relying party must fail closed for governed actions.
 
-The legacy V1/V2 formats must not be silently interpreted as identity-assured. A migration plan must state which low-risk workflows may continue using them. High-risk final acceptance and publication must require the identity-assured format once that enforcement is implemented.
+The repository verifier now rejects V1/V2 credentials for `FINAL_ACCEPTANCE` and `PUBLISH`; those actions require V3. V3 requires a trusted, explicitly configured identity-policy registry. The registry constrains provider ID, role per action, accepted authentication contexts and maximum authentication age. No default policy is installed: missing policy fails closed. The provider gateway independently requires V3, matching policy/provider identifiers, non-empty identity assurance claims and distinct subject IDs for the two approvals. V1/V2 remain available for historical verification and any non-high-risk workflows that explicitly permit them.
 
 ## 5. Role and separation-of-duties policy
 
@@ -124,12 +124,12 @@ Tests must include issuer contract tests, verifier tests, gateway tests, key-rot
 
 1. Approve the identity provider, role matrix, assurance levels, self-approval rules and accountable issuer owner.
 2. Specify and implement credential V3 identity claims and verifier enforcement.
-3. Extend durable approval persistence and checkpoint archives to preserve the V3 claims.
+3. Extend durable approval persistence and checkpoint snapshots to preserve the V3 claims; archive envelope remains separately authenticated.
 4. Implement the external issuer service and HSM/KMS signing integration outside RhemaScript's application process.
 5. Integrate the issuer client without exposing identity tokens or private keys to RhemaScript.
 6. Run conformance and independent security tests.
 7. Obtain explicit owner authorization before any production identity-provider or provider integration.
 
-Current state: the existing code has a protocol boundary that deliberately accepts no caller-supplied actor ID and verifies externally signed credentials. However, the current V1/V2 credential schemas do not carry signed role/MFA/session assurance claims, and no production issuer or human-authentication service is deployed. Therefore the authenticated human identity and role boundary is NOT COMPLETE. This document is a proposed contract, not evidence of production authentication.
+Current implementation state: V3 signed claims, verifier-side policy enforcement, durable identity-claim persistence, historical signature re-verification and gateway-side V3/subject-separation checks are implemented on PR #62. Exact-head CI and adversarial conformance results remain pending for this revision. The configured policy is a test/configuration boundary only; no production policy, identity provider, authoritative role directory, issuer service, HSM/KMS key custody or production authentication has been selected or deployed. Human identity assurance is therefore PARTIALLY IMPLEMENTED in code and NOT COMPLETE operationally. This contract and synthetic test configuration are not evidence of production authentication.
 
 No Google/YouTube authorization, live identity-provider connection, deployment or provider write is required or performed by this design work.
