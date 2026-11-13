@@ -8,7 +8,7 @@ from pathlib import Path
 
 from rhemascript.evidence.artifact_verification import EvidenceIntegrityError, EvidenceVersion, verify_artifact
 from rhemascript.evidence.readiness_registry import ReadinessReplayError, ReadinessRunRegistry
-from raei.curriculum import CURRICULUM_VERSION, BIBLE_BOOKS, build_registry, registry_summary
+from raei.curriculum import CURRICULUM_VERSION, SUPPORTED_CURRICULUM_VERSIONS, BIBLE_BOOKS, build_registry, registry_summary
 from raei.training import (
     RAEITrainingError,
     SCHEMA,
@@ -67,7 +67,9 @@ class RAEITrainingTests(unittest.TestCase):
         self.assertEqual(summary["capability_count"], 15)
         self.assertEqual(summary["interface_count"], 18)
         self.assertEqual(summary["specialist_count"], 13)
-        self.assertEqual(summary["total_units"], 146)
+        self.assertEqual(summary["total_units"], 154)
+        self.assertEqual(summary["biblical_wisdom_count"], 8)
+        self.assertIn("RAEI-CURRICULUM-1.0", SUPPORTED_CURRICULUM_VERSIONS)
         self.assertEqual(summary["status"], "CURRICULUM_DEFINED_NOT_ASSESSED")
 
     def test_curriculum_enforces_cross_domain_prerequisites(self):
@@ -75,11 +77,24 @@ class RAEITrainingTests(unittest.TestCase):
         self.assertEqual(units["PROG-CORE"]["prerequisites"], ["CS-FOUND"])
         self.assertEqual(units["BIBLE-01"]["prerequisites"], ["CAPSTONE-REPRODUCIBLE"])
         self.assertEqual(units["ETH-TRUTH"]["prerequisites"], ["BIBLE-66"])
-        self.assertEqual(units["CAP-01"]["prerequisites"], ["ETH-TECH"])
+        self.assertEqual(units["BWSF-01"]["prerequisites"], ["ETH-TECH"])
+        self.assertEqual(units["BWSF-08"]["prerequisites"], ["BWSF-07"])
+        self.assertEqual(units["CAP-01"]["prerequisites"], ["BWSF-08"])
         self.assertEqual(
             set(units["INTEGRATED-CAPSTONE"]["prerequisites"]),
-            {"CAPSTONE-REPRODUCIBLE", "BIBLE-66", "ETH-TECH", "QC-COMPLIANCE"},
+            {"CAPSTONE-REPRODUCIBLE", "BIBLE-66", "ETH-TECH", "BWSF-08", "QC-COMPLIANCE"},
         )
+
+    def test_bwsf_units_are_evidence_required_and_contextual(self):
+        units = {item["id"]: item for item in build_registry()}
+        expected = {f"BWSF-{index:02d}" for index in range(1, 9)}
+        self.assertTrue(expected.issubset(units))
+        for unit_id in expected:
+            self.assertEqual(units[unit_id]["domain"], "biblical_wisdom")
+            self.assertTrue(units[unit_id]["source_refs"])
+            self.assertTrue(units[unit_id]["objectives"])
+            self.assertTrue(units[unit_id]["practice_prompt"])
+            self.assertTrue(units[unit_id]["evidence_required"])
 
     def test_self_assessment_payload_builder_uses_versioned_schema(self):
         payload = build_self_assessment_payload(
