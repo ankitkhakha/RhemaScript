@@ -78,6 +78,15 @@ class SQLiteLeaseStateModel:
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS one_lease_per_approval
                     ON lease_approvals(approval_id);
+                CREATE TABLE IF NOT EXISTS event_history (
+                    sequence INTEGER PRIMARY KEY,
+                    event_type TEXT NOT NULL,
+                    subject_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    previous_hash TEXT NOT NULL,
+                    event_hash TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS dispatch_outcomes (
                     lease_id TEXT PRIMARY KEY REFERENCES leases(lease_id),
                     status TEXT NOT NULL,
@@ -89,6 +98,81 @@ class SQLiteLeaseStateModel:
                     ON dispatch_outcomes(provider_operation_id)
                     WHERE provider_operation_id IS NOT NULL;
             """)
+
+    @staticmethod
+    def _append_event(db, event_type: str, subject_id: str, payload: dict[str, object]) -> None:
+        previous = db.execute(
+            "SELECT sequence,event_hash FROM event_history ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        sequence = previous[0] + 1 if previous else 1
+        previous_hash = previous[1] if previous else "0" * 64
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        created_at = datetime.now(timezone.utc).isoformat()
+        canonical = json.dumps({
+            "sequence": sequence, "event_type": event_type,
+            "subject_id": subject_id, "payload_json": payload_json,
+            "previous_hash": previous_hash, "created_at": created_at,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        event_hash = hashlib.sha256(canonical).hexdigest()
+        db.execute(
+            "INSERT INTO event_history VALUES(?,?,?,?,?,?,?)",
+            (sequence, event_type, subject_id, payload_json,
+             previous_hash, event_hash, created_at),
+        )
+
+    def verify_event_history(self) -> bool:
+        """Verify the local append-only hash chain from its genesis event."""
+        db = self._connect()
+        try:
+            rows = db.execute(
+                """SELECT sequence,event_type,subject_id,payload_json,
+                          previous_hash,event_hash,created_at
+                   FROM event_history ORDER BY sequence"""
+            ).fetchall()
+        except sqlite3.Error:
+            return False
+        finally:
+            db.close()
+        previous_hash = "0" * 64
+        for expected_sequence, row in enumerate(rows, 1):
+            sequence, event_type, subject_id, payload_json, stored_previous, stored_hash, created_at = row
+            if sequence != expected_sequence or stored_previous != previous_hash:
+                return False
+            try:
+                payload = json.loads(payload_json)
+            except (TypeError, ValueError):
+                return False
+            canonical = json.dumps({
+                "sequence": sequence, "event_type": event_type,
+                "subject_id": subject_id, "payload_json": json.dumps(
+                    payload, sort_keys=True, separators=(",", ":")
+                ),
+                "previous_hash": stored_previous, "created_at": created_at,
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            calculated = hashlib.sha256(canonical).hexdigest()
+            if not hmac.compare_digest(calculated, stored_hash):
+                return False
+            previous_hash = stored_hash
+        return True
+
+    def read_event_history(self) -> list[dict[str, object]]:
+        """Return a read-only copy of the local event chain."""
+        db = self._connect()
+        try:
+            rows = db.execute(
+                """SELECT sequence,event_type,subject_id,payload_json,
+                          previous_hash,event_hash,created_at
+                   FROM event_history ORDER BY sequence"""
+            ).fetchall()
+            return [{
+                "sequence": row[0], "event_type": row[1], "subject_id": row[2],
+                "payload": json.loads(row[3]), "previous_hash": row[4],
+                "event_hash": row[5], "created_at": row[6],
+            } for row in rows]
+        except (sqlite3.Error, ValueError):
+            raise LeaseStateError("event history read failed") from None
+        finally:
+            db.close()
 
     def _anchor_connect(self):
         db = sqlite3.connect(self.anchor_path, timeout=5, isolation_level=None)
