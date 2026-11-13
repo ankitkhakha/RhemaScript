@@ -97,7 +97,7 @@ def _validate_analytics_request(params: dict[str, Any]) -> tuple[list[str], list
             key, separator, value = clause.partition("==")
             if (not separator or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", key)
                     or not value or value != value.strip() or "==" in value
-                    or any(ch in value for ch in "\\r\\n")):
+                    or any(ch in value for ch in "\r\n")):
                 raise YouTubeIntegrationError("filters contains an invalid dimension==value clause")
     return metrics, dimensions
 
