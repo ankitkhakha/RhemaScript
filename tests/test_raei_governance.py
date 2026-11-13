@@ -304,7 +304,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         credentials = list(self.credentials("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM"))
         credentials[1]["subject_id"] = credentials[0]["subject_id"]
         self.resign(credentials[1])
-        with self.assertRaisesRegex(RAEIGovernanceError, "distinct V3 authenticated subjects"):
+        with self.assertRaisesRegex(RAEIGovernanceError, "distinct authenticated subjects and sessions"):
             record_finding_disposition(
                 self.registry, self.verifier, credentials,
                 finding_id="RS-FND-SUBJECT", finding_version="1.0",
@@ -320,7 +320,7 @@ class RAEIGovernanceTests(unittest.TestCase):
         credentials = list(self.credentials("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM"))
         credentials[1]["identity_session_id"] = credentials[0]["identity_session_id"]
         self.resign(credentials[1])
-        with self.assertRaisesRegex(RAEIGovernanceError, "distinct V3 authenticated subjects"):
+        with self.assertRaisesRegex(RAEIGovernanceError, "distinct authenticated subjects and sessions"):
             record_knowledge_review(
                 self.registry, self.verifier, credentials,
                 knowledge_id="BWSF-SHARED-SESSION", knowledge_version="0.1",
