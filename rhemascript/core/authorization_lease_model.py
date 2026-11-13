@@ -93,6 +93,11 @@ class SQLiteLeaseStateModel:
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
+            # A writer lock may have delayed acquisition beyond the expiry
+            # checked before BEGIN IMMEDIATE. Recheck after serialization.
+            if datetime.fromisoformat(expiry) <= datetime.now(timezone.utc):
+                db.execute("ROLLBACK")
+                raise LeaseStateError("lease expired while waiting to acquire state lock")
             if any(db.execute(
                 "SELECT 1 FROM revoked_approvals WHERE approval_id=?", (approval_id,)
             ).fetchone() for approval_id in approval_ids):
