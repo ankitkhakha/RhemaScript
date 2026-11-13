@@ -8,6 +8,7 @@ import json
 import shutil
 from pathlib import Path
 from urllib.error import URLError
+from urllib.request import Request
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -19,6 +20,13 @@ from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTr
 from rhemascript.integrations.youtube import (
     YOUTUBE_INTERFACE_ID, YouTubeClient, YouTubeConfig, YouTubeIntegrationError, youtube_provider_binding,
 )
+
+
+class PublishContext(dict):
+    def __init__(self, values, registry, vault):
+        super().__init__(values)
+        self.registry = registry
+        self.vault = vault
 
 
 class YouTubeIntegrationTests(unittest.TestCase):
@@ -114,7 +122,35 @@ class YouTubeIntegrationTests(unittest.TestCase):
     def config(self):
         return YouTubeConfig("client-id", "client-secret", "refresh-token")
 
+    def make_publish_client(self, context, transport, config=None):
+        class GatewayTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                if hasattr(transport, "send_request"):
+                    return transport.send_request(url, method, headers, body, timeout)
+                request = Request(url, data=body, headers=headers, method=method)
+                return transport(request, timeout)
+
+        gateway = ExternalIntegrationGateway(
+            (youtube_provider_binding(),),
+            transport=GatewayTransport(),
+            credential_resolver=lambda provider: {},
+            audit_sink=lambda event: None,
+            publish_session_registry=context.registry,
+            session_url_vault=context.vault,
+            enabled=True,
+        )
+        return YouTubeClient(config or self.config(), gateway=gateway)
+
     def publish_context(self, *, authorised=True, final_film_bytes=b'video', approval_store=None):
+        publish_directory = tempfile.TemporaryDirectory(prefix="rhemascript-publish-session-test-")
+        os.chmod(publish_directory.name, 0o700)
+        self.addCleanup(publish_directory.cleanup)
+        registry = approval_store or SQLitePublishSessionRegistry(
+            Path(publish_directory.name) / "publish.sqlite3"
+        )
+        vault = SQLiteEncryptedSessionUrlVault(
+            Path(publish_directory.name) / "session-url-vault.sqlite3", bytes(range(32)),
+        )
         gates = (
             "PROJECT_CREATIVE_DIRECTION", "SCRIPT_BIBLICAL_ACCURACY",
             "VISUAL_DEVELOPMENT", "PRODUCTION_PLAN_PROMPT",
@@ -187,7 +223,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         approval_verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
             verification_keys={"key-2026-01": public_key},
-            consume_many_once=(approval_store.consume_many_once if approval_store is not None else consume_once),
+            consume_many_once=registry.consume_many_once,
             clock=lambda: now,
             identity_policies={"identity-policy-v1": {
                 "provider_id": "test-idp",
@@ -241,7 +277,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             return payload
 
         publisher_actor = "director-000" if authorised else "director-001"
-        return {
+        return PublishContext({
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
             "evidence_root": evidence_root,
@@ -251,7 +287,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 signed_credential("PUBLISH", publisher_actor, "publish-001"),
             ),
             "approval_request_id": request_id,
-        }
+        }, registry, vault)
 
     def add_verified_video_evidence(self, context, video_id="video-123"):
         verification_bytes = json.dumps({
