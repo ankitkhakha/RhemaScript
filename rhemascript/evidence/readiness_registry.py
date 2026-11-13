@@ -153,7 +153,7 @@ class ReadinessRunRegistry:
             raise ValueError("event_id must be a non-empty trimmed string")
         if not isinstance(event_type, str) or event_type not in _ACTIVITY_EVENT_TYPES - _INTERNAL_EVENT_TYPES:
             raise ValueError("unsupported external activity event type")
-        if event_type in {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "KNOWLEDGE_REVIEWED"}:
+        if event_type in {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "FINDING_REOPENED", "KNOWLEDGE_REVIEWED"}:
             raise ValueError("governed review events require append_governed_activity_event")
         if event_type in {"FINDING_RESEARCHED", "FINDING_REPRODUCED", "FINDING_PLANNED", "FINDING_IMPLEMENTED", "FINDING_EFFECTIVENESS_ASSESSED"}:
             raise ValueError("authenticated finding lifecycle events require append_authenticated_finding_lifecycle_event")
@@ -396,8 +396,13 @@ class ReadinessRunRegistry:
         if (payload.get("evidence_id") != binding["evidence_id"]
                 or payload.get("evidence_version") != binding["evidence_version"]):
             raise ValueError("finding lifecycle evidence ID/version does not match its binding")
-        if event_type == "FINDING_CLOSED":
-            lineage = payload.get("lifecycle_lineage")
+        if event_type in {"FINDING_CLOSED", "FINDING_REOPENED"}:
+            if event_type == "FINDING_REOPENED":
+                new_version = payload.get("new_finding_version")
+                if not isinstance(new_version, str) or not new_version.strip() or new_version == version:
+                    raise ValueError("reopening requires a distinct proposed new finding version")
+            if event_type == "FINDING_CLOSED":
+                lineage = payload.get("lifecycle_lineage")
             if (not isinstance(lineage, dict)
                     or set(lineage) != {"plan_event_id", "implementation_event_id", "effectiveness_event_id"}
                     or any(not isinstance(value, str) or not value.strip() for value in lineage.values())):
@@ -413,7 +418,7 @@ class ReadinessRunRegistry:
                     or len({item.identity_provider_id for item in approvals}) != 1
                     or len({item.identity_policy_version for item in approvals}) != 1
                     or any(item.credential_schema != "RhemaScript.ApprovalCredential.v3" for item in approvals)):
-                raise ValueError("closure requires two distinct authenticated subjects and sessions in one trusted identity domain")
+                raise ValueError("governed finding terminal transition requires two distinct authenticated subjects and sessions in one trusted identity domain")
         enriched = dict(payload)
         enriched["authorization"] = {
             "issuer": approval.issuer,
@@ -910,6 +915,7 @@ class ReadinessRunRegistry:
             ("FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM")
             if event_type == "FINDING_DISPOSITIONED"
             else ("FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM") if event_type == "FINDING_CLOSED"
+            else ("FINDING_REOPEN_REVIEW", "FINDING_REOPEN_CONFIRM") if event_type == "FINDING_REOPENED"
             else ("KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM")
         )
         if expected_actions != required_actions:
@@ -935,6 +941,10 @@ class ReadinessRunRegistry:
             required = {"finding_id", "finding_version", "closure_decision", "rationale", "evidence_binding", "lifecycle_lineage"}
             decisions = {"CLOSED"}
             identity_field, version_field = "finding_id", "finding_version"
+        elif event_type == "FINDING_REOPENED":
+            required = {"finding_id", "finding_version", "new_finding_version", "reopen_decision", "rationale", "evidence_binding", "closure_event_id"}
+            decisions = {"REOPENED"}
+            identity_field, version_field = "finding_id", "finding_version"
         else:
             required = {"knowledge_id", "knowledge_version", "decision", "rationale", "evidence_binding"}
             decisions = {"APPROVED", "REJECTED"}
@@ -946,7 +956,7 @@ class ReadinessRunRegistry:
         version = payload.get(version_field)
         if not isinstance(version, str) or not version.strip():
             raise ValueError("governed review subject version is required")
-        decision_field = "disposition" if event_type == "FINDING_DISPOSITIONED" else "closure_decision" if event_type == "FINDING_CLOSED" else "decision"
+        decision_field = "disposition" if event_type == "FINDING_DISPOSITIONED" else "closure_decision" if event_type == "FINDING_CLOSED" else "reopen_decision" if event_type == "FINDING_REOPENED" else "decision"
         if payload.get(decision_field) not in decisions:
             raise ValueError("governed review decision is unsupported")
         rationale = payload.get("rationale")
@@ -1086,8 +1096,32 @@ class ReadinessRunRegistry:
                                  if json.loads(raw).get("version") == payload.get("finding_version")), None)
                 if not captured:
                     db.rollback()
-                    raise ValueError("closure requires the exact captured finding version")
-                lineage_rows = db.execute(
+                    raise ValueError("governed finding transition requires the exact captured finding version")
+                if event_type == "FINDING_REOPENED":
+                    closure_rows = db.execute(
+                        """SELECT event_id,payload_json FROM activity_events
+                        WHERE event_type='FINDING_CLOSED' AND project_id=? AND subject_id=? ORDER BY sequence DESC""",
+                        (project_id, subject_id),
+                    ).fetchall()
+                    closure = next(((eid, json.loads(raw)) for eid, raw in closure_rows
+                                    if json.loads(raw).get("finding_version") == payload.get("finding_version")), None)
+                    if (not closure or closure[0] != payload.get("closure_event_id")
+                            or closure[1].get("closure_decision") != "CLOSED"
+                            or binding != closure[1].get("evidence_binding")):
+                        db.rollback()
+                        raise ValueError("reopening must reference the exact closed finding event and its evidence")
+                    if any(
+                        approval.subject_id == prior.get("subject_id")
+                        or approval.identity_session_id == prior.get("identity_session_id")
+                        or approval.identity_provider_id != prior.get("identity_provider_id")
+                        or approval.identity_policy_version != prior.get("identity_policy_version")
+                        for approval in approvals
+                        for prior in [closure[1].get("authorization", {})]
+                    ):
+                        db.rollback()
+                        raise ValueError("reopening reviewers must be independent from closure reviewers")
+                else:
+                    lineage_rows = db.execute(
                     """SELECT event_id,event_type,payload_json FROM activity_events
                     WHERE project_id=? AND subject_id=? AND event_type IN
                     ('FINDING_RESEARCHED','FINDING_REPRODUCED','FINDING_PLANNED',
@@ -1147,9 +1181,9 @@ class ReadinessRunRegistry:
                 json.loads(row[0]) for row in prior_rows
                 if json.loads(row[0]).get(version_field) == payload.get(version_field)
             ]
-            if event_type in {"KNOWLEDGE_REVIEWED", "FINDING_CLOSED"} and same_version_prior:
+            if event_type in {"KNOWLEDGE_REVIEWED", "FINDING_CLOSED", "FINDING_REOPENED"} and same_version_prior:
                 db.rollback()
-                raise ValueError("a knowledge/finding version may receive only one terminal review decision")
+                raise ValueError("a knowledge/finding version may receive only one terminal review or reopen decision")
             if event_type == "FINDING_DISPOSITIONED" and same_version_prior:
                 previous_payload = same_version_prior[0]
                 previous_disposition = previous_payload.get("disposition")
