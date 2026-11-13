@@ -1,6 +1,6 @@
 # RAEI Field Intelligence & Continuous R&D Engine V1.0
 
-**Status:** Working implementation candidate on the PR #45 feature branch; exact-head CI pending for the latest changes.  
+**Status:** Working implementation candidate on the PR #45 feature branch. The code candidate at `a1f68f522ae47c4169b0ae74852a16b8a614dc43` passed the full contract/synthetic CI suite and IF-18 read-only validation; a JSON intake template was added afterwards and requires final exact-head CI.  
 **Purpose:** Preserve creator observations, investigate them with evidence, and connect findings to research, decisions, requirements, implementation, tests and learning.  
 **Authority:** No new approval gate. The Human Director retains existing decision and execution authority.
 
@@ -50,7 +50,7 @@ Only implemented event operations may be submitted. The vocabulary does not impl
 
 The initial operator workflow is available through the RAEI CLI; a graphical “Capture Finding” surface is not yet implemented.
 
-A finding is submitted as a versioned JSON evidence artifact using schema `raei-field-finding-v1`. Required fields include:
+A finding is submitted as a versioned JSON evidence artifact using schema `raei-field-finding-v1`. Start from `templates/raei-field-finding.template.json` and replace every placeholder before verification. Do not include passwords, access tokens or other secrets; if sensitive content must be redacted, document that redaction in `redaction_note` while preserving the remaining original wording. Required fields include:
 - finding ID and version;
 - project ID;
 - title and original observation wording;
