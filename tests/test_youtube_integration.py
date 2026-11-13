@@ -234,6 +234,16 @@ class YouTubeIntegrationTests(unittest.TestCase):
         }
 
     def add_verified_video_evidence(self, context, video_id="video-123"):
+        verification_bytes = json.dumps({
+            "youtube_video_id": video_id,
+            "verified_final_film_artifact_id": "ART-8",
+            "verification_method": "YOUTUBE_API_VIDEO_READ",
+            "upload_status": "uploaded",
+            "processing_status": "succeeded",
+        }, sort_keys=True).encode()
+        local_path = "YT-VERIFY-1.json"
+        with open(os.path.join(context["evidence_root"], local_path), "wb") as stream:
+            stream.write(verification_bytes)
         context["evidence_pack"]["artifacts"].append({
             "artifact_id": "YT-VERIFY-1",
             "project_id": "RS-TEST-001",
@@ -241,6 +251,8 @@ class YouTubeIntegrationTests(unittest.TestCase):
             "artifact_type": "YOUTUBE_VIDEO_VERIFICATION",
             "version": "1",
             "status": "VERIFIED",
+            "local_path": local_path,
+            "sha256": hashlib.sha256(verification_bytes).hexdigest(),
             "youtube_video_id": video_id,
             "verified_final_film_artifact_id": "ART-8",
             "verification_method": "YOUTUBE_API_VIDEO_READ",
