@@ -65,6 +65,44 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         self.assertEqual(result["previous_snapshot_sha256"], previous["snapshot_sha256"])
         self.assertTrue(verify_analytics_period_comparison(result))
 
+    def test_daily_coverage_marks_unreturned_dates_without_zero_imputation(self):
+        previous = snapshot("2026-10-01", "2026-10-07", [
+            ["2026-10-01", 10, 2.5, 15.0, 1],
+            ["2026-10-03", 20, 4.5, 13.5, 2],
+        ])
+        current = snapshot("2026-10-08", "2026-10-14", [
+            ["2026-10-08", 15, 3.0, 12.0, 1],
+            ["2026-10-09", 30, 6.0, 12.0, 3],
+        ])
+        result = compare_analytics_periods(current, previous)
+        coverage = result["previous_period"]["daily_coverage"]
+        self.assertEqual(coverage["expected_calendar_days"], 7)
+        self.assertEqual(coverage["observed_days"], ["2026-10-01", "2026-10-03"])
+        self.assertEqual(coverage["unobserved_day_count"], 5)
+        self.assertEqual(coverage["status"], "OBSERVATION_ONLY")
+        self.assertIn("not zero-activity", coverage["interpretation"])
+
+    def test_duplicate_day_rows_are_rejected(self):
+        previous = snapshot("2026-10-01", "2026-10-07", [
+            ["2026-10-01", 10, 2.5, 15.0, 1],
+            ["2026-10-01", 20, 4.5, 13.5, 2],
+        ])
+        current = snapshot("2026-10-08", "2026-10-14", [
+            ["2026-10-08", 15, 3.0, 12.0, 1],
+        ])
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "duplicate day"):
+            compare_analytics_periods(current, previous)
+
+    def test_day_outside_requested_range_is_rejected(self):
+        previous = snapshot("2026-10-01", "2026-10-07", [
+            ["2026-09-30", 10, 2.5, 15.0, 1],
+        ])
+        current = snapshot("2026-10-08", "2026-10-14", [
+            ["2026-10-08", 15, 3.0, 12.0, 1],
+        ])
+        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "outside the requested range"):
+            compare_analytics_periods(current, previous)
+
     def test_zero_baseline_has_no_percentage_change(self):
         previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 0, 0.0, 0.0, 0]])
         current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 12.0, 1]])
