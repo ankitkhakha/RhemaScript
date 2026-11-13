@@ -206,6 +206,25 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
         self.assertFalse(self.model.verify_event_history())
         self.assertTrue(self.model.verify_recovery_checkpoint(checkpoint))
 
+    def test_recovery_checkpoint_rejects_boolean_and_malformed_counters(self):
+        self.acquire(nonce="dispatch-checkpoint-shape")
+        checkpoint = self.model.create_recovery_checkpoint()
+        for field, invalid in (
+            ("schema_version", True),
+            ("sequence", True),
+            ("generation_high_water", True),
+            ("event_sequence_high_water", True),
+            ("sequence", 0),
+            ("generation_high_water", -1),
+            ("event_sequence_high_water", -1),
+            ("sha256", "A" * 64),
+            ("sha256", "not-a-digest"),
+        ):
+            with self.subTest(field=field, invalid=invalid):
+                tampered = dict(checkpoint)
+                tampered[field] = invalid
+                self.assertFalse(self.model.verify_recovery_checkpoint(tampered))
+
     def test_checkpoint_creation_rejects_generation_rollback_below_anchor(self):
         lease = self.acquire(nonce="dispatch-checkpoint-rollback")
         checkpoint = self.model.create_recovery_checkpoint()
