@@ -1,6 +1,6 @@
 # RAEI Field Intelligence & Continuous R&D Engine V1.0
 
-**Status:** Working implementation candidate on the PR #45 feature branch. The code candidate at `a1f68f522ae47c4169b0ae74852a16b8a614dc43` passed the full contract/synthetic CI suite and IF-18 read-only validation; a JSON intake template was added afterwards and requires final exact-head CI.  
+**Status:** Working implementation candidate on the PR #45 feature branch. Exact head `b01dbfd8247b207afcf92bc4fa48b66897e46bf9` passed the full contract/synthetic CI suite and IF-18 read-only validation (GitHub Actions run 43360742484).  
 **Purpose:** Preserve creator observations, investigate them with evidence, and connect findings to research, decisions, requirements, implementation, tests and learning.  
 **Authority:** No new approval gate. The Human Director retains existing decision and execution authority.
 
