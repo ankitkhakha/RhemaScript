@@ -640,6 +640,11 @@ class YouTubeClient:
             approval_request_id=approval_request_id,
         )
         with verified_video_stream as video:
+            if (self._gateway is not None
+                    and getattr(self._gateway, "publish_session_registry", None) is None):
+                raise YouTubeIntegrationError(
+                    "durable publish-session registry is required before provider upload"
+                )
             self._gateway_project_id = project_id
             self._gateway_source_version = project_version
             self._gateway_authority = {"verified_approvals": verified_approvals}
