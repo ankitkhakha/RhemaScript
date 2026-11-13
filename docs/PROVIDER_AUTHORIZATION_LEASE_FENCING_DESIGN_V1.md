@@ -148,3 +148,12 @@ These are synthetic local state-machine behaviors only. The model does not conta
 ## Strict lease claim shape in the reference model — 13 November 2026
 
 Lease acquisition now requires exactly two distinct approval identifiers (not two-or-more) and a lowercase 64-character SHA-256 request fingerprint. Tests reject three-approval ambiguity, duplicate approval identifiers, malformed digest length, uppercase digest encoding and non-hex characters. The production contract still needs a versioned canonical request encoding and independent recomputation at the provider-enforced acceptance point; this local format check alone does not prove the digest binds the right request fields.
+
+
+## Idempotent revocation and lost-response inspection — 13 November 2026
+
+The SQLite reference model now treats repeated revocation of the same approval as an idempotent acknowledgement. The first committed transition advances each affected resource fence and marks its associated leases revoked; subsequent identical revocation calls do not create additional fencing generations. A regression test confirms that the generation advances exactly once and that the original lease remains unusable.
+
+A read-only `get_dispatch_state(dispatch_nonce)` lookup now exposes the local lease state and any recorded indeterminate/terminal outcome, including the associated provider operation ID and reason code. It performs no dispatch, retry, state mutation or lease issuance. Tests exercise inspection after an ambiguous lost-response transition and confirm that inspection does not make the dispatch replayable.
+
+This lookup is only a local SQLite recovery aid. Production must authenticate the caller, enforce least-privilege inspect access, read from the authoritative coordinator, preserve audit evidence and reconcile provider status through an authenticated provider interface. A local record cannot prove that a remote provider accepted or completed a request.
