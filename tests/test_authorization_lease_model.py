@@ -30,6 +30,28 @@ class SQLiteLeaseStateModelTests(unittest.TestCase):
             expires_at=self.expiry,
         )
 
+    def test_lease_requires_exactly_two_distinct_approval_ids(self):
+        with self.assertRaisesRegex(ValueError, "exactly two distinct"):
+            self.model.acquire(
+                resource_id="youtube:channel-1:publish",
+                approval_ids=("one", "two", "three"),
+                dispatch_nonce="dispatch-three-approvals",
+                request_fingerprint="a" * 64, expires_at=self.expiry,
+            )
+        with self.assertRaisesRegex(ValueError, "exactly two distinct"):
+            self.model.acquire(
+                resource_id="youtube:channel-1:publish",
+                approval_ids=("same", "same"),
+                dispatch_nonce="dispatch-duplicate-approval",
+                request_fingerprint="a" * 64, expires_at=self.expiry,
+            )
+
+    def test_request_fingerprint_must_be_lowercase_sha256(self):
+        for invalid in ("a" * 63, "A" * 64, "g" * 64):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "lowercase SHA-256"):
+                    self.acquire(nonce="dispatch-invalid-fingerprint", fingerprint=invalid)
+
     def test_accepts_exact_unexpired_single_use_lease(self):
         lease = self.acquire()
         self.assertTrue(self.model.accept_dispatch(
