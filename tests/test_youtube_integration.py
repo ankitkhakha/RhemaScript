@@ -908,7 +908,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             video.write(b"x" * chunk_size)
             video.flush()
             with patch("rhemascript.core.authority.authorise_action", return_value=True):
-                with self.assertRaisesRegex(YouTubeIntegrationError, "impossible byte range"):
+                with self.assertRaisesRegex(YouTubeIntegrationError, "IF-18 gateway denied the provider request"):
                     client.upload_video(video.name, title="Test", description="Test",
                                         **context)
 
