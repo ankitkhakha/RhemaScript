@@ -15,6 +15,7 @@ HEADERS = [
     {"name": "views", "dataType": "INTEGER", "columnType": "METRIC"},
     {"name": "estimatedMinutesWatched", "dataType": "FLOAT", "columnType": "METRIC"},
     {"name": "subscribersGained", "dataType": "INTEGER", "columnType": "METRIC"},
+    {"name": "averageViewDuration", "dataType": "FLOAT", "columnType": "METRIC"},
 ]
 
 
@@ -42,12 +43,12 @@ def snapshot(start, end, rows, *, metrics="views,estimatedMinutesWatched,subscri
 class YouTubeAnalyticsInsightsTests(unittest.TestCase):
     def test_compares_equal_length_periods_and_binds_source_digests(self):
         previous = snapshot("2026-10-01", "2026-10-07", [
-            ["2026-10-01", 10, 2.5, 1],
-            ["2026-10-02", 20, 4.5, 2],
+            ["2026-10-01", 10, 2.5, 1, 15.0],
+            ["2026-10-02", 20, 4.5, 2, 13.5],
         ])
         current = snapshot("2026-10-08", "2026-10-14", [
-            ["2026-10-08", 15, 3.0, 1],
-            ["2026-10-09", 30, 6.0, 3],
+            ["2026-10-08", 15, 3.0, 1, 12.0],
+            ["2026-10-09", 30, 6.0, 3, 12.0],
         ])
         result = compare_analytics_periods(current, previous)
         self.assertEqual(result["metrics"]["views"]["current_value"], "45")
@@ -65,8 +66,8 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         self.assertTrue(verify_analytics_period_comparison(result))
 
     def test_zero_baseline_has_no_percentage_change(self):
-        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 0, 0.0, 0]])
-        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1]])
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 0, 0.0, 0, 0.0]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1, 12.0]])
         result = compare_analytics_periods(current, previous)
         self.assertEqual(result["metrics"]["views"]["status"], "ZERO_BASELINE")
         self.assertIsNone(result["metrics"]["views"]["percentage_change"])
@@ -74,7 +75,7 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
 
     def test_no_data_is_not_converted_to_zero(self):
         previous = snapshot("2026-10-01", "2026-10-01", None)
-        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 5, 1.0, 1, 12.0]])
         result = compare_analytics_periods(current, previous)
         self.assertEqual(result["previous_period"]["data_status"], "NO_DATA")
         self.assertIsNone(result["metrics"]["views"]["previous_value"])
@@ -82,31 +83,31 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         self.assertIsNone(result["metrics"]["views"]["absolute_change"])
 
     def test_rejects_different_channel_or_metric_scope(self):
-        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 5, 1.0, 1]])
+        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 5, 1.0, 1, 12.0]])
         previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5]],
                             metrics="views")
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "identical channel"):
             compare_analytics_periods(current, previous)
 
     def test_rejects_unequal_or_overlapping_periods(self):
-        previous = snapshot("2026-10-01", "2026-10-06", [["2026-10-01", 5, 1.0, 1]])
-        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 6, 1.2, 1]])
+        previous = snapshot("2026-10-01", "2026-10-06", [["2026-10-01", 5, 1.0, 1, 12.0]])
+        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 6, 1.2, 1, 12.0]])
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "equal inclusive"):
             compare_analytics_periods(current, previous)
-        overlapping = snapshot("2026-10-06", "2026-10-12", [["2026-10-06", 6, 1.2, 1]])
+        overlapping = snapshot("2026-10-06", "2026-10-12", [["2026-10-06", 6, 1.2, 1, 12.0]])
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "must follow"):
             compare_analytics_periods(overlapping, previous)
 
     def test_rejects_tampered_snapshot_before_comparison(self):
-        previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5, 1.0, 1]])
-        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 6, 1.2, 1]])
+        previous = snapshot("2026-10-01", "2026-10-07", [["2026-10-01", 5, 1.0, 1, 12.0]])
+        current = snapshot("2026-10-08", "2026-10-14", [["2026-10-08", 6, 1.2, 1, 12.0]])
         current["response"]["rows"][0][1] = 900
         with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "unverified snapshot"):
             compare_analytics_periods(current, previous)
 
     def test_comparison_digest_detects_tampering(self):
-        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 5, 1.0, 1]])
-        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1]])
+        previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", 5, 1.0, 1, 12.0]])
+        current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1, 12.0]])
         result = compare_analytics_periods(current, previous)
         altered = deepcopy(result)
         altered["metrics"]["views"]["current_value"] = "999"
@@ -116,8 +117,8 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
     def test_rejects_boolean_and_fractional_integer_metric_values(self):
         for invalid in (True, 1.5):
             with self.subTest(invalid=invalid):
-                previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", invalid, 1.0, 1]])
-                current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1]])
+                previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", invalid, 1.0, 1, 12.0]])
+                current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 1, 12.0]])
                 with self.assertRaises(YouTubeAnalyticsInsightError):
                     compare_analytics_periods(current, previous)
 
