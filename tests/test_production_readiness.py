@@ -58,12 +58,14 @@ class ExternalGatewayTests(unittest.TestCase):
         with self.assertRaisesRegex(ExternalIntegrationError,"audit sink"):
             gateway.invoke("IF-01",request())
 
-    def test_non_success_provider_response_is_not_reported_as_success(self):
-        gateway=ExternalIntegrationGateway((binding(),),transport=FakeTransport(503),
+    def test_legacy_generic_route_rejects_before_provider_response(self):
+        transport=FakeTransport(503)
+        gateway=ExternalIntegrationGateway((binding(),),transport=transport,
             audit_sink=lambda e:None,enabled=True)
-        with self.assertRaisesRegex(ExternalIntegrationError,"HTTP 503"):
+        with self.assertRaisesRegex(ExternalIntegrationError,"legacy generic POST invocation is disabled"):
             gateway.invoke("IF-01",request(),
                 authority={"external_action_authorisation":True})
+        self.assertEqual(transport.calls,[])
 
 class AssuranceTests(unittest.TestCase):
     def test_empty_evidence_is_not_ready(self):
