@@ -130,10 +130,17 @@ class ApprovalIssuerBoundaryTests(unittest.TestCase):
                 "max_authentication_age_seconds": 300,
             }},
         )
-        verified = verifier.verify_and_consume(
-            credential, action="FINAL_ACCEPTANCE", project_id="RS-PWW-001",
-            project_version="3.2", request_id="request-publish-001",
-        )
+        verified = verifier.verify_many_and_consume(
+            (credential,),
+            ({
+                "action": "FINAL_ACCEPTANCE", "project_id": "RS-PWW-001",
+                "project_version": "3.2", "request_id": "request-publish-001",
+                "artifact_binding": {
+                    "artifact_id": "ART-FINAL-001", "artifact_version": "7",
+                    "sha256": "a" * 64, "size_bytes": 987654,
+                },
+            },),
+        )[0]
         self.assertEqual(verified.actor_id, "directory-actor-0001")
         self.assertEqual(verified.artifact_sha256, "a" * 64)
 
