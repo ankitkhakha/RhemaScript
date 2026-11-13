@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from raei.findings import capture_finding, list_findings, SCHEMA as FINDING_SCHEMA
-from raei.governance import record_finding_disposition
+from raei.governance import record_finding_disposition, record_finding_closure
 from raei.finding_lifecycle import (
     RAEIFindingLifecycleError, record_finding_research, record_finding_reproduction, record_finding_plan, record_finding_implementation, record_finding_effectiveness,
 )
@@ -50,6 +50,8 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
                     "FINDING_PLAN": ["planner"],
                     "FINDING_IMPLEMENT": ["implementer"],
                     "FINDING_EFFECTIVENESS_ASSESS": ["assessor"],
+                    "FINDING_CLOSURE_REVIEW": ["closure-reviewer"],
+                    "FINDING_CLOSURE_CONFIRM": ["closure-approver"],
                 },
                 "allowed_authn_contexts": ["mfa"],
                 "max_authentication_age_seconds": 300,
@@ -96,7 +98,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
         evidence = verify_artifact(self.evidence_root, filename, evidence_id=evidence_id, version="1.0")
         return raw, evidence
 
-    def _credential(self, action, evidence, *, subject_id, actor_id, session_id):
+    def _credential(self, action, evidence, *, subject_id, actor_id, session_id, request_id=None):
         token = {
             "schema": "RhemaScript.ApprovalCredential.v3",
             "approval_id": f"approval-{action.lower()}-{subject_id}",
@@ -105,7 +107,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "action": action,
             "project_id": self.project_id,
             "project_version": self.project_version,
-            "request_id": f"request-{action}-{self.finding_id}",
+            "request_id": request_id or f"request-{action}-{self.finding_id}",
             "issued_at": self.now.isoformat(),
             "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
             "nonce": f"nonce-{action.lower()}-{subject_id}",
@@ -115,7 +117,7 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             "artifact_sha256": evidence.sha256,
             "artifact_size_bytes": evidence.size_bytes,
             "subject_id": subject_id,
-            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor"}[action],
+            "actor_role": {"FINDING_RESEARCH": "researcher", "FINDING_REPRODUCE": "reproducer", "FINDING_PLAN": "planner", "FINDING_IMPLEMENT": "implementer", "FINDING_EFFECTIVENESS_ASSESS": "assessor", "FINDING_CLOSURE_REVIEW": "closure-reviewer", "FINDING_CLOSURE_CONFIRM": "closure-approver"}[action],
             "authn_context": "mfa",
             "authenticated_at": self.now.isoformat(),
             "identity_session_id": session_id,
@@ -332,6 +334,60 @@ class RAEIFindingLifecycleTests(unittest.TestCase):
             request_id=f"request-FINDING_EFFECTIVENESS_ASSESS-{self.finding_id}",
             evidence_root=str(self.evidence_root), artifact_bytes=raw, evidence=evidence,
         )
+
+    def _record_closure(self, *, outcome="EFFECTIVE"):
+        evidence = verify_artifact(
+            self.evidence_root, "effectiveness.json",
+            evidence_id="EV-FND-EFFECTIVENESS-001", version="1.0",
+        )
+        request_id = f"request-FINDING-CLOSURE-{self.finding_id}"
+        credentials = (
+            self._credential(
+                "FINDING_CLOSURE_REVIEW", evidence,
+                subject_id="subject-closure-reviewer-001", actor_id="actor-closure-reviewer-001",
+                session_id="session-closure-reviewer-001", request_id=request_id,
+            ),
+            self._credential(
+                "FINDING_CLOSURE_CONFIRM", evidence,
+                subject_id="subject-closure-approver-001", actor_id="actor-closure-approver-001",
+                session_id="session-closure-approver-001", request_id=request_id,
+            ),
+        )
+        return record_finding_closure(
+            self.registry, self.verifier, credentials,
+            finding_id=self.finding_id, finding_version=self.finding_version,
+            project_id=self.project_id, project_version=self.project_version,
+            request_id=request_id, rationale="Independent effectiveness evidence meets all approved acceptance criteria.",
+            evidence_root=str(self.evidence_root), evidence=evidence,
+        )
+
+    def test_closure_requires_effective_assessment_and_projects_closed(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="EFFECTIVE")
+        result = self._record_closure()
+        self.assertEqual(result["decision"], "CLOSED")
+        finding = list_findings(self.registry)[0]
+        self.assertEqual(finding["status"], "CLOSED")
+        self.assertEqual(finding["closure_event_id"], result["event_id"])
+
+    def test_closure_rejects_ineffective_assessment(self):
+        self._record_research()
+        self._record_reproduction()
+        self._record_accepted_disposition()
+        self._record_plan()
+        self._record_implementation()
+        self._record_effectiveness(outcome="INEFFECTIVE")
+        with self.assertRaisesRegex(Exception, "only an EFFECTIVE assessment"):
+            self._record_closure()
+        self.assertEqual(list_findings(self.registry)[0]["status"], "INEFFECTIVE")
+        self.assertFalse(any(
+            event["event_type"] == "FINDING_CLOSED"
+            for event in self.registry.list_activity_events()
+        ))
 
     def test_effectiveness_binds_exact_implementation_and_projects_outcome(self):
         self._record_research()
