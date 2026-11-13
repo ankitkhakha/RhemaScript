@@ -78,6 +78,11 @@ def _cap02(e):
 
 def _cap03(e):
     script=_seq(e,"script_elements"); mapping=_seq(e,"source_mapping")
+    allowed_classes={
+        "EXPLICIT_TEXT", "STRONG_INFERENCE", "PLAUSIBLE_INTERPRETATION",
+        "HISTORICAL_RECONSTRUCTION", "CREATIVE_RECONSTRUCTION",
+        "MODERN_APPLICATION", "DISPUTED", "UNKNOWN",
+    }
     for i,item in enumerate(script):
         if not isinstance(item,dict):
             raise SpecialistInputError(f"script_elements[{i}] must be an object")
@@ -85,6 +90,8 @@ def _cap03(e):
             raise SpecialistInputError(f"script_elements[{i}] requires a non-empty element_id")
     mapped=set()
     invalid=[]
+    unclassified=[]
+    classifications=[]
     for i,item in enumerate(mapping):
         if not isinstance(item,dict):
             raise SpecialistInputError(f"source_mapping[{i}] must be an object")
@@ -92,11 +99,24 @@ def _cap03(e):
             invalid.append(i)
         else:
             mapped.add(item["element_id"])
+        classification=item.get("interpretation_class")
+        if not isinstance(classification,str) or classification not in allowed_classes:
+            unclassified.append(i)
+        else:
+            classifications.append({
+                "mapping_index":i,
+                "element_id":item.get("element_id"),
+                "interpretation_class":classification,
+            })
     unsupported=[item["element_id"] for item in script if item["element_id"] not in mapped]
+    gaps=bool(unsupported or invalid or unclassified)
     return {"script_element_count":len(script),"mapped_element_count":len(script)-len(unsupported),
             "unmapped_elements":unsupported,"invalid_mapping_indexes":invalid,
-            "integrity_status":"GAPS_FOUND" if unsupported or invalid else "MAPPING_COMPLETE",
-            "note":"mapping completeness does not establish interpretive correctness"}
+            "unclassified_mapping_indexes":unclassified,
+            "mapping_classifications":classifications,
+            "allowed_interpretation_classes":sorted(allowed_classes),
+            "integrity_status":"GAPS_FOUND" if gaps else "MAPPING_COMPLETE",
+            "note":"mapping and its declared classification do not establish interpretive correctness; CAP-02 context review and existing human approval remain required"}
 
 def _cap04(e):
     weights={"biblical_relevance":20,"audience_relevance":15,"content_value":15,"discovery_potential":10,
