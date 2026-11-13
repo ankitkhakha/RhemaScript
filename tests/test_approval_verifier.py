@@ -230,5 +230,84 @@ class ApprovalVerifierTests(unittest.TestCase):
         self.assertEqual(self.consume_calls, [])
 
 
+
+    def artifact_binding(self):
+        return {
+            "artifact_id": "ART-FINAL-001",
+            "artifact_version": "7",
+            "sha256": "a" * 64,
+            "size_bytes": 987654,
+        }
+
+    def v2_expectation(self, action="PUBLISH"):
+        return {**self.expectations(action), "artifact_binding": self.artifact_binding()}
+
+    def test_accepts_v2_approval_bound_to_exact_final_film_bytes(self):
+        binding = self.artifact_binding()
+        token = self.credential(
+            schema="RhemaScript.ApprovalCredential.v2",
+            artifact_id=binding["artifact_id"],
+            artifact_version=binding["artifact_version"],
+            artifact_sha256=binding["sha256"],
+            artifact_size_bytes=binding["size_bytes"],
+        )
+        verified = self.verifier.verify_many_and_consume(
+            (token,), (self.v2_expectation(),),
+        )[0]
+        self.assertEqual(verified.artifact_id, binding["artifact_id"])
+        self.assertEqual(verified.artifact_version, binding["artifact_version"])
+        self.assertEqual(verified.artifact_sha256, binding["sha256"])
+        self.assertEqual(verified.artifact_size_bytes, binding["size_bytes"])
+
+    def test_rejects_v2_approval_for_different_artifact_digest(self):
+        binding = self.artifact_binding()
+        token = self.credential(
+            schema="RhemaScript.ApprovalCredential.v2",
+            artifact_id=binding["artifact_id"],
+            artifact_version=binding["artifact_version"],
+            artifact_sha256="b" * 64,
+            artifact_size_bytes=binding["size_bytes"],
+        )
+        with self.assertRaisesRegex(ApprovalError, "binding does not match"):
+            self.verifier.verify_many_and_consume((token,), (self.v2_expectation(),))
+        self.assertEqual(self.used, set())
+
+    def test_rejects_v2_approval_for_different_artifact_version_or_size(self):
+        binding = self.artifact_binding()
+        for index, overrides in enumerate((
+            {"artifact_version": "8", "artifact_size_bytes": binding["size_bytes"]},
+            {"artifact_version": binding["artifact_version"], "artifact_size_bytes": binding["size_bytes"] + 1},
+        )):
+            token = self.credential(
+                schema="RhemaScript.ApprovalCredential.v2",
+                artifact_id=binding["artifact_id"],
+                artifact_version=overrides["artifact_version"],
+                artifact_sha256=binding["sha256"],
+                artifact_size_bytes=overrides["artifact_size_bytes"],
+                approval_id=f"approval-version-{index}",
+                nonce=f"nonce-version-{index}",
+            )
+            with self.assertRaisesRegex(ApprovalError, "binding does not match"):
+                self.verifier.verify_many_and_consume((token,), (self.v2_expectation(),))
+        self.assertEqual(self.used, set())
+
+    def test_rejects_v2_credential_without_exact_artifact_expectation(self):
+        binding = self.artifact_binding()
+        token = self.credential(
+            schema="RhemaScript.ApprovalCredential.v2",
+            artifact_id=binding["artifact_id"],
+            artifact_version=binding["artifact_version"],
+            artifact_sha256=binding["sha256"],
+            artifact_size_bytes=binding["size_bytes"],
+        )
+        with self.assertRaisesRegex(ApprovalError, "exact artifact expectation"):
+            self.verify(token)
+
+    def test_rejects_legacy_v1_credential_when_artifact_binding_is_required(self):
+        with self.assertRaisesRegex(ApprovalError, "schema v2"):
+            self.verifier.verify_many_and_consume(
+                (self.credential(),), (self.v2_expectation(),),
+            )
+
 if __name__ == "__main__":
     unittest.main()
