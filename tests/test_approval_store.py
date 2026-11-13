@@ -588,6 +588,59 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
             **args, owner_id="gateway-B", total=10, lease_seconds=60,
         ))
 
+    def test_reconciliation_rejects_acknowledgement_beyond_submitted_chunk(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.mark_publish_session_indeterminate(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A",
+        ))
+        self.assertTrue(self.store.begin_publish_reconciliation(
+            **args, owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
+        self.assertFalse(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-B", status=308, range_header="bytes=0-9",
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "INDETERMINATE")
+        self.assertEqual(record["acknowledged_offset"], 0)
+        self.assertEqual(record["inflight_end"], 4)
+
+    def test_concurrent_chunk_claims_are_linearizable(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        barrier = threading.Barrier(3)
+        outcomes = []
+        def claim(owner):
+            barrier.wait()
+            outcomes.append(self.store.begin_publish_chunk(
+                **args, owner_id=owner, start=0, end=4, total=10,
+                body_size=5, lease_seconds=60,
+            ))
+        workers = [
+            threading.Thread(target=claim, args=("gateway-A",)),
+            threading.Thread(target=claim, args=("gateway-B",)),
+        ]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=5)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sorted(outcomes), [False, True])
+
+    def test_approval_fingerprint_cannot_claim_a_second_request(self):
+        self.reserve_and_bind()
+        other = {**self.identity, "request_id": "REQUEST-2"}
+        self.assertFalse(self.store.reserve_publish_session(**other, owner_id="gateway-B"))
+
     def test_checkpoint_covers_publish_sessions_and_detects_tampering(self):
         self.reserve_and_bind()
         key = b"publish-session-checkpoint-key-32-bytes!"
