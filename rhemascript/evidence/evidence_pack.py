@@ -10,7 +10,7 @@ class EvidencePackError(ValueError):
     pass
 
 REQUIRED_FIELDS = {"manifest_id", "schema_version", "project_record", "artifacts", "evidence_records", "source_to_final_links"}
-ARTIFACT_TYPES = {"BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM", "YOUTUBE_VIDEO_VERIFICATION"}
+ARTIFACT_TYPES = {"BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM", "YOUTUBE_VIDEO_VERIFICATION", "YOUTUBE_ANALYTICS_SNAPSHOT", "YOUTUBE_ANALYTICS_COMPARISON"}
 CHAIN_ORDER = ("BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM")
 APPROVED_STATUSES = {"APPROVED", "VERIFIED", "ACCEPTED"}
 
@@ -143,6 +143,53 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
         _required_string(artifact.get("status"), f"artifact {ident}.status")
         if artifact["artifact_type"] in {"APPROVED_SCRIPT", "APPROVED_NARRATION"} and artifact["status"] not in APPROVED_STATUSES:
             raise EvidencePackError(f"{ident} approval status is not evidenced")
+        if artifact_type in {"YOUTUBE_ANALYTICS_SNAPSHOT", "YOUTUBE_ANALYTICS_COMPARISON"}:
+            digest_field = (
+                "snapshot_sha256" if artifact_type == "YOUTUBE_ANALYTICS_SNAPSHOT"
+                else "comparison_sha256"
+            )
+            digest = artifact.get(digest_field)
+            if (not isinstance(digest, str) or len(digest) != 64
+                    or any(char not in "0123456789abcdef" for char in digest)):
+                raise EvidencePackError(
+                    f"artifact {ident}.{digest_field} must be a lowercase SHA-256 digest"
+                )
+        if artifact_type == "YOUTUBE_ANALYTICS_COMPARISON":
+            current_id = _required_string(
+                artifact.get("current_snapshot_artifact_id"),
+                f"artifact {ident}.current_snapshot_artifact_id",
+            )
+            previous_id = _required_string(
+                artifact.get("previous_snapshot_artifact_id"),
+                f"artifact {ident}.previous_snapshot_artifact_id",
+            )
+            if current_id == previous_id:
+                raise EvidencePackError(
+                    f"artifact {ident} must bind two distinct period snapshots"
+                )
+            current_digest = artifact.get("current_snapshot_sha256")
+            previous_digest = artifact.get("previous_snapshot_sha256")
+            for field, digest in (
+                ("current_snapshot_sha256", current_digest),
+                ("previous_snapshot_sha256", previous_digest),
+            ):
+                if (not isinstance(digest, str) or len(digest) != 64
+                        or any(char not in "0123456789abcdef" for char in digest)):
+                    raise EvidencePackError(
+                        f"artifact {ident}.{field} must be a lowercase SHA-256 digest"
+                    )
+            for source_id, expected_digest in (
+                (current_id, current_digest), (previous_id, previous_digest)
+            ):
+                source = artifacts.get(source_id)
+                if source is None or source.get("artifact_type") != "YOUTUBE_ANALYTICS_SNAPSHOT":
+                    raise EvidencePackError(
+                        f"artifact {ident} references a missing or non-snapshot Analytics source"
+                    )
+                if source.get("snapshot_sha256") != expected_digest:
+                    raise EvidencePackError(
+                        f"artifact {ident} source snapshot digest does not match {source_id}"
+                    )
         refs = artifact.get("evidence_refs", [])
         if not isinstance(refs, list) or any(not isinstance(x, str) or not x.strip() for x in refs):
             raise EvidencePackError(f"artifact {ident}.evidence_refs must be non-empty strings")
@@ -171,6 +218,22 @@ def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
             target[key] = value
         target.setdefault("evidence_refs", []).extend(refs + [f"artifact:{x}" for x in artifact_refs])
     _validate_graph(artifacts, links_raw)
+    provenance_edges = {
+        (link["from_artifact_id"], link["to_artifact_id"], link["relationship"])
+        for link in links_raw
+    }
+    for ident, artifact in artifacts.items():
+        if artifact["artifact_type"] != "YOUTUBE_ANALYTICS_COMPARISON":
+            continue
+        required_edges = {
+            (artifact["current_snapshot_artifact_id"], ident, "DERIVED_FROM"),
+            (artifact["previous_snapshot_artifact_id"], ident, "DERIVED_FROM"),
+        }
+        if not required_edges.issubset(provenance_edges):
+            raise EvidencePackError(
+                f"Analytics comparison {ident} requires DERIVED_FROM links "
+                "to both exact snapshot artifacts"
+            )
     gates = pack.get("gate_records", [])
     if not isinstance(gates, list) or any(not isinstance(x, dict) for x in gates):
         raise EvidencePackError("gate_records must be a list of objects")
