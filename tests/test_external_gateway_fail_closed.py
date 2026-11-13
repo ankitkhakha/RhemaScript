@@ -60,7 +60,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             ("PUBLISH", "publisher-001", "publish"),
         ):
             payload = {
-                "schema": "RhemaScript.ApprovalCredential.v2",
+                "schema": "RhemaScript.ApprovalCredential.v3",
                 "approval_id": f"approval-{suffix}-{request_id}",
                 "issuer": "RhemaScript-Approval-Service",
                 "actor_id": actor,
@@ -76,6 +76,13 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 "artifact_version": binding["artifact_version"],
                 "artifact_sha256": binding["sha256"],
                 "artifact_size_bytes": binding["size_bytes"],
+                "subject_id": "subject-" + actor,
+                "actor_role": "director" if action == "FINAL_ACCEPTANCE" else "publisher",
+                "authn_context": "mfa",
+                "authenticated_at": now.isoformat(),
+                "identity_session_id": "session-" + actor,
+                "identity_policy_version": "identity-policy-v1",
+                "identity_provider_id": "test-idp",
             }
             payload["signature"] = private_key.sign(
                 json.dumps(payload, sort_keys=True, separators=(",", ":"),
@@ -87,6 +94,15 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             verification_keys={"key-2026-01": public_key},
             consume_many_once=lambda entries: True,
             clock=lambda: now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {
+                    "FINAL_ACCEPTANCE": ["director"],
+                    "PUBLISH": ["publisher"],
+                },
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
         expectations = tuple({
             "action": action, "project_id": project_id,
