@@ -343,3 +343,10 @@ Existing legacy databases remain migratable only when their existing file and pa
 Adversarial tests cover default owner-only creation, group/world-readable database rejection, public parent rejection, symlinked database rejection and symlinked ancestor rejection. Exact code/test head `a9efb1220720e6c3b85610a0e675be6f9f096608` passed the complete contract and synthetic integration suite in GitHub Actions run #1716: https://github.com/ankitkhakha/RhemaScript/actions/runs/43420044583.
 
 POSIX permission checks protect against other local users; they do not defend against a malicious process running as the same owner, compromised administrator, or attacker able to rewrite both the database and independent checkpoint/key custody. External checkpoint retention and separate key custody remain required.
+
+
+## Checkpoint anti-rollback limitation — 13 November 2026
+
+HMAC authenticity and snapshot consistency do not prove checkpoint freshness. A valid older checkpoint remains cryptographically valid for the older state it describes. If an operator can replay both an older database and its matching older checkpoint, local verification alone cannot know that a newer checkpoint once existed.
+
+Production recovery therefore requires a separate monotonic freshness anchor under independent administration (for example, an append-only external audit service or hardware-backed monotonic counter) that stores the latest checkpoint generation and snapshot digest. The readiness registry's local HMAC checkpoint and the approval archive's signed creation timestamp are not substitutes for this anchor. No automatic restore or anti-rollback service is implemented.
