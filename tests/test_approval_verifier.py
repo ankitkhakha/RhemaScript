@@ -96,6 +96,135 @@ class ApprovalVerifierTests(unittest.TestCase):
                 "artifact_binding": {"artifact_id": "ART-FINAL-001", "artifact_version": "7",
                                      "sha256": "a" * 64, "size_bytes": 987654}}
 
+    def test_live_key_registry_rejects_verify_only_key_for_new_authorization(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="VERIFY_ONLY", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision="registry-revision-001",
+                    resolved_at=self.now,
+                )
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "not active"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+
+    def test_live_key_registry_fails_closed_on_stale_registry_response(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="ACTIVE", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision="registry-revision-002",
+                    resolved_at=self.now - timedelta(minutes=2),
+                )
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "stale or future-dated"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+
+    def test_live_key_registry_rejects_revoked_key_for_new_authorization(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="REVOKED", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision="registry-revision-003",
+                    resolved_at=self.now, revoked_at=self.now - timedelta(seconds=1),
+                )
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(ApprovalError, "not active"):
+            verifier.verify_many_and_consume(
+                (self.credential(),), (self.expectations("PUBLISH"),),
+            )
+
+    def test_live_key_registry_preserves_historical_signature_audit_for_verify_only_key(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        token = self.credential()
+        record = {
+            "credential_schema": token["schema"],
+            **{key: value for key, value in token.items() if key != "schema"},
+        }
+
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="VERIFY_ONLY", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision="registry-revision-004",
+                    resolved_at=self.now,
+                )
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        result = verifier.verify_persisted_record(record)
+        self.assertTrue(result["signature_valid"])
+        self.assertTrue(result["issuer_trusted"])
+        self.assertEqual(result["key_status_at_verification"], "VERIFY_ONLY")
+        self.assertTrue(result["key_trusted_at_issuance"])
+
+    def test_live_key_registry_marks_historical_signature_issued_after_revocation_untrusted(self):
+        from rhemascript.core.verification_keys import VerificationKeyRecord
+
+        token = self.credential()
+        record = {
+            "credential_schema": token["schema"],
+            **{key: value for key, value in token.items() if key != "schema"},
+        }
+
+        class Registry:
+            def resolve_key(inner, key_id, *, issuer, environment):
+                return VerificationKeyRecord(
+                    key_id=key_id, issuer=issuer, environment=environment,
+                    status="REVOKED", public_key=self.key,
+                    valid_from=self.now - timedelta(days=30),
+                    valid_until=None, registry_revision="registry-revision-005",
+                    resolved_at=self.now, revoked_at=self.now - timedelta(seconds=1),
+                )
+
+        verifier = ApprovalVerifier(
+            issuer="RhemaScript-Approval-Service", key_registry=Registry(),
+            key_registry_environment="production", consume_many_once=lambda entries: True,
+            clock=lambda: self.now,
+        )
+        result = verifier.verify_persisted_record(record)
+        self.assertTrue(result["signature_valid"])
+        self.assertFalse(result["issuer_trusted"])
+        self.assertEqual(result["key_status_at_verification"], "REVOKED")
+        self.assertFalse(result["key_trusted_at_issuance"])
+
     def test_high_risk_approval_fails_closed_without_identity_policy(self):
         verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
