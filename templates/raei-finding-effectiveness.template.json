@@ -1,0 +1,25 @@
+{
+  "schema": "raei-finding-effectiveness-v1",
+  "finding_id": "RS-FND-REPLACE",
+  "finding_version": "1.0",
+  "implementation_event_id": "FINDING_IMPLEMENTED:RS-FND-REPLACE@1.0:request-FINDING_IMPLEMENT-RS-FND-REPLACE",
+  "implementation_evidence_binding": {
+    "evidence_id": "EV-FND-IMPLEMENTATION-REPLACE",
+    "evidence_version": "1.0",
+    "sha256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "size_bytes": 0
+  },
+  "outcome": "INCONCLUSIVE",
+  "criteria_results": [
+    "For each approved acceptance criterion, record observed result and exact supporting evidence."
+  ],
+  "observed_outcomes": [
+    "Record measurable before/after outcome, time window, environment and limitations."
+  ],
+  "residual_risks": [
+    "List unresolved risks or state explicitly that none were identified within the assessed scope."
+  ],
+  "evidence_id": "EV-FND-EFFECTIVENESS-REPLACE",
+  "evidence_version": "1.0",
+  "created_at_utc": "2026-11-13T00:00:00+00:00"
+}
