@@ -52,7 +52,7 @@ The following are the first research tracks. They are a structured beginning, no
 
 **Principle:** Seek wisdom that listens, discerns and serves justly; do not seek knowledge merely for status, power or self-interest.
 
-**RhemaScript/RAEI application:** Gather the creator's observations carefully; identify the actual problem before proposing a solution; distinguish evidence from assumption; explain trade-offs; evaluate consequences for people; preserve humility and accountability.
+**RhemaScript/RAEI application:** Gather the creator's observations carefully; identify the actual problem before proposing a solution; distinguish evidence from assumption; explain trade-offs; evaluate consequences for people; preserve humility and accountability. The first operator capture path is now specified and implemented as a candidate in the RAEI field-finding service, using the shared append-only activity-event history.
 
 **Field-intelligence application (explicitly an analogy):** Treat the creator's practical observation as something to hear accurately before diagnosing it. Preserve the original wording and context; record the affected workflow, expected versus observed behaviour, impact and supplied evidence; then reproduce, research and assess it. Do not dismiss the observation because the current design says otherwise, and do not promote it to established fact merely because it was reported. The AI's “listening” is a disciplined information-intake procedure, not human consciousness or spiritual discernment. Record the finding in the existing append-only RAEI event history and link it to the existing work, risk, defect and evidence records; do not create a parallel ledger.
 
