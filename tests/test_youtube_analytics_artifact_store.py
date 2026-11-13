@@ -173,6 +173,61 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             self.assertEqual(record["current_snapshot_sha256"], comparison["current_snapshot_sha256"])
             self.assertEqual(record["previous_snapshot_sha256"], comparison["previous_snapshot_sha256"])
 
+    def test_pack_integrity_accepts_comparison_derived_from_exact_source_snapshots(self):
+        previous = make_snapshot("2026-10-01", "2026-10-01", 10)
+        current = make_snapshot("2026-10-02", "2026-10-02", 15)
+        with tempfile.TemporaryDirectory() as directory:
+            previous_record = persist_analytics_evidence_artifact(
+                previous, evidence_root=directory, relative_path="previous-valid.json",
+                artifact_id="YT-PREV-VALID", project_id="PROJECT-1", project_version="3",
+            )
+            current_record = persist_analytics_evidence_artifact(
+                current, evidence_root=directory, relative_path="current-valid.json",
+                artifact_id="YT-CURRENT-VALID", project_id="PROJECT-1", project_version="3",
+            )
+            comparison = compare_analytics_periods(current, previous)
+            comparison_record = persist_analytics_evidence_artifact(
+                comparison, evidence_root=directory, relative_path="comparison-valid.json",
+                artifact_id="YT-COMP-VALID", project_id="PROJECT-1", project_version="3",
+                current_snapshot_artifact_id="YT-CURRENT-VALID",
+                previous_snapshot_artifact_id="YT-PREV-VALID",
+                current_snapshot=current, previous_snapshot=previous,
+            )
+            manifest = {
+                "manifest_id": "MANIFEST-VALID",
+                "schema_version": "1.0",
+                "project_record": {
+                    "record_id": "PROJECT-RECORD-1",
+                    "record_type": "RHEMASCRIPT_PROJECT",
+                    "schema_version": "1.0",
+                    "project_id": "PROJECT-1",
+                    "status": "DRAFT",
+                    "classification": "OPERATIONAL",
+                    "version": "3",
+                },
+                "artifacts": [previous_record, current_record, comparison_record],
+                "evidence_records": [{
+                    "evidence_id": "EVIDENCE-VALID",
+                    "capability_id": "CAP-01",
+                    "payload": {},
+                    "evidence_refs": [],
+                    "artifact_refs": ["YT-COMP-VALID"],
+                }],
+                "source_to_final_links": [
+                    {"from_artifact_id": "YT-PREV-VALID", "to_artifact_id": "YT-COMP-VALID",
+                     "relationship": "DERIVED_FROM"},
+                    {"from_artifact_id": "YT-CURRENT-VALID", "to_artifact_id": "YT-COMP-VALID",
+                     "relationship": "DERIVED_FROM"},
+                ],
+            }
+            validated = validate_evidence_pack(manifest)
+            verified = verify_pack_artifacts(validated, directory)
+            self.assertEqual(
+                {item.evidence_id for item in verified},
+                {"YT-PREV-VALID", "YT-CURRENT-VALID", "YT-COMP-VALID"},
+            )
+
+
     def test_pack_integrity_rejects_forged_comparison_even_when_file_hashes_match(self):
         previous = make_snapshot("2026-10-01", "2026-10-01", 10)
         current = make_snapshot("2026-10-02", "2026-10-02", 15)
