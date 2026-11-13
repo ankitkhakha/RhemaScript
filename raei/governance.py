@@ -284,6 +284,106 @@ def record_finding_closure(
     }
 
 
+def record_finding_reopening(
+    registry: ReadinessRunRegistry,
+    verifier: ApprovalVerifier,
+    credentials: Sequence[object],
+    *,
+    finding_id: str,
+    finding_version: str,
+    new_finding_version: str,
+    project_id: str,
+    project_version: str,
+    request_id: str,
+    rationale: str,
+    evidence_root: str,
+    evidence: EvidenceVersion,
+) -> dict[str, Any]:
+    """Authorize a new finding version after a previously closed version is reopened."""
+    if not isinstance(registry, ReadinessRunRegistry) or not isinstance(verifier, ApprovalVerifier):
+        raise RAEIGovernanceError("ReadinessRunRegistry and ApprovalVerifier are required")
+    if not isinstance(credentials, (tuple, list)) or len(credentials) != 2:
+        raise RAEIGovernanceError("two signed reopening approvals are required")
+    if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 4000:
+        raise RAEIGovernanceError("reopening rationale must be non-empty and at most 4000 characters")
+    if not isinstance(new_finding_version, str) or not new_finding_version.strip() or new_finding_version == finding_version:
+        raise RAEIGovernanceError("reopening requires a distinct new finding version")
+    if not is_verified_evidence_version(evidence):
+        raise RAEIGovernanceError("reopening requires a verified evidence artifact")
+    try:
+        current = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+    except (OSError, ValueError) as exc:
+        raise RAEIGovernanceError(f"reopening evidence could not be reverified: {exc}") from exc
+    if current.sha256 != evidence.sha256 or current.size_bytes != evidence.size_bytes:
+        raise RAEIGovernanceError("reopening evidence bytes changed after verification")
+    events = [
+        event for event in registry.list_activity_events()
+        if event.get("project_id") == project_id and event.get("subject_id") == finding_id
+        and event.get("payload", {}).get("finding_version") == finding_version
+    ]
+    closures = [event for event in events if event["event_type"] == "FINDING_CLOSED"]
+    if len(closures) != 1 or closures[0]["payload"].get("closure_decision") != "CLOSED":
+        raise RAEIGovernanceError("reopening requires exactly one prior governed closure")
+    closure = closures[0]
+    binding = {
+        "evidence_id": current.evidence_id,
+        "evidence_version": current.version,
+        "sha256": current.sha256,
+        "size_bytes": current.size_bytes,
+    }
+    if binding != closure["payload"].get("evidence_binding"):
+        raise RAEIGovernanceError("reopening review must bind the exact prior closure evidence")
+    actions = ("FINDING_REOPEN_REVIEW", "FINDING_REOPEN_CONFIRM")
+    expectations = tuple({
+        "action": action, "project_id": project_id,
+        "project_version": project_version, "request_id": request_id,
+        "artifact_binding": {
+            "artifact_id": binding["evidence_id"],
+            "artifact_version": binding["evidence_version"],
+            "sha256": binding["sha256"],
+            "size_bytes": binding["size_bytes"],
+        },
+    } for action in actions)
+    try:
+        approvals = verifier.verify_many_and_consume(
+            tuple(credentials), expectations, require_distinct_actors=True,
+        )
+        latest = verify_artifact(
+            evidence_root, evidence.relative_path,
+            evidence_id=evidence.evidence_id, version=evidence.version,
+        )
+        if latest.sha256 != evidence.sha256 or latest.size_bytes != evidence.size_bytes:
+            raise RAEIGovernanceError("reopening evidence changed during approval")
+        payload = {
+            "finding_id": finding_id,
+            "finding_version": finding_version,
+            "new_finding_version": new_finding_version,
+            "reopen_decision": "REOPENED",
+            "rationale": rationale,
+            "evidence_binding": binding,
+            "closure_event_id": closure["event_id"],
+        }
+        event_id = f"FINDING_REOPENED:{finding_id}@{finding_version}:{request_id}"
+        recorded = registry.append_governed_activity_event(
+            event_id, "FINDING_REOPENED", payload,
+            project_id=project_id, project_version=project_version,
+            subject_id=finding_id, request_id=request_id,
+            approvals=approvals, expected_actions=actions,
+        )
+    except (ApprovalError, ValueError, TypeError) as exc:
+        raise RAEIGovernanceError(f"governed finding reopening rejected: {exc}") from exc
+    return {
+        "recorded": recorded, "event_id": event_id,
+        "finding_id": finding_id, "closed_finding_version": finding_version,
+        "new_finding_version": new_finding_version,
+        "decision": "REOPENED", "authenticated_reviewers": 2,
+        "approval_ids": [item.approval_id for item in approvals],
+    }
+
+
 def list_governed_reviews(
     registry: ReadinessRunRegistry, *, event_type: str | None = None,
     project_id: str | None = None, subject_id: str | None = None,
@@ -291,7 +391,7 @@ def list_governed_reviews(
     """Return decisions only after validating the registry chain and review envelope."""
     if not isinstance(registry, ReadinessRunRegistry) or not registry.verify():
         raise RAEIGovernanceError("activity history integrity verification failed")
-    allowed = {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "KNOWLEDGE_REVIEWED"}
+    allowed = {"FINDING_DISPOSITIONED", "FINDING_CLOSED", "FINDING_REOPENED", "KNOWLEDGE_REVIEWED"}
     if event_type is not None and event_type not in allowed:
         raise RAEIGovernanceError("unsupported governed review filter")
     results = []
@@ -312,7 +412,7 @@ def list_governed_reviews(
                 or len(auth.get("approval_ids", [])) != 2
                 or auth.get("project_id") != event.get("project_id")):
             raise RAEIGovernanceError("governed event authorization envelope is invalid")
-        if event["event_type"] == "FINDING_CLOSED":
+        if event["event_type"] in {"FINDING_CLOSED", "FINDING_REOPENED"}:
             subjects = auth.get("subject_ids", [])
             sessions = auth.get("identity_session_ids", [])
             providers = auth.get("identity_provider_ids", [])
@@ -321,7 +421,7 @@ def list_governed_reviews(
                     or len(sessions) != 2 or len(set(sessions)) != 2
                     or len(providers) != 2 or len(set(providers)) != 1
                     or len(policies) != 2 or len(set(policies)) != 1
-                    or auth.get("actions") != ["FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM"]):
-                raise RAEIGovernanceError("finding closure must retain two distinct authenticated reviewers in one identity domain")
+                    or auth.get("actions") != (["FINDING_CLOSURE_REVIEW", "FINDING_CLOSURE_CONFIRM"] if event["event_type"] == "FINDING_CLOSED" else ["FINDING_REOPEN_REVIEW", "FINDING_REOPEN_CONFIRM"])):
+                raise RAEIGovernanceError("finding closure/reopening must retain two distinct authenticated reviewers in one identity domain")
         results.append({**event, **payload})
     return results
