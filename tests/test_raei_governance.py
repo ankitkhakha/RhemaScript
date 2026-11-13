@@ -40,16 +40,29 @@ class RAEIGovernanceTests(unittest.TestCase):
             self.used.update(ids)
             return True
 
+        governed_actions = (
+            "FINDING_DISPOSITION_REVIEW", "FINDING_DISPOSITION_CONFIRM",
+            "KNOWLEDGE_REVIEW", "KNOWLEDGE_CONFIRM",
+        )
         self.verifier = ApprovalVerifier(
             issuer="RhemaScript-Approval-Service",
             verification_keys={"key-2026-01": public_key},
             consume_many_once=consume_once,
             clock=lambda: self.now,
+            identity_policies={"identity-policy-v1": {
+                "provider_id": "test-idp",
+                "allowed_roles_by_action": {
+                    action: ["reviewer" if action.endswith("_REVIEW") else "approver"]
+                    for action in governed_actions
+                },
+                "allowed_authn_contexts": ["mfa"],
+                "max_authentication_age_seconds": 300,
+            }},
         )
 
     def credential(self, action, actor, suffix):
         payload = {
-            "schema": "RhemaScript.ApprovalCredential.v1",
+            "schema": "RhemaScript.ApprovalCredential.v3",
             "approval_id": f"approval-{suffix}",
             "issuer": "RhemaScript-Approval-Service",
             "actor_id": actor,
@@ -61,6 +74,17 @@ class RAEIGovernanceTests(unittest.TestCase):
             "expires_at": (self.now + timedelta(minutes=5)).isoformat(),
             "nonce": f"nonce-{suffix}",
             "key_id": "key-2026-01",
+            "artifact_id": self.evidence.evidence_id,
+            "artifact_version": self.evidence.version,
+            "artifact_sha256": self.evidence.sha256,
+            "artifact_size_bytes": self.evidence.size_bytes,
+            "subject_id": f"subject-{actor}",
+            "actor_role": "reviewer" if action.endswith("_REVIEW") else "approver",
+            "authn_context": "mfa",
+            "authenticated_at": self.now.isoformat(),
+            "identity_session_id": f"session-{suffix}",
+            "identity_policy_version": "identity-policy-v1",
+            "identity_provider_id": "test-idp",
         }
         payload["signature"] = self.private_key.sign(
             json.dumps(payload, sort_keys=True, separators=(",", ":"),
