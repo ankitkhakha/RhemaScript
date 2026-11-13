@@ -145,6 +145,93 @@ def verify_artifact(root: str | os.PathLike[str], relative_path: str, *,
     return result
 
 
+
+def _read_artifact_bytes(root: str | os.PathLike[str], relative_path: str) -> tuple[str, bytes]:
+    """Read one regular file beneath root using descriptor-relative no-follow traversal."""
+    if not isinstance(relative_path, str) or not relative_path.strip():
+        raise EvidenceIntegrityError("artifact path must be a non-empty string")
+    rel = PurePosixPath(relative_path)
+    if rel.is_absolute() or not rel.parts or any(part in ("", ".", "..") for part in rel.parts):
+        raise EvidenceIntegrityError("artifact path must name a file beneath the evidence root")
+    root_path = Path(root).expanduser()
+    try:
+        root_info = root_path.lstat()
+        if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+            raise EvidenceIntegrityError("evidence root must be a real directory, not a symlink")
+        root_real = root_path.resolve(strict=True)
+    except EvidenceIntegrityError:
+        raise
+    except OSError as exc:
+        raise EvidenceIntegrityError("evidence root is unavailable") from exc
+    if (os.open not in getattr(os, "supports_dir_fd", set())
+            or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")):
+        raise EvidenceIntegrityError("safe descriptor-relative verification is unavailable on this platform")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    directories: list[int] = []
+    file_fd: int | None = None
+    try:
+        root_fd = os.open(root_real, directory_flags)
+        directories.append(root_fd)
+        opened_root = os.fstat(root_fd)
+        if (opened_root.st_dev, opened_root.st_ino) != (root_info.st_dev, root_info.st_ino):
+            raise EvidenceIntegrityError("evidence root changed during verification")
+        parent_fd = root_fd
+        for component in rel.parts[:-1]:
+            child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            directories.append(child_fd)
+            if not stat.S_ISDIR(os.fstat(child_fd).st_mode):
+                raise EvidenceIntegrityError("artifact parent must be a real directory")
+            parent_fd = child_fd
+        file_fd = os.open(rel.parts[-1], file_flags, dir_fd=parent_fd)
+        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+            raise EvidenceIntegrityError("artifact must be a regular file")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return rel.as_posix(), b"".join(chunks)
+    except EvidenceIntegrityError:
+        raise
+    except OSError as exc:
+        raise EvidenceIntegrityError("artifact is missing or could not be safely read") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        for descriptor in reversed(directories):
+            os.close(descriptor)
+
+
+def verify_json_artifact(
+    root: str | os.PathLike[str], relative_path: str
+) -> tuple[EvidenceVersion, bytes]:
+    """Read, identify and hash one JSON evidence artifact from the same byte snapshot.
+
+    The returned bytes are exactly those whose digest is bound into the issued
+    EvidenceVersion. Callers must parse/use these bytes rather than reopening the path.
+    """
+    rel_path, content = _read_artifact_bytes(root, relative_path)
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise EvidenceIntegrityError("evidence artifact must contain valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise EvidenceIntegrityError("evidence artifact JSON must be an object")
+    evidence_id = payload.get("evidence_id")
+    version = payload.get("evidence_version")
+    if not isinstance(evidence_id, str) or not evidence_id.strip():
+        raise EvidenceIntegrityError("artifact must contain a non-empty evidence_id")
+    if not isinstance(version, str) or not version.strip():
+        raise EvidenceIntegrityError("artifact must contain a non-empty evidence_version")
+    result = EvidenceVersion(
+        evidence_id, rel_path, version, hashlib.sha256(content).hexdigest(), len(content),
+        _VERIFIED_EVIDENCE_TOKEN,
+    )
+    _register_instance(result, _VERIFIED_EVIDENCE_INSTANCES)
+    return result, content
+
 def is_verified_evidence_version(evidence: EvidenceVersion) -> bool:
     """Recognise only the exact live object issued by verify_artifact."""
     return (
