@@ -29,8 +29,12 @@ _FIELDS_V1 = {
 }
 _ARTIFACT_FIELDS = {"artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes"}
 _FIELDS_V2 = _FIELDS_V1 | _ARTIFACT_FIELDS
+_IDENTITY_FIELDS = {"subject_id", "actor_role", "authn_context", "authenticated_at", "identity_session_id", "identity_policy_version", "identity_provider_id"}
+_FIELDS_V3 = _FIELDS_V2 | _IDENTITY_FIELDS
 _SCHEMA_V1 = "RhemaScript.ApprovalCredential.v1"
 _SCHEMA_V2 = "RhemaScript.ApprovalCredential.v2"
+_SCHEMA_V3 = "RhemaScript.ApprovalCredential.v3"
+_HIGH_RISK_ACTIONS = {"FINAL_ACCEPTANCE", "PUBLISH"}
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
@@ -58,6 +62,13 @@ class VerifiedApproval:
     artifact_version: str | None = None
     artifact_sha256: str | None = None
     artifact_size_bytes: int | None = None
+    subject_id: str | None = None
+    actor_role: str | None = None
+    authn_context: str | None = None
+    authenticated_at: datetime | None = None
+    identity_session_id: str | None = None
+    identity_policy_version: str | None = None
+    identity_provider_id: str | None = None
     credential_schema: str | None = None
     signature: str | None = field(default=None, repr=False, compare=False)
     _verification_token: object | None = field(default=None, repr=False, compare=False)
@@ -83,6 +94,7 @@ class ApprovalVerifier:
         clock: Callable[[], datetime] | None = None,
         max_lifetime: timedelta = timedelta(minutes=10),
         clock_skew: timedelta = timedelta(seconds=30),
+        identity_policies: Mapping[str, Mapping[str, object]] | None = None,
     ) -> None:
         if not isinstance(issuer, str) or not _ID.fullmatch(issuer):
             raise ValueError("trusted issuer is required")
@@ -106,6 +118,17 @@ class ApprovalVerifier:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_lifetime = max_lifetime
         self._clock_skew = clock_skew
+        self._identity_policies = dict(identity_policies or {})
+        for version, policy in self._identity_policies.items():
+            if (not isinstance(version, str) or not _VERSION.fullmatch(version)
+                    or not isinstance(policy, Mapping)
+                    or not isinstance(policy.get("provider_id"), str)
+                    or not isinstance(policy.get("allowed_roles_by_action"), Mapping)
+                    or not isinstance(policy.get("allowed_authn_contexts"), (tuple, list, set))
+                    or not isinstance(policy.get("max_authentication_age_seconds"), int)
+                    or isinstance(policy.get("max_authentication_age_seconds"), bool)
+                    or not 1 <= policy["max_authentication_age_seconds"] <= 3600):
+                raise ValueError("identity policy registry contains an invalid policy")
 
     @staticmethod
     def _canonical(payload: dict) -> bytes:
@@ -141,11 +164,13 @@ class ApprovalVerifier:
             raise ApprovalError("approval credential has an invalid shape")
         token = dict(credential)
         schema = token.get("schema")
-        expected_fields = _FIELDS_V1 if schema == _SCHEMA_V1 else _FIELDS_V2 if schema == _SCHEMA_V2 else None
+        expected_fields = (_FIELDS_V1 if schema == _SCHEMA_V1 else
+                           _FIELDS_V2 if schema == _SCHEMA_V2 else
+                           _FIELDS_V3 if schema == _SCHEMA_V3 else None)
         if expected_fields is None or set(token) != expected_fields:
             raise ApprovalError("approval credential has an invalid shape or unsupported schema")
         if artifact_binding is not None:
-            if schema != _SCHEMA_V2 or set(artifact_binding) != {
+            if schema not in {_SCHEMA_V2, _SCHEMA_V3} or set(artifact_binding) != {
                 "artifact_id", "artifact_version", "sha256", "size_bytes"
             }:
                 raise ApprovalError("approval must bind the exact final artifact using credential schema v2")
@@ -156,7 +181,7 @@ class ApprovalVerifier:
                 raise ApprovalError("approval final-artifact binding does not match verified bytes")
         elif schema == _SCHEMA_V2:
             raise ApprovalError("artifact-bound approval requires an exact artifact expectation")
-        if schema == _SCHEMA_V2:
+        if schema in {_SCHEMA_V2, _SCHEMA_V3}:
             if (not isinstance(token.get("artifact_id"), str) or not _ID.fullmatch(token["artifact_id"])
                     or not isinstance(token.get("artifact_version"), str) or not _VERSION.fullmatch(token["artifact_version"])
                     or not isinstance(token.get("artifact_sha256"), str) or not _SHA256.fullmatch(token["artifact_sha256"])
@@ -187,6 +212,29 @@ class ApprovalVerifier:
         except (InvalidSignature, ValueError, TypeError):
             raise ApprovalError("approval signature is invalid") from None
 
+        identity = {}
+        authenticated_at = None
+        if token["action"] in _HIGH_RISK_ACTIONS and schema != _SCHEMA_V3:
+            raise ApprovalError("high-risk approval requires credential schema v3 identity assurance")
+        if schema == _SCHEMA_V3:
+            for name in _IDENTITY_FIELDS:
+                value = token.get(name)
+                if not isinstance(value, str) or not _ID.fullmatch(value):
+                    raise ApprovalError(f"approval identity claim {name} is invalid")
+            policy = self._identity_policies.get(token["identity_policy_version"])
+            if policy is None:
+                raise ApprovalError("approval identity policy is not configured or trusted")
+            if token["identity_provider_id"] != policy["provider_id"]:
+                raise ApprovalError("approval identity provider does not match trusted policy")
+            roles = policy["allowed_roles_by_action"].get(token["action"], ())
+            if (not isinstance(roles, (tuple, list, set)) or token["actor_role"] not in roles
+                    or token["authn_context"] not in policy["allowed_authn_contexts"]):
+                raise ApprovalError("approval role or authentication context is not authorized")
+            authenticated_at = self._timestamp(token["authenticated_at"], "authenticated_at")
+            identity_age = (self._clock().astimezone(timezone.utc) - authenticated_at).total_seconds()
+            if identity_age < -self._clock_skew.total_seconds() or identity_age > policy["max_authentication_age_seconds"]:
+                raise ApprovalError("approval authentication is stale or future-dated")
+            identity = {name: token[name] for name in _IDENTITY_FIELDS}
         issued_at = self._timestamp(token["issued_at"], "issued_at")
         expires_at = self._timestamp(token["expires_at"], "expires_at")
         now = self._clock()
@@ -211,6 +259,13 @@ class ApprovalVerifier:
             artifact_version=token.get("artifact_version"),
             artifact_sha256=token.get("artifact_sha256"),
             artifact_size_bytes=token.get("artifact_size_bytes"),
+            subject_id=identity.get("subject_id"),
+            actor_role=identity.get("actor_role"),
+            authn_context=identity.get("authn_context"),
+            authenticated_at=authenticated_at,
+            identity_session_id=identity.get("identity_session_id"),
+            identity_policy_version=identity.get("identity_policy_version"),
+            identity_provider_id=identity.get("identity_provider_id"),
             credential_schema=schema,
             signature=signature,
             _verification_token=_VERIFIED_APPROVAL_TOKEN,
@@ -225,7 +280,7 @@ class ApprovalVerifier:
         if not isinstance(record, Mapping):
             raise ApprovalError("persisted approval record must be an object")
         schema = record.get("credential_schema")
-        if schema not in {_SCHEMA_V1, _SCHEMA_V2}:
+        if schema not in {_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3}:
             raise ApprovalError("persisted approval credential schema is unsupported")
         required = {
             "approval_id", "issuer", "actor_id", "action", "project_id",
@@ -236,7 +291,7 @@ class ApprovalVerifier:
             raise ApprovalError("persisted approval record is incomplete")
         payload = {key: record[key] for key in required if key != "signature"}
         payload["schema"] = schema
-        if schema == _SCHEMA_V2:
+        if schema in {_SCHEMA_V2, _SCHEMA_V3}:
             artifact_fields = {
                 "artifact_id": record.get("artifact_id"),
                 "artifact_version": record.get("artifact_version"),
@@ -250,6 +305,13 @@ class ApprovalVerifier:
             "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes"
         )):
             raise ApprovalError("persisted V1 approval contains unexpected artifact scope")
+        if schema == _SCHEMA_V3:
+            identity_fields = {name: record.get(name) for name in _IDENTITY_FIELDS}
+            if any(not isinstance(value, str) for value in identity_fields.values()):
+                raise ApprovalError("persisted V3 approval is missing identity assurance claims")
+            payload.update(identity_fields)
+        elif any(record.get(name) is not None for name in _IDENTITY_FIELDS):
+            raise ApprovalError("persisted legacy approval contains unexpected identity claims")
         signature = record.get("signature")
         key_id = record.get("key_id")
         if (not isinstance(signature, str) or not _SIGNATURE_HEX.fullmatch(signature)
@@ -286,6 +348,7 @@ class ApprovalVerifier:
             "artifact_version": record.get("artifact_version"),
             "artifact_sha256": record.get("artifact_sha256"),
             "artifact_size_bytes": record.get("artifact_size_bytes"),
+            **{name: record.get(name) for name in _IDENTITY_FIELDS},
         }
 
     def verify_and_consume(
