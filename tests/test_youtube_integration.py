@@ -220,7 +220,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             ).hex()
             return payload
 
-        publisher_actor = "director-001" if authorised else "director-000"
+        publisher_actor = "director-000" if authorised else "director-001"
         return {
             "evidence_pack": evidence_pack,
             "final_film_evidence_ref": "evidence:FINAL_FILM",
