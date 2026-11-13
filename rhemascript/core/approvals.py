@@ -32,6 +32,7 @@ _FIELDS_V2 = _FIELDS_V1 | _ARTIFACT_FIELDS
 _SCHEMA_V1 = "RhemaScript.ApprovalCredential.v1"
 _SCHEMA_V2 = "RhemaScript.ApprovalCredential.v2"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,127}$")
 _SIGNATURE_HEX = re.compile(r"^[0-9a-f]{128}$")
 _VERIFIED_APPROVAL_TOKEN = object()
@@ -155,11 +156,11 @@ class ApprovalVerifier:
             raise ApprovalError("artifact-bound approval requires an exact artifact expectation")
         if schema == _SCHEMA_V2:
             if (not isinstance(token.get("artifact_id"), str) or not _ID.fullmatch(token["artifact_id"])
-                    or not isinstance(token.get("artifact_version"), str) or not _ID.fullmatch(token["artifact_version"])
+                    or not isinstance(token.get("artifact_version"), str) or not _VERSION.fullmatch(token["artifact_version"])
                     or not isinstance(token.get("artifact_sha256"), str) or not _SHA256.fullmatch(token["artifact_sha256"])
                     or not isinstance(token.get("artifact_size_bytes"), int)
                     or isinstance(token.get("artifact_size_bytes"), bool)
-                    or token["artifact_size_bytes"] < 0):
+                    or token["artifact_size_bytes"] <= 0):
                 raise ApprovalError("approval final-artifact binding is invalid")
         for field in ("approval_id", "actor_id", "project_id", "project_version",
                       "request_id", "nonce", "key_id", "issuer", "action"):
