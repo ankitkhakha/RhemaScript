@@ -150,7 +150,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
             sink = JsonlAuditSink(path)
-            path.write_bytes(b'not-json\\n')
+            path.write_bytes(b'not-json\n')
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(self.event(request_id="request-2"))
 
