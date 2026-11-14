@@ -173,4 +173,4 @@ When the client encounters an existing COMPLETE session, it revalidates the exis
 
 Old completed records created before V5 may lack a provider resource ID and cannot be reconstructed automatically from the old database fields; they remain fail-closed for manual reconciliation. This work does not authorize live provider writes and does not close the separate ambiguous CREATING-before-URL-binding gap. Independent review and production authorization/key-custody gates remain mandatory.
 
-Exact candidate code commit: d4b455c620e2740141f6d9a0f1a0d4845e407fc0. Full synthetic CI: run #2229 passed. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
+Exact candidate code commit: 2bafb8d4f88be5f6db075718d173b5b8a6075f8d. Full synthetic CI: run #2233 passed. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
