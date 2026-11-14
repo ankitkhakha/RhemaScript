@@ -313,6 +313,51 @@ class JsonlAuditSinkTests(unittest.TestCase):
             self.assertEqual(target.read_text(), "")
 
 
+    @unittest.skipUnless(os.name == "posix", "POSIX directory descriptors required")
+    def test_relative_audit_path_is_pinned_to_initial_working_directory(self):
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as directory:
+            initial = Path(directory) / "initial"
+            later = Path(directory) / "later"
+            initial.mkdir(mode=0o700)
+            later.mkdir(mode=0o700)
+            try:
+                os.chdir(initial)
+                sink = JsonlAuditSink("audit.jsonl")
+                os.chdir(later)
+                sink(self.event())
+                self.assertTrue((initial / "audit.jsonl").is_file())
+                self.assertFalse((later / "audit.jsonl").exists())
+                sink.close()
+            finally:
+                os.chdir(original_cwd)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX no-follow directory traversal required")
+    def test_rejects_symlinked_ancestor_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            actual = root / "actual"
+            actual.mkdir(mode=0o700)
+            alias = root / "alias"
+            alias.symlink_to(actual, target_is_directory=True)
+            with self.assertRaisesRegex(AuditSinkError, "contains a symlink"):
+                JsonlAuditSink(alias / "audit.jsonl")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory descriptors required")
+    def test_directory_replacement_does_not_redirect_audit_append(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "private"
+            moved = root / "pinned"
+            parent.mkdir(mode=0o700)
+            sink = JsonlAuditSink(parent / "audit.jsonl")
+            parent.rename(moved)
+            parent.mkdir(mode=0o700)
+            sink(self.event())
+            self.assertTrue((moved / "audit.jsonl").is_file())
+            self.assertFalse((parent / "audit.jsonl").exists())
+            sink.close()
+
     @unittest.skipUnless(os.name == "posix", "POSIX flock semantics required")
     def test_independent_processes_serialize_appends_to_one_audit_file(self):
         context = multiprocessing.get_context("fork")
