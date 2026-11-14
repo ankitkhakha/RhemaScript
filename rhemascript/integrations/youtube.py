@@ -131,7 +131,7 @@ def _validate_analytics_report(result: Any, params: dict[str, Any]) -> dict[str,
         if not isinstance(header, dict) or header.get("name") != expected_name or header.get("columnType") != expected_type:
             raise YouTubeIntegrationError("YouTube Analytics report headers do not match the requested columns")
         data_type = header.get("dataType")
-        allowed_types = {"STRING"} if expected_type == "DIMENSION" else {"INTEGER", "FLOAT", "CURRENCY"}
+        allowed_types = {"STRING"} if expected_type == "DIMENSION" else {"INTEGER", "FLOAT"}
         if not isinstance(data_type, str) or data_type not in allowed_types:
             raise YouTubeIntegrationError("YouTube Analytics report contains an unsupported column dataType")
     rows = result.get("rows", [])
