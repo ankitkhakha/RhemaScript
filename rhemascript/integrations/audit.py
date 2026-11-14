@@ -261,7 +261,7 @@ class JsonlAuditSink:
                         raise AuditSinkError("audit record write made no progress")
                     view = view[written:]
                 os.fsync(descriptor)
-                _fsync_parent_directory(self.path)
+                _fsync_parent_directory(self.path, self._parent_fd)
             except AuditSinkError:
                 raise
             except OSError:
