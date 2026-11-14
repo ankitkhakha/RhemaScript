@@ -100,6 +100,34 @@ def _validate_record_schema(record: dict[str, Any], *, legacy: bool = False) -> 
         if key in _SAFE_BOOLEAN_FIELDS and not isinstance(value, bool):
             raise AuditSinkError("audit record boolean field is invalid")
 
+    if not legacy:
+        for key, value in record.items():
+            if key in _SAFE_STRING_FIELDS and (
+                value != value.strip() or any(ord(char) < 32 or ord(char) == 127 for char in value)
+            ):
+                raise AuditSinkError("audit record string field contains whitespace or control characters")
+        if not re.fullmatch(r"[A-Z][A-Z0-9-]{0,63}", record["interface_id"]):
+            raise AuditSinkError("audit record interface ID syntax is invalid")
+        if not re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", record["provider"]):
+            raise AuditSinkError("audit record provider syntax is invalid")
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", record["operation"]):
+            raise AuditSinkError("audit record operation syntax is invalid")
+        if "method" in record and record["method"] not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+            raise AuditSinkError("audit record HTTP method is invalid")
+        if "host" in record:
+            host = record["host"]
+            dns_label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+            if not (re.fullmatch(rf"(?=.{1,253}\\Z){dns_label}(?:\\.{dns_label})*\\.?", host)
+                    or re.fullmatch(r"[0-9a-f:]+", host)):
+                raise AuditSinkError("audit record host syntax is invalid")
+        if "timestamp_utc" in record:
+            try:
+                timestamp = datetime.fromisoformat(record["timestamp_utc"].replace("Z", "+00:00"))
+            except ValueError:
+                raise AuditSinkError("audit record timestamp is invalid") from None
+            if timestamp.tzinfo is None or timestamp.utcoffset() != timezone.utc.utcoffset(timestamp):
+                raise AuditSinkError("audit record timestamp must be timezone-aware UTC")
+
     if "completion_event_id" in record:
         event_id = record["completion_event_id"]
         resource_id = record.get("provider_resource_id")
