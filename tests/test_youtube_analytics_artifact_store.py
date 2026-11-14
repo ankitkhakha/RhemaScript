@@ -156,14 +156,17 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
 
                 replaced_bytes = []
 
-                def replace_before_path_verification(root, relative_path, *, evidence_id, version):
+                def replace_before_path_verification(
+                    root, relative_path, *, evidence_id, version, **expected_identities
+                ):
                     intended = destination.read_bytes()
                     new_bytes = replacement if replacement is not None else intended
                     destination.unlink()
                     destination.write_bytes(new_bytes)
                     replaced_bytes.append(new_bytes)
                     return original_verify(
-                        root, relative_path, evidence_id=evidence_id, version=version
+                        root, relative_path, evidence_id=evidence_id, version=version,
+                        **expected_identities,
                     )
 
                 with patch(
@@ -178,6 +181,45 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
                         )
                 self.assertTrue(destination.exists())
                 self.assertEqual(destination.read_bytes(), replaced_bytes[0])
+
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory descriptor semantics required")
+    def test_rejects_replaced_evidence_root_even_when_copy_has_identical_bytes(self):
+        snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
+        original_verify = verify_artifact
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_root = Path(directory) / "evidence"
+            backup_root = Path(directory) / "evidence-original"
+            evidence_root.mkdir()
+
+            def replace_root_before_verification(
+                root, relative_path, *, evidence_id, version, **expected_identities
+            ):
+                intended = Path(root) / relative_path
+                exact_bytes = intended.read_bytes()
+                Path(root).rename(backup_root)
+                Path(root).mkdir()
+                (Path(root) / relative_path).write_bytes(exact_bytes)
+                return original_verify(
+                    root, relative_path, evidence_id=evidence_id, version=version,
+                    **expected_identities,
+                )
+
+            with patch(
+                "rhemascript.integrations.youtube_analytics_artifact_store.verify_artifact",
+                side_effect=replace_root_before_verification,
+            ):
+                with self.assertRaises(YouTubeAnalyticsArtifactStoreError):
+                    persist_analytics_evidence_artifact(
+                        snapshot, evidence_root=evidence_root, relative_path="analytics.json",
+                        artifact_id="YT-ANALYTICS-ROOT-REPLACED", project_id="PROJECT-1",
+                        project_version="3",
+                    )
+
+            replacement = evidence_root / "analytics.json"
+            self.assertTrue(replacement.exists())
+            self.assertEqual(replacement.read_bytes(), (backup_root / "analytics.json").read_bytes())
+            self.assertFalse((backup_root / "analytics.json").exists())
 
     @unittest.skipUnless(os.name == "posix", "POSIX directory ownership required")
     def test_rejects_group_or_world_writable_evidence_root(self):

@@ -203,8 +203,13 @@ def persist_analytics_evidence_artifact(
             view = view[written:]
         os.fsync(file_fd)
         os.fsync(parent_fd)
+        root_info = os.fstat(opened[0])
+        parent_info = os.fstat(parent_fd)
         verified = verify_artifact(
-            evidence_root, relative_path, evidence_id=artifact_id, version=version
+            evidence_root, relative_path, evidence_id=artifact_id, version=version,
+            expected_root_identity=(root_info.st_dev, root_info.st_ino),
+            expected_parent_identity=(parent_info.st_dev, parent_info.st_ino),
+            expected_file_identity=created_identity,
         )
         expected_digest = hashlib.sha256(content).hexdigest()
         if verified.sha256 != expected_digest or verified.size_bytes != len(content):
