@@ -73,7 +73,7 @@ class ArtifactVerificationTests(unittest.TestCase):
             + b"[" * 10000 + b"0" + b"]" * 10000 + b"}"
         )
         (self.root / "deep.json").write_bytes(content)
-        with self.assertRaisesRegex(EvidenceIntegrityError, "valid JSON"):
+        with self.assertRaisesRegex(EvidenceIntegrityError, "unambiguous UTF-8 JSON"):
             verify_json_artifact(self.root, "deep.json")
 
     def test_json_artifact_rejects_symlink(self):
