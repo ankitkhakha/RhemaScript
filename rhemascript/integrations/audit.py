@@ -66,6 +66,21 @@ _ALLOWED_SESSION_STATES = {
 _AUDIT_SCHEMA_VERSION = 1
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate member names while decoding historical audit rows."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("JSON object contains a duplicate member name")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    """Reject NaN and Infinity tokens, which are not valid JSON numbers."""
+    raise ValueError(f"JSON contains a non-standard numeric constant: {value}")
+
+
 def _validate_record_schema(record: dict[str, Any], *, legacy: bool = False) -> None:
     """Validate a stored audit row under its explicit or legacy schema contract."""
     if not isinstance(record, dict) or not _REQUIRED_FIELDS.issubset(record):
@@ -285,8 +300,12 @@ class JsonlAuditSink:
                         if not line.endswith(b"\n"):
                             raise AuditSinkError("audit log contains unterminated records; idempotent recovery is unsafe")
                         try:
-                            existing = json.loads(line)
-                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            existing = json.loads(
+                                line.decode("utf-8"),
+                                object_pairs_hook=_unique_json_object,
+                                parse_constant=_reject_json_constant,
+                            )
+                        except (UnicodeDecodeError, ValueError, RecursionError):
                             raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
                         if not isinstance(existing, dict):
                             raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe")
