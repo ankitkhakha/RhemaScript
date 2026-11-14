@@ -10,6 +10,33 @@ from pathlib import Path
 from rhemascript.integrations.audit import AuditSinkError, JsonlAuditSink
 
 
+
+def _append_audit_events_from_process(path, worker_id, count, barrier, completion=False):
+    sink = JsonlAuditSink(path)
+    if completion:
+        event = {
+            "interface_id": "IF-18", "provider": "youtube",
+            "request_id": "shared-completion", "project_id": "RS-TEST-1",
+            "operation": "UPLOAD_CHUNK", "method": "PUT",
+            "host": "www.googleapis.com", "request_fingerprint": "a" * 64,
+            "request_bytes": 10, "response_bytes": 24, "http_status": 201,
+            "provider_resource_id": "video-123", "completion_event_id": "c" * 64,
+            "phase": "COMPLETED",
+        }
+        barrier.wait(timeout=10)
+        for _ in range(count):
+            sink(event)
+        return
+    barrier.wait(timeout=10)
+    for index in range(count):
+        sink({
+            "interface_id": "IF-18", "provider": "youtube",
+            "request_id": f"worker-{worker_id}-{index}", "project_id": "RS-TEST-1",
+            "operation": "CHANNEL_READ", "method": "GET",
+            "host": "www.googleapis.com", "request_fingerprint": "b" * 64,
+            "request_bytes": 0, "phase": "REQUESTED",
+        })
+
 class JsonlAuditSinkTests(unittest.TestCase):
     def event(self, **overrides):
         event = {
