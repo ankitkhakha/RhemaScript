@@ -24,6 +24,64 @@ class ApprovalStoreError(RuntimeError):
     """Safe, non-secret-bearing approval persistence error."""
 
 
+def _open_private_directory(path: Path) -> int:
+    """Open and pin an owner-private directory using no-follow descriptor traversal."""
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    if (os.name != "posix" or os.open not in getattr(os, "supports_dir_fd", set())
+            or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")):
+        raise ApprovalStoreError("safe backup directory anchoring is unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(absolute.anchor, flags)
+    except OSError:
+        raise ApprovalStoreError("backup directory is unavailable or contains a symlink") from None
+    try:
+        for component in absolute.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        info = os.fstat(descriptor)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ApprovalStoreError("backup directory must be owner-owned and private")
+        return descriptor
+    except ApprovalStoreError:
+        os.close(descriptor)
+        raise
+    except OSError:
+        os.close(descriptor)
+        raise ApprovalStoreError("backup directory is unavailable or contains a symlink") from None
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _assert_private_directory_identity(
+    path: Path, expected_identity: tuple[int, int],
+) -> None:
+    descriptor = _open_private_directory(path)
+    try:
+        info = os.fstat(descriptor)
+        if (info.st_dev, info.st_ino) != expected_identity:
+            raise ApprovalStoreError("backup directory changed during operation")
+    finally:
+        os.close(descriptor)
+
+
+def _cleanup_created_backup(
+    parent_fd: int, filename: str, created_identity: tuple[int, int] | None,
+) -> None:
+    if created_identity is None:
+        return
+    try:
+        current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) == created_identity:
+            os.unlink(filename, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+    except OSError:
+        pass
+
+
 class SQLiteApprovalConsumptionStore:
     """Durable atomic approval consumption and revocation using SQLite."""
 
@@ -417,50 +475,67 @@ class SQLiteApprovalConsumptionStore:
         )
 
     def backup_to(self, destination: str | os.PathLike[str]) -> Path:
-        """Create an owner-only SQLite backup in an already-private directory."""
-        target = Path(destination).expanduser()
-        try:
-            absolute = target.absolute()
-            current = Path(absolute.anchor)
-            for component in absolute.parts[1:-1]:
-                current = current / component
-                if stat.S_ISLNK(current.lstat().st_mode):
-                    raise ApprovalStoreError("backup path must not contain symlinked directories")
-            parent_info = target.parent.lstat()
-            parent_stat = target.parent.stat()
-        except ApprovalStoreError:
-            raise
-        except OSError:
-            raise ApprovalStoreError("backup parent directory must already exist") from None
-        if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_stat.st_mode)
-                or parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) & 0o077):
-            raise ApprovalStoreError("backup parent directory must be owner-owned and private")
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            fd = os.open(target, flags, 0o600)
-            os.fchmod(fd, 0o600)
-            os.close(fd)
-        except OSError:
-            raise ApprovalStoreError("approval backup destination could not be created safely") from None
-        source = self._connect()
+        """Create an owner-only SQLite backup through a pinned private directory."""
+        target = Path(os.path.abspath(os.fspath(Path(destination).expanduser())))
+        if not target.name:
+            raise ApprovalStoreError("backup destination must name a file")
+        parent_fd = _open_private_directory(target.parent)
+        parent_info = os.fstat(parent_fd)
+        parent_identity = (parent_info.st_dev, parent_info.st_ino)
+        source = None
         destination_db = None
+        file_fd = None
+        created_identity: tuple[int, int] | None = None
         try:
-            destination_db = sqlite3.connect(target)
+            source = self._connect()
+            destination_db = sqlite3.connect(":memory:")
             source.backup(destination_db)
+            # Python >=3.11 is required by this package; serialize the completed
+            # SQLite snapshot so the final file is written only through the
+            # already-pinned directory descriptor, never re-opened by pathname.
+            backup_bytes = destination_db.serialize()
             destination_db.close()
             destination_db = None
-            os.chmod(target, 0o600)
+
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+            file_fd = os.open(target.name, flags, 0o600, dir_fd=parent_fd)
+            info = os.fstat(file_fd)
+            created_identity = (info.st_dev, info.st_ino)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise ApprovalStoreError("new backup is not an owner-owned regular file")
+            os.fchmod(file_fd, 0o600)
+            view = memoryview(backup_bytes)
+            while view:
+                written = os.write(file_fd, view)
+                if written <= 0:
+                    raise OSError("approval backup write made no progress")
+                view = view[written:]
+            os.fsync(file_fd)
+            os.fsync(parent_fd)
+
+            _assert_private_directory_identity(target.parent, parent_identity)
+            entry = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (not stat.S_ISREG(entry.st_mode)
+                    or (entry.st_dev, entry.st_ino) != created_identity):
+                raise ApprovalStoreError("approval backup destination changed during export")
             return target
-        except (OSError, sqlite3.Error):
+        except FileExistsError:
+            _cleanup_created_backup(parent_fd, target.name, created_identity)
+            raise ApprovalStoreError("approval backup destination already exists") from None
+        except ApprovalStoreError:
+            _cleanup_created_backup(parent_fd, target.name, created_identity)
+            raise
+        except (OSError, sqlite3.Error, ValueError):
+            _cleanup_created_backup(parent_fd, target.name, created_identity)
+            raise ApprovalStoreError("approval database backup failed safely") from None
+        finally:
             if destination_db is not None:
                 destination_db.close()
-            try:
-                target.unlink()
-            except OSError:
-                pass
-            raise ApprovalStoreError("approval database backup failed") from None
-        finally:
-            source.close()
+            if source is not None:
+                source.close()
+            if file_fd is not None:
+                os.close(file_fd)
+            os.close(parent_fd)
 
 
 class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
