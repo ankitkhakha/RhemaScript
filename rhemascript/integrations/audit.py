@@ -113,6 +113,11 @@ class JsonlAuditSink:
                             except (UnicodeDecodeError, json.JSONDecodeError):
                                 raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
                             if isinstance(existing, dict) and existing.get("completion_event_id") == completion_event_id:
+                                if (existing.get("provider_resource_id") != resource_id
+                                        or existing.get("request_id") != record_data.get("request_id")
+                                        or existing.get("project_id") != record_data.get("project_id")
+                                        or existing.get("http_status") != record_data.get("http_status")):
+                                    raise AuditSinkError("completion event ID already exists with a different provider result")
                                 return
                 view = memoryview(record)
                 while view:
