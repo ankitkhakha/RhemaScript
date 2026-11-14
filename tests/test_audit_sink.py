@@ -207,6 +207,35 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(event)
 
+    def test_rejects_duplicate_json_members_in_historical_audit_rows(self):
+        duplicate_rows = (
+            b'{"interface_id":"IF-18","interface_id":"IF-99","provider":"youtube",'
+            b'"request_id":"request-1","operation":"CHANNEL_READ","phase":"REQUESTED"}\\n',
+            b'{"interface_id":"IF-18","provider":"youtube","request_id":"request-1",'
+            b'"operation":"CHANNEL_READ","phase":"REQUESTED","metadata":{"actor":"reader","actor":"admin"}}\\n',
+        )
+        for index, row in enumerate(duplicate_rows):
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "audit.jsonl"
+                path.write_bytes(row)
+                sink = JsonlAuditSink(path)
+                with self.assertRaisesRegex(AuditSinkError, "malformed records"):
+                    sink(self.event(request_id=f"after-duplicate-{index}"))
+
+    def test_rejects_nonstandard_numeric_constants_in_historical_audit_rows(self):
+        for constant in (b"NaN", b"Infinity", b"-Infinity"):
+            with self.subTest(constant=constant), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "audit.jsonl"
+                row = (
+                    b'{"interface_id":"IF-18","provider":"youtube","request_id":"request-1",'
+                    b'"operation":"CHANNEL_READ","phase":"REQUESTED","request_bytes":'
+                    + constant + b"}\\n"
+                )
+                path.write_bytes(row)
+                sink = JsonlAuditSink(path)
+                with self.assertRaisesRegex(AuditSinkError, "malformed records"):
+                    sink(self.event(request_id="after-nonstandard-number"))
+
     def test_noncompletion_append_rejects_malformed_existing_record(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
