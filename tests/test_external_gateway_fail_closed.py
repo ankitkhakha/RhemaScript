@@ -1,4 +1,5 @@
 import unittest
+import copy
 import threading
 import json
 import hashlib
@@ -575,6 +576,18 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 (), audit_sink=crash_after_durable_audit,
                 publish_session_registry=registry, session_url_vault=vault,
             )
+            forged_approvals = (copy.copy(approvals[0]), approvals[1])
+            with self.assertRaisesRegex(ExternalIntegrationError, "verifier-issued, durably consumed approvals"):
+                first_gateway.recover_completed_publish_result(
+                    project_id=first.project_id, project_version=first.project_version,
+                    request_id=first.request_id, verified_approvals=forged_approvals,
+                    artifact_binding={
+                        "artifact_id": first.artifact_id,
+                        "artifact_version": first.artifact_version,
+                        "artifact_sha256": first.artifact_sha256,
+                        "artifact_size_bytes": first.artifact_size_bytes,
+                    },
+                )
             with self.assertRaisesRegex(ExternalIntegrationError, "waiting for the previous owner lease to expire"):
                 first_gateway.recover_completed_publish_result(
                     project_id=first.project_id, project_version=first.project_version,
