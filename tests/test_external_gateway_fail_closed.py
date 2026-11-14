@@ -424,8 +424,13 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         temporary, registry, vault = self.make_registry(authority, "upload-2", session_url=session_url)
         self.addCleanup(temporary.cleanup)
         events = []
+        audit_path = Path(temporary.name) / "gateway-audit.jsonl"
+        durable_audit = JsonlAuditSink(audit_path)
+        def record_event(event):
+            durable_audit(event)
+            events.append(event)
         gateway = ExternalIntegrationGateway(
-            (binding,), transport=transport, audit_sink=events.append,
+            (binding,), transport=transport, audit_sink=record_event,
             publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
@@ -447,6 +452,12 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         )
         self.assertEqual(events[-1]["acknowledged_offset"], 5)
         self.assertEqual(events[-1]["publish_session_state"], "ACTIVE")
+        audit_records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        chunk_audit = [record for record in audit_records if record["operation"] == "UPLOAD_CHUNK"]
+        self.assertEqual(chunk_audit[-1]["phase"], "COMPLETED")
+        self.assertEqual(chunk_audit[-1]["acknowledged_offset"], 5)
+        self.assertEqual(chunk_audit[-1]["publish_session_state"], "ACTIVE")
+        self.assertNotIn("upload_id=session-opaque", audit_path.read_text())
         self.assertNotIn("upload_id=session-opaque", repr(events))
 
     def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
