@@ -146,6 +146,20 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(event)
 
+    def test_deduplication_rejects_non_object_json_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            event = self.event(
+                phase="COMPLETED", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="h" * 64,
+            )
+            sink(event)
+            with path.open("ab") as log:
+                log.write(b'[]\\n')
+            with self.assertRaisesRegex(AuditSinkError, "malformed records"):
+                sink(event)
+
     def test_rejects_payload_or_secret_bearing_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
