@@ -57,16 +57,19 @@ client = YouTubeClient(YouTubeConfig.from_environment(), gateway=gateway)
 # Supply the validated project Evidence Pack, including its six gate records
 # and connected Source-to-Final artifact chain.
 uploaded = client.upload_video(
-    "approved-final.mp4",
+    file_path="approved-final.mp4",
     title="Approved title",
     description="Approved description",
     evidence_pack=approved_project_evidence_pack,
     final_film_evidence_ref="EVIDENCE-REF-FOR-FINAL-FILM",
-    human_director_acceptance=True,
+    evidence_root="/secure/project-evidence",
+    approval_verifier=approval_verifier,
+    approval_credentials=externally_issued_v3_approval_credentials,
+    approval_request_id="PROJECT-BOUND-REQUEST-ID",
     tags=["RhemaScript", "Bible"],
     privacy_status="private",
-    publishing_authorisation=True,
 )
+verified = client.verify_video(uploaded["video_id"])
 verified = client.verify_video(uploaded["video_id"])
 ```
 
@@ -74,7 +77,7 @@ For a scheduled public release, YouTube requires the upload to be private and a 
 
 ## Remaining external activation and assurance
 
-The owner-operated read-only OAuth connection has since been completed, and the authenticated channel ID matched the owner-supplied expected ID using exactly `youtube.readonly`. This verifies channel identity only. Upload-scope and Analytics-scope consent, live upload, thumbnail write, public/scheduled release and Analytics access remain unperformed. API write permissions, quota and account-specific restrictions still require separate owner-led checks.
+The owner reported that the read-only OAuth connection and expected channel-ID match were completed on 12-Nov-2026 using exactly `youtube.readonly`. This workspace has not independently re-read the local credential or repeated the live channel check. This owner-reported result verifies channel identity only; it does not grant upload or thumbnail authority. Upload-scope consent, live upload, thumbnail write, public/scheduled release and Analytics retrieval remain unperformed. API write permissions, quota and account-specific restrictions still require separate owner-led checks.
 
 The existing interface gateway and project approval system remain intact. Do not add credentials to source control, CI variables, issue comments or pull requests. Before production use, add a local encrypted secret store if the deployment environment provides one; this implementation intentionally reads secrets from environment variables only.
 
@@ -113,7 +116,7 @@ The gateway extension preserves the original JSON POST invoke contract and adds 
 
 Automated CI has passed for the IF-18 gateway routing and fail-closed tests, the mocked end-to-end resumable upload (including binary chunk acknowledgements and final video verification), and the mocked gateway-backed thumbnail write. A path-segment boundary hardening test also verifies that sibling paths outside an operation's declared prefix are rejected before transport. These are mocked contract tests, not live Google account or provider validation.
 
-`JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable external requests. The read-only OAuth consent and channel identity check remain pending an explicit owner-run authorization and verification step. CI and local preflight do not perform this step. No upload-scope or Analytics-scope consent, live upload, thumbnail change, analytics query, public release, merge or deployment has been performed. A passing CI run validates mocked contracts only; it does not validate write permissions, quota, billing status or real write behavior.
+`JsonlAuditSink` is the included standard-library local audit sink. It appends JSON Lines metadata, accepts only a strict allowlist of audit fields, rejects payload/header/credential fields, creates or tightens the log file to owner-only permissions (0600), rejects symlink destinations where the platform supports `O_NOFOLLOW`, and calls `fsync` before returning. Its parent directory must already exist and be controlled by the operator. This is a local append-only log, not tamper-proof remote archival; protect and back up the containing directory according to the project's retention policy. Do not set enabled=True until the owner has reviewed the provider binding, selected and protected the audit-log location, configured the OAuth environment, and explicitly chosen to enable external requests. The owner-reported read-only OAuth consent and channel identity match were completed on 12-Nov-2026, but this workspace has not independently re-read the local credential or repeated the live check. CI and local preflight do not perform that verification. No upload-scope consent, live upload, thumbnail change, live Analytics query, public release, merge or deployment has been performed. A passing CI run validates mocked contracts only; it does not validate write permissions, quota, billing status or real write behavior.
 
 
 ### Local audit sink
@@ -155,7 +158,7 @@ Before owner-led Cloud and OAuth setup, follow [Google Connection Readiness V1](
 
 ### Authority trust boundary — production blocker
 
-The current `human_director_acceptance` and `publishing_authorisation` inputs are in-process boolean assertions. They are not authenticated, actor-attributed approval credentials. The Evidence Pack and six-gate checks validate project evidence and approval state, but they do not prove who supplied these booleans. This is acceptable only as a trusted local prototype boundary; do not expose the provider gateway as a remote service or accept authority dictionaries from untrusted callers. Before production or multi-user deployment, replace boolean-only authority with authenticated, actor-attributed, project/version-scoped approval records, including request binding, expiry and revocation.
+Historical examples using `human_director_acceptance` or `publishing_authorisation` booleans are obsolete and must not be used. The current `upload_video` API requires an `approval_verifier`, externally issued V3 `approval_credentials`, an `approval_request_id`, and the exact evidence root. The verifier requires authenticated, actor-attributed, project/version/request-scoped approvals with expiry, revocation and exact artifact binding. A boolean or caller-supplied authority dictionary is not publishing authority. Keep the provider write path disabled until its separate external authorization, key custody, independent review and operational readiness gates are satisfied.
 
 ### Analytics evidence hand-off — provenance requirement
 
