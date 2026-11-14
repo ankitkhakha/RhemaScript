@@ -117,8 +117,7 @@ def _validate_record_schema(record: dict[str, Any], *, legacy: bool = False) -> 
         if "host" in record:
             host = record["host"]
             dns_label = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
-            if not (re.fullmatch(rf"(?=.{1,253}\\Z){dns_label}(?:\\.{dns_label})*\\.?", host)
-                    or re.fullmatch(r"[0-9a-f:]+", host)):
+            if len(host) > 253 or not re.fullmatch(rf"{dns_label}(?:\.{dns_label})*\.?", host):
                 raise AuditSinkError("audit record host syntax is invalid")
         if "timestamp_utc" in record:
             try:
