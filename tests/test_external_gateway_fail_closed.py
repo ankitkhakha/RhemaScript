@@ -461,6 +461,102 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertNotIn("upload_id=session-opaque", audit_path.read_text())
         self.assertNotIn("upload_id=session-opaque", repr(events))
 
+    def test_successful_upload_session_creation_uses_real_audit_sink(self):
+        class MethodTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                return 200, b'{"session":"created"}', {
+                    "Location": "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=created-opaque"
+                }
+
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_SESSION": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        authority = self.publish_authority("audit-create-success")
+        temporary, registry, vault = self.make_registry(authority, "audit-create-success")
+        self.addCleanup(temporary.cleanup)
+        audit_path = Path(temporary.name) / "create-audit.jsonl"
+        sink = JsonlAuditSink(audit_path)
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=MethodTransport(), audit_sink=sink,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            status, body, _headers = gateway.request(
+                "IF-18", "UPLOAD_SESSION",
+                "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                method="POST", body=b"metadata", request_id="audit-create-success",
+                project_id="RS-1", source_version="1.0", authority=authority,
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b'{"session":"created"}')
+        state = registry.get_publish_session(
+            project_id="RS-1", project_version="1.0", request_id="audit-create-success",
+        )
+        self.assertEqual(state["state"], "ACTIVE")
+        records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["phase"], "COMPLETED")
+        self.assertEqual(records[0]["publish_session_state"], "ACTIVE")
+        self.assertEqual(records[0]["session_url_sha256"], state["session_url_sha256"])
+        self.assertNotIn("upload_id=created-opaque", audit_path.read_text())
+
+    def test_successful_upload_chunk_completion_uses_real_audit_sink(self):
+        class MethodTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                return 201, b'{"id":"video-audit-complete"}', {}
+
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        authority = self.publish_authority("audit-chunk-complete")
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=chunk-opaque"
+        temporary, registry, vault = self.make_registry(
+            authority, "audit-chunk-complete", session_url=session_url,
+        )
+        self.addCleanup(temporary.cleanup)
+        audit_path = Path(temporary.name) / "chunk-complete-audit.jsonl"
+        sink = JsonlAuditSink(audit_path)
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=MethodTransport(), audit_sink=sink,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            status, body, _headers = gateway.request(
+                "IF-18", "UPLOAD_CHUNK", session_url,
+                method="PUT",
+                headers={"Authorization": "Bearer test",
+                         "Content-Range": "bytes 0-4/123456",
+                         "Content-Length": "5"},
+                body=b"chunk", request_id="audit-chunk-complete",
+                project_id="RS-1", source_version="1.0", authority=authority,
+            )
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(body)["id"], "video-audit-complete")
+        state = registry.get_publish_session(
+            project_id="RS-1", project_version="1.0", request_id="audit-chunk-complete",
+        )
+        self.assertEqual(state["state"], "COMPLETE")
+        self.assertEqual(state["provider_resource_id"], "video-audit-complete")
+        records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["phase"], "COMPLETED")
+        self.assertEqual(records[0]["publish_session_state"], "COMPLETE")
+        self.assertEqual(records[0]["provider_resource_id"], "video-audit-complete")
+        self.assertEqual(records[0]["completion_event_id"], state["completion_audit_id"])
+        self.assertNotIn("upload_id=chunk-opaque", audit_path.read_text())
+
     def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
         class AmbiguousTransport:
             def send_request(self, url, method, headers, body, timeout):
