@@ -96,6 +96,17 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
                 self.store, self.db_dir / "local-checkpoint.json", key=self.key
             )
 
+    def test_archive_must_not_be_nested_under_database_directory(self):
+        nested_archive_dir = self.db_dir / "external-looking-subdirectory"
+        nested_archive_dir.mkdir(mode=0o700)
+        os.chmod(nested_archive_dir, 0o700)
+        with self.assertRaisesRegex(
+            ApprovalStoreError, "outside the approval database directory"
+        ):
+            export_checkpoint_archive(
+                self.store, nested_archive_dir / "checkpoint.json", key=self.key
+            )
+
     def test_destination_is_never_overwritten(self):
         export_checkpoint_archive(self.store, self.archive, key=self.key)
         with self.assertRaisesRegex(ApprovalStoreError, "already exists"):
