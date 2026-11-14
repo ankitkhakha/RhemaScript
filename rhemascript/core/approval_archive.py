@@ -94,6 +94,8 @@ def export_checkpoint_archive(
     envelope = dict(signed_fields)
     envelope["hmac_sha256"] = hmac.new(key, _canonical(signed_fields), hashlib.sha256).hexdigest()
     encoded = _canonical(envelope)
+    if len(encoded) > MAX_ARCHIVE_BYTES:
+        raise ApprovalStoreError("checkpoint archive exceeds the permitted size")
 
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
