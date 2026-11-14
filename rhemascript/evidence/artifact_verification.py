@@ -154,6 +154,12 @@ def verify_artifact(
                 break
             digest.update(chunk)
             size += len(chunk)
+        after_read = os.fstat(file_fd)
+        if (opened.st_dev, opened.st_ino, opened.st_size,
+                opened.st_mtime_ns, opened.st_ctime_ns) != (
+                after_read.st_dev, after_read.st_ino, after_read.st_size,
+                after_read.st_mtime_ns, after_read.st_ctime_ns):
+            raise EvidenceIntegrityError("artifact changed while being read")
 
         # Confirm that the named path still resolves to the exact descriptors
         # whose bytes were hashed. This catches root/parent/file replacement
@@ -230,7 +236,8 @@ def _read_artifact_bytes(root: str | os.PathLike[str], relative_path: str) -> tu
                 raise EvidenceIntegrityError("artifact parent must be a real directory")
             parent_fd = child_fd
         file_fd = os.open(rel.parts[-1], file_flags, dir_fd=parent_fd)
-        if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+        file_before = os.fstat(file_fd)
+        if not stat.S_ISREG(file_before.st_mode):
             raise EvidenceIntegrityError("artifact must be a regular file")
         chunks: list[bytes] = []
         while True:
@@ -238,6 +245,30 @@ def _read_artifact_bytes(root: str | os.PathLike[str], relative_path: str) -> tu
             if not chunk:
                 break
             chunks.append(chunk)
+        file_after = os.fstat(file_fd)
+        if (file_before.st_dev, file_before.st_ino, file_before.st_size,
+                file_before.st_mtime_ns, file_before.st_ctime_ns) != (
+                file_after.st_dev, file_after.st_ino, file_after.st_size,
+                file_after.st_mtime_ns, file_after.st_ctime_ns):
+            raise EvidenceIntegrityError("artifact changed while being read")
+
+        current_root = root_path.lstat()
+        root_identity = (opened_root.st_dev, opened_root.st_ino)
+        if (stat.S_ISLNK(current_root.st_mode) or not stat.S_ISDIR(current_root.st_mode)
+                or (current_root.st_dev, current_root.st_ino) != root_identity):
+            raise EvidenceIntegrityError("evidence root changed during verification")
+        for index, component in enumerate(rel.parts[:-1]):
+            entry = os.stat(component, dir_fd=directories[index], follow_symlinks=False)
+            child = os.fstat(directories[index + 1])
+            if (not stat.S_ISDIR(entry.st_mode)
+                    or (entry.st_dev, entry.st_ino) != (child.st_dev, child.st_ino)):
+                raise EvidenceIntegrityError("artifact parent changed during verification")
+        current_entry = os.stat(rel.parts[-1], dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(current_entry.st_mode)
+                or (current_entry.st_dev, current_entry.st_ino) != (
+                    file_before.st_dev, file_before.st_ino
+                )):
+            raise EvidenceIntegrityError("artifact destination changed during verification")
         return rel.as_posix(), b"".join(chunks)
     except EvidenceIntegrityError:
         raise
