@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .artifact_verification import EvidenceIntegrityError, EvidenceVersion, verify_artifact, verify_json_artifact
 import json
-from .evidence_pack import ValidatedEvidencePack
+from .evidence_pack import EvidencePackError, ValidatedEvidencePack, validate_evidence_pack
 
 
 class EvidencePackIntegrityError(EvidenceIntegrityError):
@@ -23,6 +23,24 @@ def verify_pack_artifacts(pack: ValidatedEvidencePack, evidence_root: str | Path
     """
     if not isinstance(pack, ValidatedEvidencePack):
         raise EvidencePackIntegrityError("a validated evidence pack is required")
+    # The dataclass is frozen only shallowly: callers can still mutate nested
+    # dictionaries or construct one directly. Rebuild and revalidate a detached
+    # manifest snapshot so this byte-verification boundary never trusts the
+    # dataclass type or stale validation performed on earlier contents.
+    try:
+        pack = validate_evidence_pack({
+            "manifest_id": pack.manifest_id,
+            "schema_version": "1.0",
+            "project_record": pack.project_record,
+            "artifacts": list(pack.artifacts),
+            "evidence_records": list(pack.evidence_records),
+            "source_to_final_links": list(pack.source_to_final_links),
+            "gate_records": list(pack.gate_records),
+        })
+    except (EvidencePackError, AttributeError, TypeError, ValueError) as exc:
+        raise EvidencePackIntegrityError(
+            "evidence pack failed structural revalidation"
+        ) from exc
 
     artifacts_by_id = {artifact["artifact_id"]: artifact for artifact in pack.artifacts}
     referenced_ids = {
