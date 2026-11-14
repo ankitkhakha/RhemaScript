@@ -46,6 +46,22 @@ _SAFE_INTEGER_FIELDS = {
     "chunk_total_bytes", "acknowledged_offset",
 }
 _SAFE_BOOLEAN_FIELDS = {"status_reconciliation"}
+_STRING_MAX_LENGTHS = {
+    "interface_id": 64, "provider": 64, "request_id": 128, "project_id": 128,
+    "operation": 64, "method": 16, "host": 253, "request_fingerprint": 64,
+    "idempotency_key": 256, "phase": 16, "error_type": 128, "timestamp_utc": 64,
+    "provider_resource_id": 128, "completion_event_id": 64,
+    "approval_fingerprint": 64, "artifact_id": 128, "artifact_version": 128,
+    "artifact_sha256": 64, "session_url_sha256": 64, "publish_session_state": 32,
+}
+_SHA256_FIELDS = {
+    "request_fingerprint", "completion_event_id", "approval_fingerprint",
+    "artifact_sha256", "session_url_sha256",
+}
+_ALLOWED_SESSION_STATES = {
+    "CREATING", "ACTIVE", "CHUNK_IN_FLIGHT", "RECONCILING",
+    "COMPLETE", "FAILED", "INDETERMINATE",
+}
 
 
 class JsonlAuditSink:
@@ -81,9 +97,16 @@ class JsonlAuditSink:
         record_data = dict(event)
         record_data.setdefault("timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
         for key, value in record_data.items():
-            if key in _SAFE_STRING_FIELDS and (not isinstance(value, str) or not value):
-                raise AuditSinkError("audit event string field is invalid")
-            if key in _SAFE_INTEGER_FIELDS and (value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0)):
+            if key in _SAFE_STRING_FIELDS:
+                if not isinstance(value, str) or not value or len(value) > _STRING_MAX_LENGTHS[key]:
+                    raise AuditSinkError("audit event string field is invalid")
+                if key in _SHA256_FIELDS and not re.fullmatch(r"[0-9a-f]{64}", value):
+                    raise AuditSinkError("audit event digest field is invalid")
+                if key == "provider_resource_id" and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+                    raise AuditSinkError("audit event provider resource ID is invalid")
+                if key == "publish_session_state" and value not in _ALLOWED_SESSION_STATES:
+                    raise AuditSinkError("audit event publish-session state is invalid")
+            if key in _SAFE_INTEGER_FIELDS and (value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 2**63 - 1)):
                 raise AuditSinkError("audit event numeric field is invalid")
             if key in _SAFE_BOOLEAN_FIELDS and not isinstance(value, bool):
                 raise AuditSinkError("audit event boolean field is invalid")
