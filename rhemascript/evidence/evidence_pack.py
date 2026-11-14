@@ -260,7 +260,7 @@ def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_autho
         from .evidence_pack_integrity import verify_pack_artifacts
         versions.extend(verify_pack_artifacts(validated, evidence_root))
     if local_source_resolver is not None:
-        from .local_source_resolver import LocalSourceResolver, LocalSourceResolutionError
+        from .local_source_resolver import LocalSourceResolver, LocalSourceResolutionError, LocalSourceReceipt
         from .artifact_verification import is_verified_evidence_version
         if not isinstance(local_source_resolver, LocalSourceResolver):
             raise EvidencePackError("local_source_resolver must be an approved LocalSourceResolver")
@@ -284,6 +284,24 @@ def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_autho
             if version.evidence_id != artifact["artifact_id"] or version.version != artifact["version"]:
                 raise EvidencePackError(
                     f"artifact {artifact['artifact_id']} does not match the resolver's source identity/version"
+                )
+            if (
+                not isinstance(receipt, LocalSourceReceipt)
+                or receipt.original_reference != reference
+                or receipt.source_id != version.evidence_id
+                or receipt.relative_path != version.relative_path
+                or receipt.version != version.version
+                or receipt.sha256 != version.sha256
+                or receipt.size_bytes != version.size_bytes
+                or receipt.project_id != validated.project_id
+                or receipt.project_version != validated.project_version
+                or receipt.catalog_fingerprint != local_source_resolver.catalog_fingerprint
+                or receipt.outcome != "CONTENT_VERIFIED"
+                or receipt.source_authentication != "NOT_CHECKED"
+                or receipt.claim_relevance != "NOT_CHECKED"
+            ):
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} resolver returned an inconsistent source receipt"
                 )
             declared_digest = artifact.get("sha256")
             if not isinstance(declared_digest, str) or declared_digest.lower() != version.sha256:
