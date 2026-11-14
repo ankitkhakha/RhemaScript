@@ -12,6 +12,7 @@ import hashlib
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pathlib import Path
+from unittest.mock import patch
 
 from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, VerifiedApproval
 from rhemascript.core.approval_store import (
@@ -164,6 +165,67 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
         restored = SQLiteApprovalConsumptionStore(backup)
         self.assertTrue(restored.is_consumed(entry.approval_id, entry.nonce))
+
+    def test_backup_rejects_replaced_destination_and_preserves_replacement(self):
+        backup = self.directory / "backup-race.sqlite3"
+        original_path = self.directory / "original-backup-inode.sqlite3"
+        replacement = b"replacement backup must be preserved"
+        real_write = os.write
+        replaced = False
+
+        def replace_after_write(descriptor, data):
+            nonlocal replaced
+            written = real_write(descriptor, data)
+            if not replaced:
+                backup.rename(original_path)
+                backup.write_bytes(replacement)
+                replaced = True
+            return written
+
+        with patch(
+            "rhemascript.core.approval_store.os.write",
+            side_effect=replace_after_write,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "destination changed during export"
+            ):
+                self.store.backup_to(backup)
+
+        self.assertTrue(replaced)
+        self.assertEqual(backup.read_bytes(), replacement)
+        self.assertTrue(original_path.exists())
+        self.assertNotEqual(original_path.read_bytes(), replacement)
+
+    def test_backup_rejects_parent_directory_replacement_and_cleans_pinned_entry(self):
+        backup = self.directory / "backup-parent-race.sqlite3"
+        original_directory = self.directory.with_name("private-original")
+        replacement = b"replacement in new backup directory"
+        real_write = os.write
+        replaced = False
+
+        def replace_parent_after_write(descriptor, data):
+            nonlocal replaced
+            written = real_write(descriptor, data)
+            if not replaced:
+                self.directory.rename(original_directory)
+                self.directory.mkdir(mode=0o700)
+                os.chmod(self.directory, 0o700)
+                (self.directory / backup.name).write_bytes(replacement)
+                replaced = True
+            return written
+
+        with patch(
+            "rhemascript.core.approval_store.os.write",
+            side_effect=replace_parent_after_write,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "backup directory changed during operation"
+            ):
+                self.store.backup_to(backup)
+
+        self.assertTrue(replaced)
+        self.assertEqual((self.directory / backup.name).read_bytes(), replacement)
+        self.assertFalse((original_directory / backup.name).exists())
 
     def test_checkpoint_rejects_wrong_key_and_malformed_payload(self):
         checkpoint = self.store.checkpoint(b"approval-state-checkpoint-key-32-bytes!!")
@@ -516,22 +578,47 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         ))
         self.assertTrue(self.store.record_publish_response(
             project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
-            owner_id="gateway-A", status=201,
-        ))
-        self.assertTrue(self.store.finalize_publish_session_operation(
-            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
-            owner_id="gateway-A",
+            owner_id="gateway-A", status=201, provider_resource_id="video-123",
         ))
         record = self.store.get_publish_session(
             project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
         )
         self.assertEqual(record["state"], "COMPLETE")
         self.assertEqual(record["acknowledged_offset"], 10)
+        self.assertEqual(record["provider_resource_id"], "video-123")
+        self.assertEqual(record["provider_http_status"], 201)
+        self.assertRegex(record["completion_audit_id"], r"^[0-9a-f]{64}$")
+        self.assertTrue(self.store.finalize_publish_completion_audit(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", completion_audit_id=record["completion_audit_id"],
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["completion_audited"], 1)
         with self.assertRaisesRegex(ValueError, "chunk byte range is invalid"):
             self.store.begin_publish_chunk(
                 **args, owner_id="gateway-A", start=10, end=10, total=10,
                 body_size=1, lease_seconds=60,
             )
+
+    def test_completed_response_requires_a_valid_provider_resource_id(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        with self.assertRaisesRegex(ValueError, "validated provider resource ID"):
+            self.store.record_publish_response(
+                project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+                owner_id="gateway-A", status=201,
+            )
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "CHUNK_IN_FLIGHT")
+        self.assertIsNone(record["provider_resource_id"])
 
     def test_wrong_session_url_and_out_of_order_ranges_are_rejected(self):
         self.reserve_and_bind()
@@ -651,12 +738,40 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.reserve_and_bind()
         key = b"publish-session-checkpoint-key-32-bytes!"
         checkpoint = self.store.checkpoint(key)
-        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v4")
+        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v5")
         self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
         with sqlite3.connect(self.path) as db:
             db.execute(
                 "UPDATE publish_sessions SET acknowledged_offset=1 WHERE request_id=?",
                 ("REQUEST-1",),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+
+    def test_v5_checkpoint_covers_completed_provider_result_and_audit_state(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=9, total=10,
+            body_size=10, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", status=201, provider_resource_id="video-checkpoint-1",
+        ))
+        key = b"publish-session-checkpoint-key-32-bytes!"
+        checkpoint = self.store.checkpoint(key)
+        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v5")
+        self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET provider_resource_id=? WHERE request_id=?",
+                ("video-substituted", "REQUEST-1"),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET provider_resource_id=?, completion_audited=1 WHERE request_id=?",
+                ("video-checkpoint-1", "REQUEST-1"),
             )
         self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
 
@@ -668,7 +783,7 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.assertFalse(registry.verify_checkpoint(legacy, key))
         self.assertTrue(base.verify_checkpoint(legacy, key))
 
-    def test_backup_restore_preserves_publish_session_and_v4_checkpoint(self):
+    def test_backup_restore_preserves_publish_session_and_v5_checkpoint(self):
         self.reserve_and_bind()
         args = {**self.identity, "session_url_sha256": self.url_digest}
         self.assertTrue(self.store.begin_publish_chunk(
