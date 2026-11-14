@@ -466,6 +466,13 @@ class ExternalIntegrationGateway:
                 "host": "www.googleapis.com", "phase": "COMPLETED",
                 "http_status": status, "response_bytes": 0,
                 "provider_resource_id": resource_id, "completion_event_id": audit_id,
+                "approval_fingerprint": approval_fingerprint,
+                "artifact_id": record["artifact_id"],
+                "artifact_version": record["artifact_version"],
+                "artifact_sha256": record["artifact_sha256"],
+                "artifact_size_bytes": record["artifact_size_bytes"],
+                "session_url_sha256": url_digest,
+                "publish_session_state": "COMPLETE",
             }
             try:
                 self.audit_sink(dict(event))
