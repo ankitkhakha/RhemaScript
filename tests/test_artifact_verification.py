@@ -45,6 +45,15 @@ class ArtifactVerificationTests(unittest.TestCase):
             with self.assertRaises(EvidenceIntegrityError):
                 verify_json_artifact(self.root, "invalid.json")
 
+    def test_json_artifact_rejects_excessive_nesting_with_integrity_error(self):
+        content = (
+            b'{"evidence_id":"EV-DEEP","evidence_version":"v1","nested":'
+            + b"[" * 10000 + b"0" + b"]" * 10000 + b"}"
+        )
+        (self.root / "deep.json").write_bytes(content)
+        with self.assertRaisesRegex(EvidenceIntegrityError, "valid JSON"):
+            verify_json_artifact(self.root, "deep.json")
+
     def test_json_artifact_rejects_symlink(self):
         target = self.root / "target.json"
         target.write_text('{"evidence_id":"EV-1","evidence_version":"v1"}', encoding="utf-8")

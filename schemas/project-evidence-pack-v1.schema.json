@@ -32,14 +32,41 @@
           "artifact_id": {"type": "string", "minLength": 1},
           "project_id": {"type": "string", "minLength": 1},
           "project_version": {"type": "string", "minLength": 1},
-          "artifact_type": {"enum": ["BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM", "YOUTUBE_VIDEO_VERIFICATION"]},
+          "artifact_type": {"enum": ["BIBLICAL_SOURCE", "APPROVED_SCRIPT", "APPROVED_NARRATION", "STORYBOARD", "AUDIO_VISUAL_PLAN", "PROMPT", "ASSET", "EDITED_FILM", "YOUTUBE_VIDEO_VERIFICATION", "YOUTUBE_ANALYTICS_SNAPSHOT", "YOUTUBE_ANALYTICS_COMPARISON"]},
           "version": {"type": "string", "minLength": 1},
           "status": {"type": "string", "minLength": 1},
           "evidence_refs": {"type": "array", "items": {"type": "string", "minLength": 1}}
         },
         "additionalProperties": true,
-        "allOf": [{
-          "if": {"properties": {"artifact_type": {"const": "YOUTUBE_VIDEO_VERIFICATION"}}},
+        "allOf": [
+          {
+            "if": {"properties": {"artifact_type": {"const": "YOUTUBE_ANALYTICS_SNAPSHOT"}}},
+            "then": {
+              "required": ["snapshot_sha256"],
+              "properties": {
+                "snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            }
+          },
+          {
+            "if": {"properties": {"artifact_type": {"const": "YOUTUBE_ANALYTICS_COMPARISON"}}},
+            "then": {
+              "required": [
+                "comparison_sha256", "current_snapshot_artifact_id",
+                "previous_snapshot_artifact_id", "current_snapshot_sha256",
+                "previous_snapshot_sha256"
+              ],
+              "properties": {
+                "comparison_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "current_snapshot_artifact_id": {"type": "string", "minLength": 1},
+                "previous_snapshot_artifact_id": {"type": "string", "minLength": 1},
+                "current_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "previous_snapshot_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+              }
+            }
+          },
+          {
+            "if": {"properties": {"artifact_type": {"const": "YOUTUBE_VIDEO_VERIFICATION"}}},
           "then": {
             "required": [
               "youtube_video_id", "verified_final_film_artifact_id",
