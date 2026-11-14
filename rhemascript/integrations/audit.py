@@ -143,6 +143,7 @@ class JsonlAuditSink:
                     fcntl.flock(descriptor, fcntl.LOCK_EX)
                 if completion_event_id is not None:
                     matching_indeterminate = False
+                    matching_completed = False
                     with os.fdopen(os.dup(descriptor), "rb") as existing_log:
                         for line in existing_log:
                             try:
@@ -157,16 +158,16 @@ class JsonlAuditSink:
                                     raise AuditSinkError("completion event ID already exists with a different provider result")
                                 existing_phase = existing.get("phase")
                                 if existing_phase == "COMPLETED":
-                                    # A prior fsync may have failed after the record became visible.
-                                    # Re-sync before treating the existing record as durable.
-                                    os.fsync(descriptor)
-                                    return
+                                    matching_completed = True
                                 if existing_phase == "INDETERMINATE":
                                     matching_indeterminate = True
                                 else:
                                     raise AuditSinkError("completion event ID exists in an unexpected audit phase")
-                    if record_data["phase"] == "INDETERMINATE" and matching_indeterminate:
-                        # Do not turn a previously failed fsync into a false durability success.
+                    if matching_completed or (
+                        record_data["phase"] == "INDETERMINATE" and matching_indeterminate
+                    ):
+                        # Scan the complete log before accepting a duplicate, then re-sync:
+                        # a prior append may be visible even though its fsync failed.
                         os.fsync(descriptor)
                         return
                 view = memoryview(record)
