@@ -287,6 +287,42 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "numeric field"):
                 sink(self.event(phase="COMPLETED", acknowledged_offset=2**63))
 
+    def test_new_audit_records_carry_schema_version_one(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            sink(self.event())
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(records[0]["schema_version"], 1)
+
+    def test_unversioned_legacy_audit_records_remain_append_compatible(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            legacy = self.event()
+            legacy["timestamp_utc"] = "2026-11-14T09:00:00+00:00"
+            path.write_text(json.dumps(legacy) + "\\n")
+            sink = JsonlAuditSink(path)
+            sink(self.event(request_id="request-after-legacy"))
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertNotIn("schema_version", records[0])
+            self.assertEqual(records[1]["schema_version"], 1)
+
+    def test_append_rejects_syntactically_valid_records_outside_supported_schema(self):
+        invalid_records = [
+            dict(self.event(), phase="UNKNOWN"),
+            dict(self.event(), unexpected_metadata="must-not-be-accepted"),
+            dict(self.event(), request_bytes="0"),
+            dict(self.event(), schema_version=999),
+            dict(self.event(), schema_version=True),
+        ]
+        for index, invalid in enumerate(invalid_records):
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "audit.jsonl"
+                path.write_text(json.dumps(invalid) + "\\n")
+                sink = JsonlAuditSink(path)
+                with self.assertRaisesRegex(AuditSinkError, "supported schema"):
+                    sink(self.event(request_id=f"request-{index}"))
+
     def test_rejects_empty_audit_destination(self):
         with self.assertRaisesRegex(AuditSinkError, "must name a file"):
             JsonlAuditSink("")
