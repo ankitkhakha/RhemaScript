@@ -39,7 +39,10 @@ def _open_private_directory(path: Path) -> int:
             or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")):
         raise ApprovalStoreError("safe archive directory anchoring is unavailable")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    descriptor = os.open(absolute.anchor, flags)
+    try:
+        descriptor = os.open(absolute.anchor, flags)
+    except OSError:
+        raise ApprovalStoreError("archive directory is unavailable or contains a symlink") from None
     try:
         for component in absolute.parts[1:]:
             next_descriptor = os.open(
@@ -54,6 +57,12 @@ def _open_private_directory(path: Path) -> int:
                 "archive directory must be owner-owned and private (0700 or stricter)"
             )
         return descriptor
+    except ApprovalStoreError:
+        os.close(descriptor)
+        raise
+    except OSError:
+        os.close(descriptor)
+        raise ApprovalStoreError("archive directory is unavailable or contains a symlink") from None
     except Exception:
         os.close(descriptor)
         raise
