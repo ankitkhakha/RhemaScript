@@ -708,7 +708,6 @@ class YouTubeClient:
                 metadata["status"]["publishAt"] = publish_at
             query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
             headers = {
-                "Authorization": f"Bearer {self._token()}",
                 "Content-Type": "application/json; charset=UTF-8",
                 "X-Upload-Content-Type": "video/*",
                 "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
@@ -721,6 +720,28 @@ class YouTubeClient:
             final_raw = b""
             offset = 0
             reconciliation_attempts = 0
+            if existing_session is not None and existing_session.get("state") == "COMPLETE":
+                try:
+                    video_id = self._gateway.recover_completed_publish_result(
+                        project_id=project_id, project_version=project_version,
+                        request_id=request_id, verified_approvals=verified_approvals,
+                        artifact_binding={
+                            "artifact_id": artifact_binding["artifact_id"],
+                            "artifact_version": artifact_binding["artifact_version"],
+                            "artifact_sha256": artifact_binding["sha256"],
+                            "artifact_size_bytes": artifact_binding["size_bytes"],
+                        },
+                    )
+                except Exception as exc:
+                    raise YouTubeIntegrationError(str(exc), code=getattr(exc, "code", None)) from None
+                self._last_upload_context = {
+                    "video_id": video_id, "project_id": project_id,
+                    "project_version": project_version,
+                    "final_film_artifact_id": final_films[0]["artifact_id"],
+                }
+                return {"video_id": video_id, "url": f"https://www.youtube.com/watch?v={video_id}",
+                        "privacy_status_requested": privacy_status, "publish_at_requested": publish_at,
+                        "upload_completed": True, "verification_required": True}
             if existing_session is not None:
                 location = self._gateway.recover_publish_session_url(
                     project_id=project_id,
@@ -747,6 +768,7 @@ class YouTubeClient:
                     offset = reconciled_offset
                     video.seek(offset)
             else:
+                headers["Authorization"] = f"Bearer {self._token()}"
                 status, raw, response_headers = self._authorized_request(
                     f"{UPLOAD_BASE}?{query}", method="POST",
                     body=json.dumps(metadata).encode(), headers=headers,
