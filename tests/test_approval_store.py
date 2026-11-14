@@ -717,6 +717,73 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.assertEqual(record["state"], "CREATING")
         self.assertIsNone(record["session_url_sha256"])
 
+    def test_bound_active_session_with_expired_owner_lease_can_be_reclaimed(self):
+        self.assertTrue(self.store.reserve_publish_session(
+            **self.identity, owner_id="gateway-A", lease_seconds=60,
+        ))
+        self.assertTrue(self.store.bind_publish_session(
+            **self.identity, session_url_sha256=self.url_digest, owner_id="gateway-A",
+        ))
+        with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT state, inflight_owner, lease_expires_at FROM publish_sessions WHERE request_id=?",
+                ("REQUEST-1",),
+            ).fetchone()
+        self.assertEqual(row[0], "ACTIVE")
+        self.assertEqual(row[1], "gateway-A")
+        self.assertIsNotNone(row[2])
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                ("2000-01-01T00:00:00+00:00", "REQUEST-1"),
+            )
+        restarted = SQLitePublishSessionRegistry(self.path)
+        self.assertTrue(restarted.begin_publish_reconciliation(
+            **{**self.identity, "session_url_sha256": self.url_digest},
+            owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
+        record = restarted.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "RECONCILING")
+        self.assertEqual(record["inflight_owner"], "gateway-B")
+
+    def test_active_308_acknowledgement_with_expired_owner_lease_can_be_reclaimed(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", status=308, range_header="bytes=0-4",
+        ))
+        with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT state, acknowledged_offset, inflight_owner, lease_expires_at FROM publish_sessions WHERE request_id=?",
+                ("REQUEST-1",),
+            ).fetchone()
+        self.assertEqual(row[0], "ACTIVE")
+        self.assertEqual(row[1], 5)
+        self.assertEqual(row[2], "gateway-A")
+        self.assertIsNotNone(row[3])
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                ("2000-01-01T00:00:00+00:00", "REQUEST-1"),
+            )
+        restarted = SQLitePublishSessionRegistry(self.path)
+        self.assertTrue(restarted.begin_publish_reconciliation(
+            **args, owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
+        record = restarted.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "RECONCILING")
+        self.assertEqual(record["acknowledged_offset"], 5)
+        self.assertEqual(record["inflight_owner"], "gateway-B")
+
     def test_idle_active_session_can_be_status_probed_after_process_restart(self):
         self.reserve_and_bind()
         args = {**self.identity, "session_url_sha256": self.url_digest}

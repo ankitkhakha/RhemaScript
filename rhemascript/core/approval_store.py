@@ -603,7 +603,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             cursor = db.execute("""
                 UPDATE publish_sessions
                    SET session_url_sha256=?, state='ACTIVE',
-                       lease_expires_at=NULL, updated_at=?
+                       updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
                    AND approval_fingerprint=? AND artifact_id=? AND artifact_version=?
                    AND artifact_sha256=? AND artifact_size_bytes=?
@@ -671,11 +671,18 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                         stale = datetime.fromisoformat(old_lease) <= now
                     except ValueError:
                         stale = False
+                stale_active_owner = False
+                if state == "ACTIVE" and old_owner is not None and old_lease:
+                    try:
+                        stale_active_owner = datetime.fromisoformat(old_lease) <= now
+                    except ValueError:
+                        stale_active_owner = False
                 active_idle = (
                     state == "ACTIVE" and old_owner is None
                     and old_start is None and old_end is None
                 )
-                if state != "INDETERMINATE" and not stale and not active_idle:
+                if (state != "INDETERMINATE" and not stale and not active_idle
+                        and not stale_active_owner):
                     db.execute("ROLLBACK")
                     return False
                 new_state, new_start, new_end = "RECONCILING", old_start, old_end
@@ -784,11 +791,12 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             db.execute("""
                 UPDATE publish_sessions
                    SET state=?, acknowledged_offset=?, inflight_start=?,
-                       inflight_end=?, inflight_owner=?, lease_expires_at=NULL,
+                       inflight_end=?, inflight_owner=?,
+                       lease_expires_at=CASE WHEN ?='INDETERMINATE' THEN NULL ELSE lease_expires_at END,
                        updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
             """, (new_state, new_offset, retained_start, retained_end, retained_owner,
-                  self._utc(datetime.now(timezone.utc)), project_id, project_version, request_id))
+                  new_state, self._utc(datetime.now(timezone.utc)), project_id, project_version, request_id))
             db.execute("COMMIT")
             return new_state != "INDETERMINATE"
         except sqlite3.Error:

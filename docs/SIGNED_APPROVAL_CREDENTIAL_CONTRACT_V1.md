@@ -62,12 +62,12 @@ The V3 HMAC checkpoint snapshot includes the persisted credential schema, signat
 
 The method-aware gateway now requires a durable `SQLitePublishSessionRegistry` before UPLOAD_SESSION or UPLOAD_CHUNK can reach the provider. The candidate registry:
 - atomically claims one upload session per project/version/request, approval fingerprint and exact final-artifact tuple;
-- binds the full provider-issued session URL by SHA-256 digest only; the bearer URL is never persisted;
+- binds the full provider-issued session URL by SHA-256 digest in the registry; the bearer URL is stored separately as AES-GCM ciphertext in an owner-only vault with a separately injected key; neither plaintext URL nor vault key is stored in the registry database;
 - permits chunks and status reconciliation only against the bound session URL digest and exact approval/artifact context;
-- enforces monotonic acknowledged byte offsets, one in-flight operation, bounded lease recovery after process interruption, terminal completion and duplicate-session rejection;
+- enforces monotonic acknowledged byte offsets, one in-flight operation, bounded lease recovery after process interruption (including expired ACTIVE owners after binding or a 308 acknowledgement), terminal completion and duplicate-session rejection;
 - records indeterminate outcomes and includes session state in the V4 approval-state HMAC checkpoint.
 
-The gateway fails closed if no durable registry is supplied. This is a local SQLite candidate implementation, not a production deployment. It must receive independent review and operational validation of database custody, checkpoint retention, backup/restore, process-restart recovery and concurrency before any production provider write can be enabled. The registry emits V4 checkpoints covering approvals, revocations and publish sessions; approval-only V3 checkpoints are deliberately not accepted by the registry verifier. Create and retain a fresh V4 checkpoint outside the database before enabling the registry.
+The gateway fails closed if no durable registry is supplied. This is a local SQLite candidate implementation, not a production deployment. It must receive independent review and operational validation of database custody, checkpoint retention, backup/restore, process-restart recovery and concurrency before any production provider write can be enabled. A crash after an unbound CREATING claim remains fail-closed and requires manual reconciliation; it must not automatically create a replacement provider session. The registry emits V4 checkpoints covering approvals, revocations and publish sessions; approval-only V3 checkpoints are deliberately not accepted by the registry verifier. Create and retain a fresh V4 checkpoint outside the database before enabling the registry.
 
 ## Remaining prerequisites
 
