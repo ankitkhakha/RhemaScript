@@ -48,7 +48,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
 
             with patch("rhemascript.integrations.audit.os.fsync", side_effect=record_fsync) as sync:
                 sink(self.event())
-            self.assertEqual(sync.call_count, 2)
+            self.assertEqual(sync.call_count, 3)
             self.assertEqual(synced_directory_flags, [False, True])
 
     def test_completion_audit_event_is_idempotent_across_retries(self):
@@ -91,11 +91,28 @@ class JsonlAuditSinkTests(unittest.TestCase):
                 provider_resource_id="video-123", completion_event_id="f" * 64,
             )
             with patch("rhemascript.integrations.audit.os.fsync",
-                       side_effect=[OSError("simulated fsync failure"), None]) as sync:
+                       side_effect=[OSError("simulated fsync failure"), None, None]) as sync:
                 with self.assertRaisesRegex(AuditSinkError, "durably persisted"):
                     sink(event)
                 sink(event)
                 self.assertEqual(sync.call_count, 2)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+
+    def test_duplicate_retries_parent_directory_fsync_after_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            event = self.event(
+                phase="COMPLETED", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="d" * 64,
+            )
+            with patch("rhemascript.integrations.audit.os.fsync",
+                       side_effect=[None, OSError("simulated directory fsync failure"), None, None]) as sync:
+                with self.assertRaisesRegex(AuditSinkError, "durably persisted"):
+                    sink(event)
+                sink(event)
+                self.assertEqual(sync.call_count, 4)
             records = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual(len(records), 1)
 
