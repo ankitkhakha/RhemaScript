@@ -512,7 +512,7 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
                 side_effect=replace_after_first_read,
             ):
                 with self.assertRaisesRegex(
-                    EvidenceIntegrityError, "destination changed during verification"
+                    EvidenceIntegrityError, "artifact changed while being read|destination changed during verification"
                 ):
                     verify_json_artifact(root, "analytics.json")
 
