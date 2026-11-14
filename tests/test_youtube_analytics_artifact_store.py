@@ -106,6 +106,46 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             self.assertEqual(versions[0].evidence_id, "YT-ANALYTICS-001")
             self.assertEqual(versions[0].sha256, record["sha256"])
 
+
+    def test_pack_integrity_revalidates_detached_validated_pack(self):
+        snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
+        with tempfile.TemporaryDirectory() as directory:
+            record = persist_analytics_evidence_artifact(
+                snapshot, evidence_root=directory, relative_path="analytics.json",
+                artifact_id="YT-ANALYTICS-DETACHED", project_id="PROJECT-1",
+                project_version="3",
+            )
+            manifest = {
+                "manifest_id": "MANIFEST-DETACHED",
+                "schema_version": "1.0",
+                "project_record": {
+                    "record_id": "PROJECT-RECORD-DETACHED",
+                    "record_type": "RHEMASCRIPT_PROJECT",
+                    "schema_version": "1.0",
+                    "project_id": "PROJECT-1",
+                    "status": "DRAFT",
+                    "classification": "OPERATIONAL",
+                    "version": "3",
+                },
+                "artifacts": [record],
+                "evidence_records": [{
+                    "evidence_id": "EVIDENCE-DETACHED",
+                    "capability_id": "CAP-01",
+                    "payload": {},
+                    "evidence_refs": [],
+                    "artifact_refs": ["YT-ANALYTICS-DETACHED"],
+                }],
+                "source_to_final_links": [],
+            }
+            validated = validate_evidence_pack(manifest)
+            manifest["artifacts"][0]["status"] = "FORGED_AFTER_VALIDATION"
+            self.assertEqual(validated.artifacts[0]["status"], "DRAFT")
+            validated.artifacts[0]["project_id"] = "OTHER-PROJECT"
+            with self.assertRaisesRegex(
+                EvidencePackIntegrityError, "failed structural revalidation"
+            ):
+                verify_pack_artifacts(validated, directory)
+
     def test_refuses_to_overwrite_existing_evidence(self):
         snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
         with tempfile.TemporaryDirectory() as directory:
