@@ -500,10 +500,10 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         )
         self.assertEqual(state["state"], "ACTIVE")
         records = [json.loads(line) for line in audit_path.read_text().splitlines()]
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["phase"], "COMPLETED")
-        self.assertEqual(records[0]["publish_session_state"], "ACTIVE")
-        self.assertEqual(records[0]["session_url_sha256"], state["session_url_sha256"])
+        self.assertEqual([record["phase"] for record in records], ["REQUESTED", "COMPLETED"])
+        completion = records[-1]
+        self.assertEqual(completion["publish_session_state"], "ACTIVE")
+        self.assertEqual(completion["session_url_sha256"], state["session_url_sha256"])
         self.assertNotIn("upload_id=created-opaque", audit_path.read_text())
 
     def test_successful_upload_chunk_completion_uses_real_audit_sink(self):
@@ -550,11 +550,11 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         self.assertEqual(state["state"], "COMPLETE")
         self.assertEqual(state["provider_resource_id"], "video-audit-complete")
         records = [json.loads(line) for line in audit_path.read_text().splitlines()]
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0]["phase"], "COMPLETED")
-        self.assertEqual(records[0]["publish_session_state"], "COMPLETE")
-        self.assertEqual(records[0]["provider_resource_id"], "video-audit-complete")
-        self.assertEqual(records[0]["completion_event_id"], state["completion_audit_id"])
+        self.assertEqual([record["phase"] for record in records], ["REQUESTED", "COMPLETED"])
+        completion = records[-1]
+        self.assertEqual(completion["publish_session_state"], "COMPLETE")
+        self.assertEqual(completion["provider_resource_id"], "video-audit-complete")
+        self.assertEqual(completion["completion_event_id"], state["completion_audit_id"])
         self.assertNotIn("upload_id=chunk-opaque", audit_path.read_text())
 
     def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
