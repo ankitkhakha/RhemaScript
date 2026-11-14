@@ -2,7 +2,7 @@ name: RhemaScript CI
 
 on:
   push:
-    branches: ["main", "ci/**", "feat/**"]
+    branches: ["main", "ci/**", "feat/**"] # Re-run PR70 symlink backup-path regressions
   pull_request:
     branches: ["main"]
   workflow_dispatch:
