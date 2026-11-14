@@ -202,7 +202,10 @@ def verify_checkpoint_archive(
                     or not isinstance(payload.get("consumed"), list)
                     or not isinstance(payload.get("revoked"), list)):
                 raise ValueError
-        elif payload_schema == "RhemaScript.ApprovalStateCheckpoint.v4":
+        elif payload_schema in {
+            "RhemaScript.ApprovalStateCheckpoint.v4",
+            "RhemaScript.ApprovalStateCheckpoint.v5",
+        }:
             if (set(payload) != {"schema", "consumed", "revoked", "publish_sessions"}
                     or not isinstance(payload.get("consumed"), list)
                     or not isinstance(payload.get("revoked"), list)
