@@ -191,12 +191,14 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             evidence_root = Path(directory) / "evidence"
             backup_root = Path(directory) / "evidence-original"
             evidence_root.mkdir()
+            copied_bytes = []
 
             def replace_root_before_verification(
                 root, relative_path, *, evidence_id, version, **expected_identities
             ):
                 intended = Path(root) / relative_path
                 exact_bytes = intended.read_bytes()
+                copied_bytes.append(exact_bytes)
                 Path(root).rename(backup_root)
                 Path(root).mkdir()
                 (Path(root) / relative_path).write_bytes(exact_bytes)
@@ -218,7 +220,7 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
 
             replacement = evidence_root / "analytics.json"
             self.assertTrue(replacement.exists())
-            self.assertEqual(replacement.read_bytes(), (backup_root / "analytics.json").read_bytes())
+            self.assertEqual(replacement.read_bytes(), copied_bytes[0])
             self.assertFalse((backup_root / "analytics.json").exists())
 
     @unittest.skipUnless(os.name == "posix", "POSIX directory ownership required")
