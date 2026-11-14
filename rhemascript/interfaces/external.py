@@ -402,6 +402,102 @@ class ExternalIntegrationGateway:
                 self._inflight.pop(key, None)
                 flight["event"].set()
 
+    def recover_completed_publish_result(
+        self, *, project_id: str, project_version: str, request_id: str,
+        verified_approvals: tuple[object, ...],
+        artifact_binding: Mapping[str, object],
+    ) -> str:
+        """Recover a completed resource and its audit without contacting the provider."""
+        from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+        if not isinstance(self.publish_session_registry, SQLitePublishSessionRegistry):
+            raise ExternalIntegrationError("durable publish-session registry is unavailable")
+        if self.audit_sink is None or not isinstance(artifact_binding, Mapping):
+            raise ExternalIntegrationError("completed publish recovery requires an audit sink and artifact binding")
+        try:
+            from rhemascript.core.approvals import is_consumed_verified_approval
+            if (not isinstance(verified_approvals, tuple) or len(verified_approvals) != 2
+                    or any(not is_consumed_verified_approval(item) for item in verified_approvals)):
+                raise ExternalIntegrationError(
+                    "completed publish recovery requires exact verifier-issued, durably consumed approvals"
+                )
+            approval_fingerprint = _publish_approval_fingerprint(verified_approvals)
+            identity = {"project_id": project_id, "project_version": project_version, "request_id": request_id}
+            record = self.publish_session_registry.get_publish_session(**identity)
+            if record is None or record.get("state") != "COMPLETE":
+                raise ExternalIntegrationError("no completed publish result is available to recover")
+            if not hmac.compare_digest(str(record.get("approval_fingerprint", "")), approval_fingerprint):
+                raise ExternalIntegrationError("resume approvals do not match the completed publish session")
+            for field in ("artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes"):
+                if record.get(field) != artifact_binding.get(field):
+                    raise ExternalIntegrationError("resume artifact does not match the completed publish session")
+            resource_id, audit_id = record.get("provider_resource_id"), record.get("completion_audit_id")
+            status, url_digest = record.get("provider_http_status"), record.get("session_url_sha256")
+            if (not isinstance(resource_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id)
+                    or status not in (200, 201)
+                    or not isinstance(audit_id, str) or not re.fullmatch(r"[0-9a-f]{64}", audit_id)
+                    or not isinstance(url_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", url_digest)):
+                raise ExternalIntegrationError("completed publish result is incomplete or invalid")
+            completion_payload = json.dumps({
+                "project_id": project_id, "project_version": project_version,
+                "request_id": request_id, "approval_fingerprint": approval_fingerprint,
+                "provider_resource_id": resource_id, "provider_http_status": status,
+            }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+            expected_audit_id = sha256(completion_payload).hexdigest()
+            if not hmac.compare_digest(audit_id, expected_audit_id):
+                raise ExternalIntegrationError("completed publish audit ID does not match its durable result")
+            if record.get("completion_audited") == 1:
+                return resource_id
+            recovery_owner_id = uuid.uuid4().hex
+            claimed = self.publish_session_registry.begin_publish_completion_recovery(
+                project_id=project_id, project_version=project_version, request_id=request_id,
+                approval_fingerprint=approval_fingerprint,
+                artifact_id=artifact_binding["artifact_id"],
+                artifact_version=artifact_binding["artifact_version"],
+                artifact_sha256=artifact_binding["artifact_sha256"],
+                artifact_size_bytes=artifact_binding["artifact_size_bytes"],
+                session_url_sha256=url_digest, owner_id=recovery_owner_id,
+                lease_seconds=60.0,
+            )
+            if not claimed:
+                refreshed = self.publish_session_registry.get_publish_session(**identity)
+                if refreshed and refreshed.get("completion_audited") == 1:
+                    return resource_id
+                raise ExternalIntegrationError(
+                    "completed publish audit recovery is waiting for the previous owner lease to expire; no provider request was sent"
+                )
+            event = {
+                "interface_id": "IF-18", "provider": "youtube",
+                "request_id": request_id, "project_id": project_id,
+                "operation": "UPLOAD_CHUNK", "method": "PUT",
+                "host": "www.googleapis.com", "phase": "COMPLETED",
+                "http_status": status, "response_bytes": 0,
+                "provider_resource_id": resource_id, "completion_event_id": audit_id,
+                "approval_fingerprint": approval_fingerprint,
+                "artifact_id": record["artifact_id"],
+                "artifact_version": record["artifact_version"],
+                "artifact_sha256": record["artifact_sha256"],
+                "artifact_size_bytes": record["artifact_size_bytes"],
+                "session_url_sha256": url_digest,
+                "publish_session_state": "COMPLETE",
+            }
+            try:
+                self.audit_sink(dict(event))
+            except Exception:
+                raise ExternalIntegrationError(
+                    "completed provider result is durable but its completion audit could not be recovered; do not retry the upload"
+                ) from None
+            if not self.publish_session_registry.finalize_publish_completion_audit(
+                **identity, owner_id=recovery_owner_id, completion_audit_id=audit_id,
+            ):
+                raise ExternalIntegrationError(
+                    "completed provider result was audited but durable finalization failed; do not retry the upload"
+                )
+            return resource_id
+        except ExternalIntegrationError:
+            raise
+        except Exception:
+            raise ExternalIntegrationError("completed publish result could not be recovered safely") from None
+
     def recover_publish_session_url(
         self,
         *,
@@ -740,7 +836,6 @@ class ExternalIntegrationGateway:
                 "artifact_sha256": session_context["artifact_sha256"],
                 "artifact_size_bytes": session_context["artifact_size_bytes"],
             })
-            event["session_vault_ref"] = session_context["vault_ref"]
             if session_context.get("session_url_sha256"):
                 event["session_url_sha256"] = session_context["session_url_sha256"]
             if session_context.get("total_bytes") is not None:
@@ -843,8 +938,23 @@ class ExternalIntegrationGateway:
                         session_context["phase"] = "TERMINAL"
                 else:
                     range_header = _header_value(response_headers, "Range")
+                    provider_resource_id = None
+                    if operation.upper() == "UPLOAD_CHUNK" and status in (200, 201):
+                        try:
+                            provider_payload = json.loads(raw.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            provider_payload = None
+                        candidate_id = provider_payload.get("id") if isinstance(provider_payload, dict) else None
+                        if not isinstance(candidate_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", candidate_id):
+                            registry.mark_publish_session_indeterminate(**identity, owner_id=owner_id)
+                            session_context["phase"] = "TERMINAL"
+                            raise ExternalIntegrationError(
+                                "provider completed the upload without a valid durable resource ID; do not retry"
+                            )
+                        provider_resource_id = candidate_id
                     recorded = registry.record_publish_response(
                         **identity, owner_id=owner_id, status=status, range_header=range_header,
+                        provider_resource_id=provider_resource_id,
                     )
                     if not recorded and status < 500:
                         raise ExternalIntegrationError(
@@ -855,6 +965,9 @@ class ExternalIntegrationGateway:
                 if session_record is not None:
                     event["publish_session_state"] = session_record["state"]
                     event["acknowledged_offset"] = session_record["acknowledged_offset"]
+                    if session_record["state"] == "COMPLETE":
+                        event["provider_resource_id"] = session_record["provider_resource_id"]
+                        event["completion_event_id"] = session_record["completion_audit_id"]
             event.update({"phase": "COMPLETED", "http_status": status,
                           "response_bytes": len(raw)})
             try:
@@ -883,12 +996,27 @@ class ExternalIntegrationGateway:
                     ) from None
                 raise
             if session_context is not None and session_context["phase"] == "RECORDED":
-                if not self.publish_session_registry.finalize_publish_session_operation(
+                completed_record = self.publish_session_registry.get_publish_session(
                     project_id=session_context["project_id"],
                     project_version=session_context["project_version"],
                     request_id=session_context["request_id"],
-                    owner_id=session_context["owner_id"],
-                ):
+                )
+                if completed_record is not None and completed_record.get("state") == "COMPLETE":
+                    finalized = self.publish_session_registry.finalize_publish_completion_audit(
+                        project_id=session_context["project_id"],
+                        project_version=session_context["project_version"],
+                        request_id=session_context["request_id"],
+                        owner_id=session_context["owner_id"],
+                        completion_audit_id=completed_record["completion_audit_id"],
+                    )
+                else:
+                    finalized = self.publish_session_registry.finalize_publish_session_operation(
+                        project_id=session_context["project_id"],
+                        project_version=session_context["project_version"],
+                        request_id=session_context["request_id"],
+                        owner_id=session_context["owner_id"],
+                    )
+                if not finalized:
                     self.publish_session_registry.mark_publish_session_indeterminate(
                         project_id=session_context["project_id"],
                         project_version=session_context["project_version"],
