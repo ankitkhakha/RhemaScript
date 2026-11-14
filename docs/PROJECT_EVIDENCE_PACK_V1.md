@@ -82,3 +82,8 @@ These catalog additions do not write files, fetch provider data, establish sourc
 ## Validated-pack trust boundary — 14 November 2026
 
 `validate_evidence_pack` now validates a detached deep copy of the caller's manifest, so later mutations to the original input do not alter the returned `ValidatedEvidencePack`. The dataclass is frozen only at the outer level; its nested dictionaries remain mutable and the type is publicly constructible. Accordingly, `verify_pack_artifacts` rebuilds and structurally revalidates a detached manifest snapshot before byte verification. It does not trust the dataclass type or assume that validation performed earlier still applies to the current nested contents. A regression verifies both input detachment and rejection of a mutated validated pack. This is integrity validation only; it does not grant generation or publishing authority.
+
+
+### Local-source resolver result provenance — 14 November 2026
+
+When \`run_evidence_pack\` resolves a catalogued local source, it now requires the returned \`EvidenceVersion\` to be an exact verifier-issued object from \`verify_artifact\`, not merely a dataclass with matching ID/version/digest fields. The accompanying \`LocalSourceReceipt\` must match the verified bytes, requested opaque reference, project/version scope and catalog fingerprint, and must retain \`CONTENT_VERIFIED\`, \`source_authentication=NOT_CHECKED\`, and \`claim_relevance=NOT_CHECKED\`. Regression tests reject a resolver subclass that fabricates a matching \`EvidenceVersion\` and another that returns real verified bytes but overstates source authentication in its receipt. Byte identity does not establish publisher authenticity or claim relevance.
