@@ -261,6 +261,7 @@ def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_autho
         versions.extend(verify_pack_artifacts(validated, evidence_root))
     if local_source_resolver is not None:
         from .local_source_resolver import LocalSourceResolver, LocalSourceResolutionError
+        from .artifact_verification import is_verified_evidence_version
         if not isinstance(local_source_resolver, LocalSourceResolver):
             raise EvidencePackError("local_source_resolver must be an approved LocalSourceResolver")
         for artifact in validated.artifacts:
@@ -276,6 +277,10 @@ def run_evidence_pack(pack: dict[str, Any], *, actor_role: str, generation_autho
                 raise EvidencePackError(
                     f"artifact {artifact['artifact_id']} local source reference could not be verified"
                 ) from exc
+            if not is_verified_evidence_version(version):
+                raise EvidencePackError(
+                    f"artifact {artifact['artifact_id']} resolver did not return evidence issued by verify_artifact"
+                )
             if version.evidence_id != artifact["artifact_id"] or version.version != artifact["version"]:
                 raise EvidencePackError(
                     f"artifact {artifact['artifact_id']} does not match the resolver's source identity/version"
