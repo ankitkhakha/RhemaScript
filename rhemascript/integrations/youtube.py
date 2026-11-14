@@ -128,22 +128,41 @@ def _validate_analytics_report(result: Any, params: dict[str, Any]) -> dict[str,
     expected = [(name, "DIMENSION") for name in dimensions]
     expected.extend((name, "METRIC") for name in metrics)
     for header, (expected_name, expected_type) in zip(headers, expected):
-        if (not isinstance(header, dict) or header.get("name") != expected_name
-                or header.get("columnType") != expected_type
-                or not isinstance(header.get("dataType"), str)
-                or not header["dataType"]):
+        if not isinstance(header, dict) or header.get("name") != expected_name or header.get("columnType") != expected_type:
             raise YouTubeIntegrationError("YouTube Analytics report headers do not match the requested columns")
+        data_type = header.get("dataType")
+        allowed_types = {"STRING"} if expected_type == "DIMENSION" else {"INTEGER", "FLOAT", "CURRENCY"}
+        if not isinstance(data_type, str) or data_type not in allowed_types:
+            raise YouTubeIntegrationError("YouTube Analytics report contains an unsupported column dataType")
     rows = result.get("rows", [])
     if not isinstance(rows, list):
         raise YouTubeIntegrationError("YouTube Analytics report rows must be a list when present")
+    dimension_count = len(dimensions)
+    seen_dimension_tuples = set()
     for row in rows:
-        if (not isinstance(row, list) or len(row) != len(headers)
-                or any(value is not None and (
-                    not isinstance(value, (str, int, float))
-                    or isinstance(value, bool)
-                    or (isinstance(value, float) and not math.isfinite(value))
-                ) for value in row)):
+        if not isinstance(row, list) or len(row) != len(headers):
             raise YouTubeIntegrationError("YouTube Analytics report contains a malformed row")
+        for index, (value, header) in enumerate(zip(row, headers)):
+            data_type = header["dataType"]
+            if data_type == "STRING":
+                valid_value = isinstance(value, str)
+            elif data_type == "INTEGER":
+                valid_value = isinstance(value, int) and not isinstance(value, bool)
+            else:
+                valid_value = (
+                    isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value)
+                )
+            if not valid_value:
+                raise YouTubeIntegrationError(
+                    f"YouTube Analytics report value does not match column {header['name']} dataType"
+                )
+        dimension_tuple = tuple(row[:dimension_count])
+        if dimension_tuple in seen_dimension_tuples:
+            raise YouTubeIntegrationError(
+                "YouTube Analytics report contains a duplicate dimension-value combination"
+            )
+        seen_dimension_tuples.add(dimension_tuple)
     return result
 
 
