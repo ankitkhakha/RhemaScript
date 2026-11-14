@@ -300,7 +300,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
             path = Path(directory) / "audit.jsonl"
             legacy = self.event()
             legacy["timestamp_utc"] = "2026-11-14T09:00:00+00:00"
-            path.write_text(json.dumps(legacy) + "\\n")
+            path.write_text(json.dumps(legacy) + "\n")
             sink = JsonlAuditSink(path)
             sink(self.event(request_id="request-after-legacy"))
             records = [json.loads(line) for line in path.read_text().splitlines()]
@@ -318,7 +318,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
         for index, invalid in enumerate(invalid_records):
             with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "audit.jsonl"
-                path.write_text(json.dumps(invalid) + "\\n")
+                path.write_text(json.dumps(invalid) + "\n")
                 sink = JsonlAuditSink(path)
                 with self.assertRaisesRegex(AuditSinkError, "supported schema"):
                     sink(self.event(request_id=f"request-{index}"))
