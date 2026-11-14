@@ -796,7 +796,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(result["video_id"], "video-123")
         completed = context.registry.get_publish_session(
-            project_id="RS-TEST-001", project_version="2.0", request_id="publish-request-0001",
+            project_id="RS-TEST-001", project_version="1.0", request_id="publish-request-001",
         )
         self.assertEqual(completed["state"], "COMPLETE")
         self.assertEqual(completed["provider_resource_id"], "video-123")
