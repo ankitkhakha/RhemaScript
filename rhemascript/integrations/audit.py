@@ -145,8 +145,9 @@ class JsonlAuditSink:
                 file_size = os.fstat(descriptor).st_size
                 if file_size:
                     os.lseek(descriptor, -1, os.SEEK_END)
-                    if os.read(descriptor, 1) != b"\\n":
+                    if os.read(descriptor, 1) != b"\n":
                         raise AuditSinkError("audit log contains unterminated records; append is unsafe")
+                    os.lseek(descriptor, 0, os.SEEK_SET)
                 if completion_event_id is not None:
                     matching_indeterminate = False
                     matching_completed = False
