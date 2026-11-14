@@ -146,7 +146,7 @@ class JsonlAuditSink:
                     matching_completed = False
                     with os.fdopen(os.dup(descriptor), "rb") as existing_log:
                         for line in existing_log:
-                            if not line.endswith(b"\\n"):
+                            if not line.endswith(b"\n"):
                                 raise AuditSinkError("audit log contains unterminated records; idempotent recovery is unsafe")
                             try:
                                 existing = json.loads(line)
