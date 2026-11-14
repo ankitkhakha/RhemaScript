@@ -171,3 +171,17 @@ Measure append p50/p95/p99, lock wait time, segment rollover duration, index reb
 At baseline `218a51f`, the sink validates the entire existing file on every append while holding the file lock. It uses POSIX `flock`, file fsync, pinned-parent directory fsync, and strict event schema validation. Exact-head synthetic CI has validated the preceding append, path-anchoring, schema-version and metadata-validation changes. This design document does not establish a benchmark, production storage requirement, retention authority, or operational approval.
 
 **No code path, storage format, retention policy, or live provider behavior is changed by this document.**
+
+
+## Review addendum — legacy row-size compatibility gate (14-Nov-2026)
+
+A further source-to-design comparison identified a compatibility gap in the proposed resource bounds. The current reader accepts unversioned legacy schema-0 rows using compatibility validation. In that legacy mode, string values are type/field checked but the schema-v1 per-field string-length limits are deliberately not applied. Consequently, an existing legacy JSONL row can be larger than the proposed 64 KiB encoded-row ceiling. Python's line iterator and json.loads(line) also materialize the complete line before validation.
+
+The proposed 64 KiB row cap therefore cannot be applied retroactively to every historical row without an explicit compatibility decision. Phase A/B must include a read-only inventory of the existing log's maximum line length, total bytes, record count, and schema-version distribution. The design must then select and document one of these behaviors before any writer cutover:
+
+1. Set the accepted historical-row ceiling at or above the measured supported legacy maximum, and reject/quarantine only rows exceeding that approved envelope while preserving the original log byte-for-byte; or
+2. Define a separately reviewed streaming/legacy migration process that can preserve oversized historical rows without loading each entire row into memory, while retaining exact source-byte provenance and the existing schema-0 compatibility contract.
+
+No automatic truncation, rewrite, deletion, or rejection of existing rows is authorized. A legacy row above the approved ceiling must cause a fail-closed, non-destructive stop with the source log preserved for explicit operator review. The new schema-v1 writer's 64 KiB proposal remains a candidate only and must not be confused with the historical-read ceiling.
+
+Required test additions before implementation acceptance: fixtures for schema-0 rows below, at, and above the approved historical ceiling; proof that oversized historical data remains byte-for-byte preserved on rejection; bounded-memory/streaming behavior if option 2 is selected; and migration/rebuild equivalence for all legacy completion IDs. This is a design gate, not a code change or approval to migrate.
