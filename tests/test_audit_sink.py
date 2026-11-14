@@ -35,6 +35,22 @@ class JsonlAuditSinkTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    def test_append_fsyncs_file_and_parent_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            real_fsync = os.fsync
+            synced_directory_flags = []
+
+            def record_fsync(descriptor):
+                synced_directory_flags.append(stat.S_ISDIR(os.fstat(descriptor).st_mode))
+                return real_fsync(descriptor)
+
+            with patch("rhemascript.integrations.audit.os.fsync", side_effect=record_fsync) as sync:
+                sink(self.event())
+            self.assertEqual(sync.call_count, 2)
+            self.assertEqual(synced_directory_flags, [False, True])
+
     def test_completion_audit_event_is_idempotent_across_retries(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
@@ -58,11 +74,11 @@ class JsonlAuditSinkTests(unittest.TestCase):
                 provider_resource_id="video-123", completion_event_id="e" * 64,
             )
             with patch("rhemascript.integrations.audit.os.fsync",
-                       side_effect=[OSError("simulated fsync failure"), None]) as sync:
+                       side_effect=[OSError("simulated fsync failure"), None, None]) as sync:
                 with self.assertRaisesRegex(AuditSinkError, "durably persisted"):
                     sink(event)
                 sink(event)
-                self.assertEqual(sync.call_count, 2)
+                self.assertEqual(sync.call_count, 3)
             records = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual(len(records), 1)
 
