@@ -378,3 +378,8 @@ A follow-on exact-head review of PR #70 tightened two recovery boundaries:
 - Export and verification both enforce the 64 MiB archive bound. Verification remains read-only and does not restore or replace SQLite state.
 
 These changes are committed in dependent PR #70 at head \`ee26b820b650b1c726d086c3abe433dcb664d149\`. Exact-head source/test blobs were fetched; no local test execution or exact-head CI evidence is available. The current GitHub workflow-run/status integration returned no PR-triggered runs/statuses, and no CI pass is claimed for this head. PR #70 remains draft/unmerged and requires independent review. No provider request, OAuth expansion, deployment, rebase or merge occurred.
+
+
+### Process-restart approval re-verification correction — 14 November 2026
+
+A process-restart test exposed a mismatch in \`ApprovalVerifier.verify_many_existing_consumed\`: it compared \`identity_max_authentication_age_seconds\` and \`identity_clock_skew_seconds\` against consumed-record fields that the SQLite approval schema does not persist. Those values are derived by the verifier from its trusted identity policy and clock-skew configuration, not signed credential claims. The verifier now recomputes them from the signed V3 claims/current policy and compares only the actual persisted credential fields. The completed-result recovery regression now writes the consumed approval records, re-verifies them through \`verify_many_existing_consumed\`, and supplies the newly created resume-only objects to the recovery gateway. This is committed source/test evidence only; no tests were executed and exact-head CI remains unverified.
