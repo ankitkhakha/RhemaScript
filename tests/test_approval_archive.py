@@ -177,6 +177,50 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         self.assertEqual(result["publish_session_count"], 1)
 
 
+
+    def test_v5_archive_verifies_completed_publish_session_metadata(self):
+        fingerprint = "d" * 64
+        artifact_digest = "e" * 64
+        session_digest = "f" * 64
+        identity = dict(
+            project_id="project-complete", project_version="v2", request_id="request-complete",
+            approval_fingerprint=fingerprint, artifact_id="artifact-complete",
+            artifact_version="v2", artifact_sha256=artifact_digest,
+            artifact_size_bytes=1024,
+        )
+        self.assertTrue(self.store.reserve_publish_session(
+            **identity, owner_id="creator",
+        ))
+        self.assertTrue(self.store.bind_publish_session(
+            **identity, session_url_sha256=session_digest, owner_id="creator",
+        ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"], owner_id="creator",
+        ))
+        self.assertTrue(self.store.begin_publish_chunk(
+            **identity, session_url_sha256=session_digest, owner_id="uploader",
+            start=0, end=1023, total=1024, body_size=1024,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"], owner_id="uploader", status=201,
+            provider_resource_id="provider_resource_123",
+        ))
+        session = self.store.get_publish_session(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"],
+        )
+        self.assertTrue(self.store.finalize_publish_completion_audit(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"], owner_id="uploader",
+            completion_audit_id=session["completion_audit_id"],
+        ))
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        result = verify_checkpoint_archive(self.archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["publish_session_count"], 1)
+
     def test_legacy_v3_archive_remains_verifiable(self):
         legacy_store = SQLiteApprovalConsumptionStore(self.db_dir / "legacy.sqlite3")
         legacy_archive = self.archive_dir / "legacy-v3.json"
