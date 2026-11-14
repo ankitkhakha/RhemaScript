@@ -478,9 +478,14 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         authority = self.publish_authority("write-1")
         temporary, registry, vault = self.make_registry(authority, "write-1")
         self.addCleanup(temporary.cleanup)
+        audit_path = Path(temporary.name) / "indeterminate-audit.jsonl"
+        durable_audit = JsonlAuditSink(audit_path)
+        def record_event(event):
+            durable_audit(event)
+            events.append(event)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=AmbiguousTransport(),
-            audit_sink=events.append, publish_session_registry=registry, session_url_vault=vault, enabled=True,
+            audit_sink=record_event, publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
@@ -494,6 +499,9 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         state = registry.get_publish_session(project_id="RS-1", project_version="1.0", request_id="write-1")
         self.assertEqual(state["state"], "INDETERMINATE")
         self.assertNotIn("FAILED", [event["phase"] for event in events])
+        audit_records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertIn("INDETERMINATE", [record["phase"] for record in audit_records])
+        self.assertNotIn("uploadType=resumable", audit_path.read_text())
 
     def test_thumbnail_write_is_blocked_at_gateway_before_transport(self):
         transport = NeverTransport()
