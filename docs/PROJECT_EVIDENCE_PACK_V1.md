@@ -77,3 +77,8 @@ The V1 artifact catalog now accepts `YOUTUBE_ANALYTICS_SNAPSHOT` and `YOUTUBE_AN
 - When an analytics artifact is marked VERIFIED/APPROVED/ACCEPTED or is referenced by capability evidence, the existing byte-verification path additionally requires its `local_path` and file-byte `sha256`; the internal snapshot/comparison digest and the file-byte digest are separate identities.
 
 These catalog additions do not write files, fetch provider data, establish source authenticity, or mark artifacts verified. Snapshot creation remains offline and synthetic until the owner performs an authorized read-only provider retrieval. The JSON Schema and runtime validator both enforce the Analytics artifact metadata shape; runtime checks also resolve comparison source IDs to actual snapshot artifacts.
+
+
+## Validated-pack trust boundary — 14 November 2026
+
+`validate_evidence_pack` now validates a detached deep copy of the caller's manifest, so later mutations to the original input do not alter the returned `ValidatedEvidencePack`. The dataclass is frozen only at the outer level; its nested dictionaries remain mutable and the type is publicly constructible. Accordingly, `verify_pack_artifacts` rebuilds and structurally revalidates a detached manifest snapshot before byte verification. It does not trust the dataclass type or assume that validation performed earlier still applies to the current nested contents. A regression verifies both input detachment and rejection of a mutated validated pack. This is integrity validation only; it does not grant generation or publishing authority.
