@@ -3,6 +3,7 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from rhemascript.integrations.audit import AuditSinkError, JsonlAuditSink
@@ -47,6 +48,40 @@ class JsonlAuditSinkTests(unittest.TestCase):
             records = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["completion_event_id"], "a" * 64)
+
+    def test_completed_deduplication_retries_fsync_after_uncertain_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            event = self.event(
+                phase="COMPLETED", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="e" * 64,
+            )
+            with patch("rhemascript.integrations.audit.os.fsync",
+                       side_effect=[OSError("simulated fsync failure"), None]) as sync:
+                with self.assertRaisesRegex(AuditSinkError, "durably persisted"):
+                    sink(event)
+                sink(event)
+                self.assertEqual(sync.call_count, 2)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+
+    def test_indeterminate_deduplication_retries_fsync_after_uncertain_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            event = self.event(
+                phase="INDETERMINATE", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="f" * 64,
+            )
+            with patch("rhemascript.integrations.audit.os.fsync",
+                       side_effect=[OSError("simulated fsync failure"), None]) as sync:
+                with self.assertRaisesRegex(AuditSinkError, "durably persisted"):
+                    sink(event)
+                sink(event)
+                self.assertEqual(sync.call_count, 2)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
 
     def test_indeterminate_completion_record_does_not_suppress_recovered_completion(self):
         with tempfile.TemporaryDirectory() as directory:
