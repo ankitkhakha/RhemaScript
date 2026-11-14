@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from rhemascript.core.approval_store import ApprovalStoreError, SQLiteApprovalConsumptionStore
@@ -98,6 +99,12 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         link.symlink_to(self.archive)
         with self.assertRaisesRegex(ApprovalStoreError, "symbolic link"):
             verify_checkpoint_archive(link, key=self.key)
+
+    def test_export_rejects_archive_larger_than_verification_limit(self):
+        with patch("rhemascript.core.approval_archive.MAX_ARCHIVE_BYTES", 100):
+            with self.assertRaisesRegex(ApprovalStoreError, "exceeds the permitted size"):
+                export_checkpoint_archive(self.store, self.archive, key=self.key)
+        self.assertFalse(self.archive.exists())
 
     def test_archive_verification_rejects_oversized_file(self):
         from rhemascript.core.approval_archive import MAX_ARCHIVE_BYTES
