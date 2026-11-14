@@ -94,7 +94,7 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
                 return EvidenceVersion("SOURCE-1", "source.json", "1", "a" * 64, 1), object()
 
         with self.assertRaisesRegex(EvidencePackError, "did not return evidence issued by verify_artifact"):
-            run_evidence_pack(manifest, local_source_resolver=ForgedResolver())
+            run_evidence_pack(manifest, actor_role="TEST_HARNESS", local_source_resolver=ForgedResolver())
 
 
     def test_local_source_resolver_cannot_overstate_receipt_assurance(self):
@@ -127,7 +127,7 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
                     return version, replace(receipt, source_authentication="AUTHENTICATED")
 
             with self.assertRaisesRegex(EvidencePackError, "inconsistent source receipt"):
-                run_evidence_pack(manifest, local_source_resolver=ForgedReceiptResolver())
+                run_evidence_pack(manifest, actor_role="TEST_HARNESS", local_source_resolver=ForgedReceiptResolver())
 
     def test_analytics_snapshots_and_comparison_bind_exact_artifact_ids(self):
         manifest = make_pack()
