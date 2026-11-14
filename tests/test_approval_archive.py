@@ -374,5 +374,83 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         self.assertTrue(original_path.exists())
 
 
+    @unittest.skipUnless(os.name == "posix", "POSIX directory descriptor semantics required")
+    def test_export_rejects_parent_directory_replacement_and_preserves_new_entry(self):
+        original_directory = self.archive_dir.with_name("independent-archive-original")
+        replacement = b"replacement in new archive directory"
+        real_write = os.write
+        replaced = False
+
+        def replace_parent_after_open(descriptor, data):
+            nonlocal replaced
+            if not replaced:
+                self.archive_dir.rename(original_directory)
+                self.archive_dir.mkdir(mode=0o700)
+                os.chmod(self.archive_dir, 0o700)
+                replacement_path = self.archive_dir / self.archive.name
+                replacement_fd = os.open(
+                    replacement_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                )
+                try:
+                    real_write(replacement_fd, replacement)
+                finally:
+                    os.close(replacement_fd)
+                replaced = True
+            return real_write(descriptor, data)
+
+        with patch(
+            "rhemascript.core.approval_archive.os.write",
+            side_effect=replace_parent_after_open,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "archive directory changed during operation"
+            ):
+                export_checkpoint_archive(self.store, self.archive, key=self.key)
+
+        self.assertTrue(replaced)
+        self.assertEqual((self.archive_dir / self.archive.name).read_bytes(), replacement)
+        self.assertFalse((original_directory / self.archive.name).exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory descriptor semantics required")
+    def test_verify_rejects_parent_directory_replacement_during_read(self):
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        original_directory = self.archive_dir.with_name("independent-archive-original")
+        replacement = b"replacement in new archive directory"
+        real_read = os.read
+        real_write = os.write
+        replaced = False
+
+        def replace_parent_after_read(descriptor, size):
+            nonlocal replaced
+            chunk = real_read(descriptor, size)
+            if chunk and not replaced:
+                self.archive_dir.rename(original_directory)
+                self.archive_dir.mkdir(mode=0o700)
+                os.chmod(self.archive_dir, 0o700)
+                replacement_path = self.archive_dir / self.archive.name
+                replacement_fd = os.open(
+                    replacement_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                )
+                try:
+                    real_write(replacement_fd, replacement)
+                finally:
+                    os.close(replacement_fd)
+                replaced = True
+            return chunk
+
+        with patch(
+            "rhemascript.core.approval_archive.os.read",
+            side_effect=replace_parent_after_read,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "archive directory changed during operation"
+            ):
+                verify_checkpoint_archive(self.archive, key=self.key)
+
+        self.assertTrue(replaced)
+        self.assertEqual((self.archive_dir / self.archive.name).read_bytes(), replacement)
+        self.assertTrue((original_directory / self.archive.name).exists())
+
+
 if __name__ == "__main__":
     unittest.main()
