@@ -163,3 +163,29 @@ Historical examples using `human_director_acceptance` or `publishing_authorisati
 ### Analytics evidence hand-off — provenance requirement
 
 The Analytics client returns a report response; it does not by itself create verified CAP-15 evidence. A future adapter must bind the exact retained report bytes to a verified evidence version, the actual request parameters, exact video ID, and RhemaScript production version. A caller-supplied video filter or evidence-reference string alone is not proof that the report came from that query. Until that binding exists, Analytics observations are descriptive inputs only, not independently verified training evidence. Correlation must not be presented as causation.
+
+
+### Completed resumable-upload result recovery — WRK-103
+
+For resumable upload chunk/status responses returning HTTP 200 or 201, the IF-18 gateway now parses and validates the provider resource ID before committing completion. The ID, response status, deterministic completion-audit ID and audit-pending state are persisted atomically with COMPLETE in the SQLite publish-session registry. The registry schema/checkpoint is V5 so the completion result is covered by the authenticated snapshot. A successful completion without a valid resource ID is marked indeterminate and must not be retried.
+
+When the client encounters an existing COMPLETE session, it revalidates the existing approval and exact artifact binding, then returns the durable provider resource ID. It does not create another upload session, contact the provider, or request a fresh OAuth token. If the completion audit is pending, recovery is claimed under a lease; another owner cannot take over until the prior lease expires. The stable completion event ID lets the built-in JSONL audit sink deduplicate a repeated append under a cross-process lock. The audit flag and lease release are committed only after the audit sink succeeds.
+
+Old completed records created before V5 may lack a provider resource ID and cannot be reconstructed automatically from the old database fields; they remain fail-closed for manual reconciliation. This work does not authorize live provider writes and does not close the separate ambiguous CREATING-before-URL-binding gap. Independent review and production authorization/key-custody gates remain mandatory.
+
+Exact candidate code commit: c9525f11e4c14ee3c392fe1dd237ab1ce236584e. Full synthetic CI: exact code commit c9525f11e4c14ee3c392fe1dd237ab1ce236584e passed run #2241 / 43559042451; final documentation-inclusive PR head bb9caaaa101ccb86b6c90a7ab5cf553b7429f9cf passed run #2243 / 43559104393. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
+
+
+### Recovery provenance and checkpoint archive validation — 14 November 2026
+
+Completed-result recovery now requires exactly two exact verifier-issued, durably consumed approval objects (\`is_consumed_verified_approval\`) before it compares the durable approval fingerprint or returns the provider resource ID. A copied or manually constructed object is rejected. After process restart, the caller must re-establish the consumed objects through the existing consumed-approval verification flow; merely reproducing the fields/fingerprint is insufficient.
+
+The archive verifier now supports and validates V3/V4/V5 checkpoint rows, including populated V5 publish-session records, legacy V3/V4 compatibility, malformed but correctly HMAC-authenticated payload rejection, and completion metadata consistency. The exporter also rejects encoded archives over the same 64 MiB bound enforced by verification. Archive verification remains read-only; no automatic restore is implemented.
+
+PR #70 candidate head \`ee26b820b650b1c726d086c3abe433dcb664d149\` is open, draft and unmerged. Exact-head source/test blobs have been fetched, but tests have not been executed and exact-head CI is unverified. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
+
+
+A process-restart regression also verifies the consumed-approval re-verification path. The verifier no longer compares policy-derived authentication-age/clock-skew values against nonexistent SQLite columns; it recomputes those values from the signed V3 claims and current trusted identity policy, while still matching all persisted credential and identity fields. Recovery uses the newly re-verified resume-only approval objects, not copied or manually constructed objects. This change is committed but not test-executed; exact-head CI remains unverified.
+
+
+**Expiry/key-state limitation:** after a process restart, re-verification through \`verify_many_existing_consumed\` currently re-applies credential expiry, current identity-authentication freshness and key-registry active-status checks. If the approval has expired, identity authentication is stale under current policy, or the key is no longer active, automatic recovery fails closed and requires manual reconciliation. No historical-expiry bypass is implemented. Whether a completed result with no provider call should permit historical signature + durable consumed/non-revoked-record verification after expiry is an explicit approval/security policy decision, not assumed by this candidate.
