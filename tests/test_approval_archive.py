@@ -138,9 +138,10 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
             verify_checkpoint_archive(self.archive, key=self.key)
 
 
-    def _write_authenticated_payload(self, payload):
+    def _write_authenticated_payload(self, payload, *, canonical=True):
         import rhemascript.core.approval_archive as archive_module
-        snapshot = archive_module._canonical(payload)
+        snapshot = (archive_module._canonical(payload) if canonical
+                    else json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         signed = {
             "schema": "RhemaScript.ApprovalCheckpointArchive.v1",
             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -240,6 +241,17 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         result = verify_checkpoint_archive(self.archive, key=self.key)
         self.assertTrue(result["archive_valid"])
         self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v4")
+
+
+    def test_archive_rejects_authenticated_noncanonical_snapshot_json(self):
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
+            "consumed": [],
+            "revoked": [],
+            "publish_sessions": [],
+        }, canonical=False)
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
 
     def test_archive_rejects_authenticated_consumed_row_with_wrong_width(self):
         self._write_authenticated_payload({
