@@ -94,6 +94,8 @@ def export_checkpoint_archive(
     envelope = dict(signed_fields)
     envelope["hmac_sha256"] = hmac.new(key, _canonical(signed_fields), hashlib.sha256).hexdigest()
     encoded = _canonical(envelope)
+    if len(encoded) > MAX_ARCHIVE_BYTES:
+        raise ApprovalStoreError("checkpoint archive exceeds the permitted size")
 
     flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -192,10 +194,21 @@ def verify_checkpoint_archive(
         if not hmac.compare_digest(expected_mac, str(envelope["hmac_sha256"])):
             raise ValueError
         payload = json.loads(snapshot.decode("utf-8"))
-        if (not isinstance(payload, dict)
-                or payload.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v3"
-                or not isinstance(payload.get("consumed"), list)
-                or not isinstance(payload.get("revoked"), list)):
+        if not isinstance(payload, dict):
+            raise ValueError
+        payload_schema = payload.get("schema")
+        if payload_schema == "RhemaScript.ApprovalStateCheckpoint.v3":
+            if (set(payload) != {"schema", "consumed", "revoked"}
+                    or not isinstance(payload.get("consumed"), list)
+                    or not isinstance(payload.get("revoked"), list)):
+                raise ValueError
+        elif payload_schema == "RhemaScript.ApprovalStateCheckpoint.v4":
+            if (set(payload) != {"schema", "consumed", "revoked", "publish_sessions"}
+                    or not isinstance(payload.get("consumed"), list)
+                    or not isinstance(payload.get("revoked"), list)
+                    or not isinstance(payload.get("publish_sessions"), list)):
+                raise ValueError
+        else:
             raise ValueError
     except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         raise ApprovalStoreError("checkpoint archive is malformed or authentication failed") from None
@@ -213,6 +226,7 @@ def verify_checkpoint_archive(
         "snapshot_sha256": digest,
         "consumed_count": len(payload["consumed"]),
         "revoked_count": len(payload["revoked"]),
+        "publish_session_count": len(payload.get("publish_sessions", [])),
         "matches_current_state": matches_current,
         "recovery_mode": "verified-export-only; no automatic database restore",
     }
