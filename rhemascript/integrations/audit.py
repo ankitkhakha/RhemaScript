@@ -157,12 +157,17 @@ class JsonlAuditSink:
                                     raise AuditSinkError("completion event ID already exists with a different provider result")
                                 existing_phase = existing.get("phase")
                                 if existing_phase == "COMPLETED":
+                                    # A prior fsync may have failed after the record became visible.
+                                    # Re-sync before treating the existing record as durable.
+                                    os.fsync(descriptor)
                                     return
                                 if existing_phase == "INDETERMINATE":
                                     matching_indeterminate = True
                                 else:
                                     raise AuditSinkError("completion event ID exists in an unexpected audit phase")
                     if record_data["phase"] == "INDETERMINATE" and matching_indeterminate:
+                        # Do not turn a previously failed fsync into a false durability success.
+                        os.fsync(descriptor)
                         return
                 view = memoryview(record)
                 while view:
