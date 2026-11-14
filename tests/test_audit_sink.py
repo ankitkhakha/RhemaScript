@@ -287,6 +287,18 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "numeric field"):
                 sink(self.event(phase="COMPLETED", acknowledged_offset=2**63))
 
+    def test_rejects_empty_audit_destination(self):
+        with self.assertRaisesRegex(AuditSinkError, "must name a file"):
+            JsonlAuditSink("")
+
+    def test_closed_audit_sink_rejects_future_appends(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
+            sink.close()
+            sink.close()
+            with self.assertRaisesRegex(AuditSinkError, "audit sink is closed"):
+                sink(self.event())
+
     def test_requires_existing_parent_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing" / "audit.jsonl"
