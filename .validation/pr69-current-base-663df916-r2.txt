@@ -1,0 +1,1 @@
+Temporary CI trigger marker. Combined tree: PR #62 head 663df916 plus PR #69's 21 changed paths, including the actor_role test fix from e15d7a6a. Validation-only; do not merge or deploy.
