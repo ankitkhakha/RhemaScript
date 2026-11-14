@@ -58,6 +58,197 @@ def _validate_key(key: bytes) -> None:
         raise ValueError("archive authentication key must contain at least 32 bytes")
 
 
+
+def _aware_timestamp(value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+def _nonempty_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _sha256_text(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _validate_consumed_rows(rows: list[object]) -> None:
+    identity_keys = {
+        "subject_id", "actor_role", "authn_context", "authenticated_at",
+        "identity_session_id", "identity_policy_version", "identity_provider_id",
+    }
+    approval_ids: set[str] = set()
+    nonces: set[str] = set()
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 19:
+            raise ValueError
+        if any(not _nonempty_text(row[index]) for index in (0, 1, 2, 3, 4, 5, 6, 7, 10)):
+            raise ValueError
+        if not all(_aware_timestamp(row[index]) for index in (8, 9, 11)):
+            raise ValueError
+        if row[0] in approval_ids or row[1] in nonces:
+            raise ValueError
+        approval_ids.add(row[0])
+        nonces.add(row[1])
+
+        artifact = row[12:16]
+        if any(value is not None for value in artifact):
+            if (not all(_nonempty_text(value) for value in artifact[:3])
+                    or not _sha256_text(artifact[2])
+                    or not isinstance(artifact[3], int)
+                    or isinstance(artifact[3], bool) or artifact[3] <= 0):
+                raise ValueError
+
+        credential_schema, signature, identity_json = row[16:19]
+        if (credential_schema is None) != (signature is None):
+            raise ValueError
+        if credential_schema is not None:
+            if (credential_schema not in {
+                "RhemaScript.ApprovalCredential.v1",
+                "RhemaScript.ApprovalCredential.v2",
+                "RhemaScript.ApprovalCredential.v3",
+            } or not isinstance(signature, str)
+                    or re.fullmatch(r"[0-9a-f]{128}", signature) is None):
+                raise ValueError
+        if identity_json is None:
+            identity = {}
+        else:
+            if not isinstance(identity_json, str):
+                raise ValueError
+            identity = json.loads(identity_json)
+            if not isinstance(identity, dict) or set(identity) != identity_keys:
+                raise ValueError
+        if credential_schema == "RhemaScript.ApprovalCredential.v3":
+            if any(not _nonempty_text(identity.get(key)) for key in identity_keys - {"authenticated_at"}):
+                raise ValueError
+            if not _aware_timestamp(identity.get("authenticated_at")):
+                raise ValueError
+        elif any(value is not None for value in identity.values()):
+            raise ValueError
+
+
+def _validate_revoked_rows(rows: list[object]) -> None:
+    approval_ids: set[str] = set()
+    nonces: set[str] = set()
+    for row in rows:
+        if (not isinstance(row, list) or len(row) != 5
+                or not _nonempty_text(row[0]) or not _nonempty_text(row[1])
+                or not _aware_timestamp(row[2]) or not _nonempty_text(row[3])
+                or not _nonempty_text(row[4]) or len(row[3]) > 256 or len(row[4]) > 128
+                or row[0] in approval_ids or row[1] in nonces):
+            raise ValueError
+        approval_ids.add(row[0])
+        nonces.add(row[1])
+
+
+def _validate_publish_session_rows(rows: list[object], *, schema: str) -> None:
+    expected_width = 17 if schema == "RhemaScript.ApprovalStateCheckpoint.v4" else 21
+    identities: set[tuple[str, str, str]] = set()
+    fingerprints: set[str] = set()
+    url_digests: set[str] = set()
+    allowed_states = {
+        "CREATING", "ACTIVE", "CHUNK_IN_FLIGHT", "RECONCILING",
+        "INDETERMINATE", "COMPLETE", "FAILED",
+    }
+    for row in rows:
+        if not isinstance(row, list) or len(row) != expected_width:
+            raise ValueError
+        if any(not _nonempty_text(row[index]) for index in (0, 1, 2, 4, 5)):
+            raise ValueError
+        identity = (row[0], row[1], row[2])
+        if identity in identities:
+            raise ValueError
+        identities.add(identity)
+        if (not _sha256_text(row[3]) or row[3] in fingerprints
+                or not _sha256_text(row[6])
+                or not isinstance(row[7], int) or isinstance(row[7], bool) or row[7] <= 0):
+            raise ValueError
+        fingerprints.add(row[3])
+        if row[8] is not None:
+            if not _sha256_text(row[8]) or row[8] in url_digests:
+                raise ValueError
+            url_digests.add(row[8])
+        if row[9] not in allowed_states:
+            raise ValueError
+        size, offset = row[7], row[10]
+        if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= size:
+            raise ValueError
+        if (row[11] is None) != (row[12] is None):
+            raise ValueError
+        if row[11] is not None:
+            if (not isinstance(row[11], int) or isinstance(row[11], bool)
+                    or not isinstance(row[12], int) or isinstance(row[12], bool)
+                    or not 0 <= row[11] <= row[12] < size):
+                raise ValueError
+        if (row[13] is None) != (row[14] is None):
+            raise ValueError
+        if row[13] is not None and (not _nonempty_text(row[13]) or not _aware_timestamp(row[14])):
+            raise ValueError
+        if not _aware_timestamp(row[15]) or not _aware_timestamp(row[16]):
+            raise ValueError
+        if expected_width == 21:
+            resource_id, status, audit_id, audited = row[17:21]
+            if resource_id is not None and (
+                not isinstance(resource_id, str)
+                or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id) is None
+            ):
+                raise ValueError
+            if status is not None and (
+                not isinstance(status, int) or isinstance(status, bool) or status not in (200, 201)
+            ):
+                raise ValueError
+            if audit_id is not None and not _sha256_text(audit_id):
+                raise ValueError
+            if not isinstance(audited, int) or isinstance(audited, bool) or audited not in (0, 1):
+                raise ValueError
+            completion_fields = (resource_id, status, audit_id)
+            if any(value is not None for value in completion_fields) and not all(
+                value is not None for value in completion_fields
+            ):
+                raise ValueError
+            if row[9] == "COMPLETE" and (
+                resource_id is None or status not in (200, 201) or audit_id is None
+                or offset != size
+            ):
+                raise ValueError
+
+
+def _validate_snapshot_payload(payload: object) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise ValueError
+    schema = payload.get("schema")
+    if schema == "RhemaScript.ApprovalStateCheckpoint.v3":
+        if set(payload) != {"schema", "consumed", "revoked"}:
+            raise ValueError
+    elif schema in {
+        "RhemaScript.ApprovalStateCheckpoint.v4",
+        "RhemaScript.ApprovalStateCheckpoint.v5",
+    }:
+        if set(payload) != {"schema", "consumed", "revoked", "publish_sessions"}:
+            raise ValueError
+    else:
+        raise ValueError
+    consumed, revoked = payload.get("consumed"), payload.get("revoked")
+    if not isinstance(consumed, list) or not isinstance(revoked, list):
+        raise ValueError
+    _validate_consumed_rows(consumed)
+    _validate_revoked_rows(revoked)
+    if schema in {
+        "RhemaScript.ApprovalStateCheckpoint.v4",
+        "RhemaScript.ApprovalStateCheckpoint.v5",
+    }:
+        sessions = payload.get("publish_sessions")
+        if not isinstance(sessions, list):
+            raise ValueError
+        _validate_publish_session_rows(sessions, schema=schema)
+    return payload
+
+
 def export_checkpoint_archive(
     store: SQLiteApprovalConsumptionStore,
     destination: str | os.PathLike[str],
@@ -193,26 +384,8 @@ def verify_checkpoint_archive(
         expected_mac = hmac.new(key, _canonical(signed_fields), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected_mac, str(envelope["hmac_sha256"])):
             raise ValueError
-        payload = json.loads(snapshot.decode("utf-8"))
-        if not isinstance(payload, dict):
-            raise ValueError
-        payload_schema = payload.get("schema")
-        if payload_schema == "RhemaScript.ApprovalStateCheckpoint.v3":
-            if (set(payload) != {"schema", "consumed", "revoked"}
-                    or not isinstance(payload.get("consumed"), list)
-                    or not isinstance(payload.get("revoked"), list)):
-                raise ValueError
-        elif payload_schema in {
-            "RhemaScript.ApprovalStateCheckpoint.v4",
-            "RhemaScript.ApprovalStateCheckpoint.v5",
-        }:
-            if (set(payload) != {"schema", "consumed", "revoked", "publish_sessions"}
-                    or not isinstance(payload.get("consumed"), list)
-                    or not isinstance(payload.get("revoked"), list)
-                    or not isinstance(payload.get("publish_sessions"), list)):
-                raise ValueError
-        else:
-            raise ValueError
+        payload = _validate_snapshot_payload(json.loads(snapshot.decode("utf-8")))
+        payload_schema = payload["schema"]
     except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         raise ApprovalStoreError("checkpoint archive is malformed or authentication failed") from None
 
