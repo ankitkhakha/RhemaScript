@@ -546,11 +546,6 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
-            with sqlite3.connect(registry.path) as db:
-                db.execute(
-                    "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
-                    ("2000-01-01T00:00:00+00:00", first.request_id),
-                )
             calls = {"count": 0}
             def crash_after_durable_audit(event):
                 sink(event)
@@ -561,6 +556,23 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 (), audit_sink=crash_after_durable_audit,
                 publish_session_registry=registry, session_url_vault=vault,
             )
+            with self.assertRaisesRegex(ExternalIntegrationError, "waiting for the previous owner lease to expire"):
+                first_gateway.recover_completed_publish_result(
+                    project_id=first.project_id, project_version=first.project_version,
+                    request_id=first.request_id, verified_approvals=approvals,
+                    artifact_binding={
+                        "artifact_id": first.artifact_id,
+                        "artifact_version": first.artifact_version,
+                        "artifact_sha256": first.artifact_sha256,
+                        "artifact_size_bytes": first.artifact_size_bytes,
+                    },
+                )
+            self.assertFalse((Path(directory) / "audit.jsonl").exists())
+            with sqlite3.connect(registry.path) as db:
+                db.execute(
+                    "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                    ("2000-01-01T00:00:00+00:00", first.request_id),
+                )
             with self.assertRaisesRegex(ExternalIntegrationError, "audit could not be recovered"):
                 first_gateway.recover_completed_publish_result(
                     project_id=first.project_id, project_version=first.project_version,

@@ -685,6 +685,34 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
             )
         self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
 
+    def test_v5_checkpoint_covers_completed_provider_result_and_audit_state(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=9, total=10,
+            body_size=10, lease_seconds=60,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", status=201, provider_resource_id="video-checkpoint-1",
+        ))
+        key = b"publish-session-checkpoint-key-32-bytes!"
+        checkpoint = self.store.checkpoint(key)
+        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v5")
+        self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET provider_resource_id=? WHERE request_id=?",
+                ("video-substituted", "REQUEST-1"),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE publish_sessions SET provider_resource_id=?, completion_audited=1 WHERE request_id=?",
+                ("video-checkpoint-1", "REQUEST-1"),
+            )
+        self.assertFalse(self.store.verify_checkpoint(checkpoint, key))
+
     def test_registry_rejects_approval_only_v3_checkpoint(self):
         base = SQLiteApprovalConsumptionStore(self.path)
         key = b"publish-session-checkpoint-key-32-bytes!"
@@ -693,7 +721,7 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.assertFalse(registry.verify_checkpoint(legacy, key))
         self.assertTrue(base.verify_checkpoint(legacy, key))
 
-    def test_backup_restore_preserves_publish_session_and_v4_checkpoint(self):
+    def test_backup_restore_preserves_publish_session_and_v5_checkpoint(self):
         self.reserve_and_bind()
         args = {**self.identity, "session_url_sha256": self.url_digest}
         self.assertTrue(self.store.begin_publish_chunk(
