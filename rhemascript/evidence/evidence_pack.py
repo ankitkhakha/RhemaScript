@@ -1,6 +1,7 @@
 """Validated project evidence packs. Evidence organisation only; no authority is granted."""
 from __future__ import annotations
 from dataclasses import dataclass
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from rhemascript.orchestration.creative_production import CreativeProductionOrchestrator, OrchestrationResult
@@ -112,6 +113,10 @@ def _validate_graph(artifacts: dict[str, dict[str, Any]], links: list[dict[str, 
 def validate_evidence_pack(pack: dict[str, Any]) -> ValidatedEvidencePack:
     if not isinstance(pack, dict):
         raise EvidencePackError("evidence pack must be an object")
+    try:
+        pack = deepcopy(pack)
+    except Exception as exc:
+        raise EvidencePackError("evidence pack could not be detached for validation") from exc
     missing = REQUIRED_FIELDS - pack.keys()
     if missing:
         raise EvidencePackError("missing required fields: " + ", ".join(sorted(missing)))
