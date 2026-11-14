@@ -210,9 +210,9 @@ class JsonlAuditSinkTests(unittest.TestCase):
     def test_rejects_duplicate_json_members_in_historical_audit_rows(self):
         duplicate_rows = (
             b'{"interface_id":"IF-18","interface_id":"IF-99","provider":"youtube",'
-            b'"request_id":"request-1","operation":"CHANNEL_READ","phase":"REQUESTED"}\\n',
+            b'"request_id":"request-1","operation":"CHANNEL_READ","phase":"REQUESTED"}\n',
             b'{"interface_id":"IF-18","provider":"youtube","request_id":"request-1",'
-            b'"operation":"CHANNEL_READ","phase":"REQUESTED","metadata":{"actor":"reader","actor":"admin"}}\\n',
+            b'"operation":"CHANNEL_READ","phase":"REQUESTED","metadata":{"actor":"reader","actor":"admin"}}\n',
         )
         for index, row in enumerate(duplicate_rows):
             with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
