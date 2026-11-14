@@ -183,3 +183,6 @@ Completed-result recovery now requires exactly two exact verifier-issued, durabl
 The archive verifier now supports and validates V3/V4/V5 checkpoint rows, including populated V5 publish-session records, legacy V3/V4 compatibility, malformed but correctly HMAC-authenticated payload rejection, and completion metadata consistency. The exporter also rejects encoded archives over the same 64 MiB bound enforced by verification. Archive verification remains read-only; no automatic restore is implemented.
 
 PR #70 candidate head \`ee26b820b650b1c726d086c3abe433dcb664d149\` is open, draft and unmerged. Exact-head source/test blobs have been fetched, but tests have not been executed and exact-head CI is unverified. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
+
+
+A process-restart regression also verifies the consumed-approval re-verification path. The verifier no longer compares policy-derived authentication-age/clock-skew values against nonexistent SQLite columns; it recomputes those values from the signed V3 claims and current trusted identity policy, while still matching all persisted credential and identity fields. Recovery uses the newly re-verified resume-only approval objects, not copied or manually constructed objects. This change is committed but not test-executed; exact-head CI remains unverified.
