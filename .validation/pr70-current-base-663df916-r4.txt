@@ -1,0 +1,1 @@
+Temporary CI trigger marker. Combined tree is PR #62 head 663df916 plus PR #70's 14 changed paths. Audit tests now use valid SHA-256 fixtures, correct fsync counts, and a single newline escape for malformed JSON. Validation-only; do not merge or deploy.
