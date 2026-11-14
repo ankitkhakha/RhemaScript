@@ -174,3 +174,12 @@ When the client encounters an existing COMPLETE session, it revalidates the exis
 Old completed records created before V5 may lack a provider resource ID and cannot be reconstructed automatically from the old database fields; they remain fail-closed for manual reconciliation. This work does not authorize live provider writes and does not close the separate ambiguous CREATING-before-URL-binding gap. Independent review and production authorization/key-custody gates remain mandatory.
 
 Exact candidate code commit: c9525f11e4c14ee3c392fe1dd237ab1ce236584e. Full synthetic CI: exact code commit c9525f11e4c14ee3c392fe1dd237ab1ce236584e passed run #2241 / 43559042451; final documentation-inclusive PR head bb9caaaa101ccb86b6c90a7ab5cf553b7429f9cf passed run #2243 / 43559104393. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
+
+
+### Recovery provenance and checkpoint archive validation — 14 November 2026
+
+Completed-result recovery now requires exactly two exact verifier-issued, durably consumed approval objects (\`is_consumed_verified_approval\`) before it compares the durable approval fingerprint or returns the provider resource ID. A copied or manually constructed object is rejected. After process restart, the caller must re-establish the consumed objects through the existing consumed-approval verification flow; merely reproducing the fields/fingerprint is insufficient.
+
+The archive verifier now supports and validates V3/V4/V5 checkpoint rows, including populated V5 publish-session records, legacy V3/V4 compatibility, malformed but correctly HMAC-authenticated payload rejection, and completion metadata consistency. The exporter also rejects encoded archives over the same 64 MiB bound enforced by verification. Archive verification remains read-only; no automatic restore is implemented.
+
+PR #70 candidate head \`ee26b820b650b1c726d086c3abe433dcb664d149\` is open, draft and unmerged. Exact-head source/test blobs have been fetched, but tests have not been executed and exact-head CI is unverified. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
