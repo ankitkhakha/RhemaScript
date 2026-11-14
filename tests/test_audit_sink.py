@@ -146,6 +146,16 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(event)
 
+    def test_noncompletion_append_rejects_unterminated_existing_tail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            sink(self.event())
+            with path.open("ab") as log:
+                log.write(b'{"valid":"json-but-no-newline"}')
+            with self.assertRaisesRegex(AuditSinkError, "append is unsafe"):
+                sink(self.event(request_id="request-2"))
+
     def test_deduplication_rejects_valid_json_without_record_terminator(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
