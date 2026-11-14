@@ -356,7 +356,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
                 JsonlAuditSink(alias / "audit.jsonl")
 
     @unittest.skipUnless(os.name == "posix", "POSIX directory descriptors required")
-    def test_directory_replacement_does_not_redirect_audit_append(self):
+    def test_directory_replacement_does_not_redirect_append_or_directory_fsync(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             parent = root / "private"
@@ -365,9 +365,23 @@ class JsonlAuditSinkTests(unittest.TestCase):
             sink = JsonlAuditSink(parent / "audit.jsonl")
             parent.rename(moved)
             parent.mkdir(mode=0o700)
-            sink(self.event())
+            real_fsync = os.fsync
+            synced_directories = []
+
+            def record_fsync(descriptor):
+                info = os.fstat(descriptor)
+                if stat.S_ISDIR(info.st_mode):
+                    synced_directories.append((info.st_dev, info.st_ino))
+                return real_fsync(descriptor)
+
+            with patch("rhemascript.integrations.audit.os.fsync", side_effect=record_fsync):
+                sink(self.event())
+            pinned_identity = (moved.stat().st_dev, moved.stat().st_ino)
+            replacement_identity = (parent.stat().st_dev, parent.stat().st_ino)
             self.assertTrue((moved / "audit.jsonl").is_file())
             self.assertFalse((parent / "audit.jsonl").exists())
+            self.assertIn(pinned_identity, synced_directories)
+            self.assertNotIn(replacement_identity, synced_directories)
             sink.close()
 
     @unittest.skipUnless(os.name == "posix", "POSIX flock semantics required")
