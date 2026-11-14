@@ -28,7 +28,7 @@ _ALLOWED_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
-    "timestamp_utc", "provider_resource_id", "completion_event_id", "schema_version",
+    "timestamp_utc", "provider_resource_id", "completion_event_id",
     "approval_fingerprint", "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes", "status_reconciliation",
     "session_url_sha256", "publish_session_state", "chunk_start", "chunk_end",
     "chunk_total_bytes", "acknowledged_offset", "schema_version",
@@ -44,7 +44,7 @@ _SAFE_STRING_FIELDS = {
 }
 _SAFE_INTEGER_FIELDS = {
     "request_bytes", "response_bytes", "http_status", "artifact_size_bytes", "chunk_start", "chunk_end",
-    "chunk_total_bytes", "acknowledged_offset",
+    "chunk_total_bytes", "acknowledged_offset", "schema_version",
 }
 _SAFE_BOOLEAN_FIELDS = {"status_reconciliation"}
 _STRING_MAX_LENGTHS = {
