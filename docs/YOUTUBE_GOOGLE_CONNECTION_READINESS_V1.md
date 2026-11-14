@@ -47,17 +47,19 @@ Do not place client secrets, refresh tokens, access tokens, downloaded OAuth cli
 
 ## 4. Requested OAuth scopes
 
-The broader client feature contract references these scopes, but they are not a blanket request and must not be granted together by default:
+Scopes are operation-specific and must not be granted together by default:
 
-| Scope | Intended use |
+| Scope | Intended use in this integration |
 |---|---|
-| \`https://www.googleapis.com/auth/youtube.upload\` | Upload videos |
-| \`https://www.googleapis.com/auth/youtube.readonly\` | Read channel/video information |
-| \`https://www.googleapis.com/auth/yt-analytics.readonly\` | Read YouTube Analytics reports |
+| `https://www.googleapis.com/auth/youtube.upload` | Video uploads; separate from all read operations |
+| `https://www.googleapis.com/auth/youtube.readonly` | Channel/video reads and the current method-specific authorization requirement for YouTube Analytics `reports.query` |
+| `https://www.googleapis.com/auth/yt-analytics.readonly` | Listed in Google's general YouTube Analytics API scope table; do not request it automatically for this repository's channel-scoped `reports.query` use |
 
-**Current granted scope:** `youtube.readonly` only. The read-only bootstrap requests exactly that one scope. Upload and Analytics scopes are not granted by the completed connection. Request any additional scope only after a separate owner decision, a documented feature need, and a distinct least-privilege OAuth flow. A later upload capability requires the upload scope and separate RhemaScript publishing authority; analytics requires its own read-only scope and approval.
+**Current granted scope:** `youtube.readonly` only. The read-only bootstrap requests exactly that one scope. The current Google `reports.query` reference explicitly states that requests to this method now require `youtube.readonly`. The same page also lists `yt-analytics.readonly` in its general scope table and retains older sample code using that scope. For the channel-scoped `reports.query` operation implemented here, follow the current method-specific requirement and preserve the already granted `youtube.readonly` scope; do not request a second Analytics scope without a demonstrated need from another selected API operation.
 
-Google may change scope classification, verification or consent requirements. The owner must review the current Google OAuth documentation and consent screen before granting access.
+Source checked 13 November 2026: https://developers.google.com/youtube/analytics/reference/reports/query
+
+A later upload capability still requires the upload scope and separate RhemaScript publishing authority. A successful read-only grant never authorises uploads, thumbnail writes, or publication.
 
 ## 5. Obtain and protect the refresh token
 
@@ -149,8 +151,7 @@ Implemented in PR #28 and subsequent reviewed changes:
 
 Not yet performed or verified:
 - Independent re-verification of Google Cloud project settings, API enablement, billing/quota review or consent configuration.
-- Upload-scope or Analytics-scope OAuth consent/token acquisition.
-- Live analytics query.
+- Live Analytics `reports.query` execution (not attempted; no channel performance data has been retrieved).
 - Live upload or thumbnail write.
 - Public or scheduled publication.
 - Deployment, merge or production activation.
