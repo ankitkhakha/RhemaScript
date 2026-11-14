@@ -1,6 +1,7 @@
 """Safe, offline persistence for verified YouTube Analytics evidence objects."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -79,6 +80,13 @@ def _open_parent(root: str | os.PathLike[str], relative_path: str) -> tuple[int,
             if not stat.S_ISDIR(os.fstat(child_fd).st_mode):
                 raise YouTubeAnalyticsArtifactStoreError("artifact parent is not a directory")
             parent_fd = child_fd
+        if os.name == "posix":
+            for descriptor in opened:
+                info = os.fstat(descriptor)
+                if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o022:
+                    raise YouTubeAnalyticsArtifactStoreError(
+                        "evidence directories must be owned by the current user and not group/world writable"
+                    )
         return parent_fd, rel.parts[-1], opened
     except OSError:
         for fd in reversed(opened):
@@ -172,6 +180,7 @@ def persist_analytics_evidence_artifact(
     parent_fd, filename, opened = _open_parent(evidence_root, relative_path)
     file_fd: int | None = None
     created = False
+    created_identity: tuple[int, int] | None = None
     verified = None
     failure: Exception | None = None
     try:
@@ -182,6 +191,10 @@ def persist_analytics_evidence_artifact(
             dir_fd=parent_fd,
         )
         created = True
+        created_info = os.fstat(file_fd)
+        created_identity = (created_info.st_dev, created_info.st_ino)
+        if not stat.S_ISREG(created_info.st_mode):
+            raise YouTubeAnalyticsArtifactStoreError("new evidence destination is not a regular file")
         view = memoryview(content)
         while view:
             written = os.write(file_fd, view)
@@ -193,6 +206,17 @@ def persist_analytics_evidence_artifact(
         verified = verify_artifact(
             evidence_root, relative_path, evidence_id=artifact_id, version=version
         )
+        expected_digest = hashlib.sha256(content).hexdigest()
+        if verified.sha256 != expected_digest or verified.size_bytes != len(content):
+            raise YouTubeAnalyticsArtifactStoreError(
+                "persisted evidence bytes do not match the exact canonical envelope written"
+            )
+        entry_info = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(entry_info.st_mode)
+                or (entry_info.st_dev, entry_info.st_ino) != created_identity):
+            raise YouTubeAnalyticsArtifactStoreError(
+                "evidence destination changed identity during persistence"
+            )
     except FileExistsError:
         failure = YouTubeAnalyticsArtifactStoreError(
             "refusing to overwrite an existing evidence artifact"
@@ -202,14 +226,16 @@ def persist_analytics_evidence_artifact(
             "evidence artifact could not be safely written and byte-verified"
         )
     finally:
-        if file_fd is not None:
-            os.close(file_fd)
-        if failure is not None and created:
+        if failure is not None and created and created_identity is not None:
             try:
-                os.unlink(filename, dir_fd=parent_fd)
-                os.fsync(parent_fd)
+                current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == created_identity:
+                    os.unlink(filename, dir_fd=parent_fd)
+                    os.fsync(parent_fd)
             except OSError:
                 pass
+        if file_fd is not None:
+            os.close(file_fd)
         for fd in reversed(opened):
             os.close(fd)
 
