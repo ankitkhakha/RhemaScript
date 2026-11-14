@@ -112,9 +112,10 @@ class JsonlAuditSink:
     """
 
     def __init__(self, path: str | os.PathLike[str]):
-        self.path = Path(os.path.abspath(os.fspath(Path(path).expanduser())))
-        if not self.path.name:
+        expanded_path = Path(path).expanduser()
+        if not expanded_path.name:
             raise AuditSinkError("audit log path must name a file")
+        self.path = Path(os.path.abspath(os.fspath(expanded_path)))
         self._lock = threading.Lock()
         self._parent_fd: int | None = None
         self._parent_finalizer = None
@@ -124,6 +125,9 @@ class JsonlAuditSink:
                 self._parent_fd = _open_directory_without_symlinks(self.path.parent)
                 parent_info = os.fstat(self._parent_fd)
             except (OSError, AuditSinkError):
+                if self._parent_fd is not None:
+                    os.close(self._parent_fd)
+                    self._parent_fd = None
                 raise AuditSinkError("audit log parent directory is unavailable or contains a symlink") from None
             if (not stat.S_ISDIR(parent_info.st_mode)
                     or parent_info.st_uid != os.getuid()
