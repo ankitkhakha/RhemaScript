@@ -52,6 +52,26 @@ The JSONL segments remain authoritative. On startup, index metadata must be chec
 
 For normal operation, retain a durable checkpoint of the last fully indexed segment/offset and replay only bytes after that checkpoint. Checkpoint advancement must occur only after all preceding rows have been indexed and the SQLite transaction has committed. If checkpoint integrity cannot be established, perform a full rebuild or fail closed. A checkpoint is an optimization, not permission to skip source validation.
 
+### Completion index shape and INDETERMINATE recovery
+
+A single row per completion ID is insufficient because the existing contract permits an `INDETERMINATE` event followed by a `COMPLETED` event with the same stable completion ID. The index must preserve both source rows and their phase ordering.
+
+Proposed logical tables (illustrative, not a migration script):
+
+- `completion_identity(completion_event_id PRIMARY KEY, project_id, request_id, http_status, provider_resource_id)` — immutable canonical identity; a second identity for the same ID is a hard conflict.
+- `completion_occurrences(completion_event_id, phase, segment_id, byte_offset, byte_length, sequence_no, PRIMARY KEY(completion_event_id, phase))` — one `INDETERMINATE` and/or one `COMPLETED` occurrence. Any unexpected second occurrence for the same phase is validated against the source row and treated as duplicate only if the existing contract permits it.
+- `index_checkpoint(segment_id, byte_offset, record_count, manifest_generation)` — advanced in the same SQLite transaction as the rows indexed through that exact byte boundary.
+
+A lookup reads and validates every indexed occurrence for the ID from the authoritative JSONL segment before applying the current phase transition rules. `INDETERMINATE → COMPLETED` is allowed only when canonical identity is identical. A completed occurrence suppresses further retries. Conflicting identity, missing source row, out-of-range offset, mismatched phase, or invalid row length fails closed. Index rows are never accepted as audit evidence on their own.
+
+### Segment integrity and active-tail checkpoint
+
+Each sealed segment should have a SHA-256 digest over its exact bytes, recorded in the manifest together with byte length, record count and previous-segment digest. This detects accidental modification, truncation, reordering and substitution when the manifest is trusted. On opening the store, verify sealed segment digests before trusting the completion index. The manifest should include a monotonically increasing generation and a digest over its canonical serialization; this is corruption detection, not authentication against a same-user attacker.
+
+For the active segment, persist a checkpoint containing segment ID, byte offset, record count and digest of the complete prefix. New rows are appended after that offset; recovery verifies the checkpoint prefix and validates/replays the bounded tail. If the active file is shorter than the checkpoint, or the prefix digest does not match, fail closed. A row appended and fsynced after the last index checkpoint is replayed from the checkpoint before any index lookup is trusted.
+
+The storage threat model must state that the directory is owner-controlled and private. Hashes and a local SQLite index do not protect against a malicious actor with the same OS identity who can rewrite both the data and metadata. Stronger tamper evidence would require an independently protected signing key or remote append-only witness, which is outside this proposal.
+
 ## 5. Rotation and crash recovery
 
 Rotation is serialized under the same stable lock:
