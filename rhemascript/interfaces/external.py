@@ -414,6 +414,12 @@ class ExternalIntegrationGateway:
         if self.audit_sink is None or not isinstance(artifact_binding, Mapping):
             raise ExternalIntegrationError("completed publish recovery requires an audit sink and artifact binding")
         try:
+            from rhemascript.core.approvals import is_consumed_verified_approval
+            if (not isinstance(verified_approvals, tuple) or len(verified_approvals) != 2
+                    or any(not is_consumed_verified_approval(item) for item in verified_approvals)):
+                raise ExternalIntegrationError(
+                    "completed publish recovery requires exact verifier-issued, durably consumed approvals"
+                )
             approval_fingerprint = _publish_approval_fingerprint(verified_approvals)
             identity = {"project_id": project_id, "project_version": project_version, "request_id": request_id}
             record = self.publish_session_registry.get_publish_session(**identity)
