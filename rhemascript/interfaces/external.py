@@ -823,7 +823,6 @@ class ExternalIntegrationGateway:
                 "artifact_sha256": session_context["artifact_sha256"],
                 "artifact_size_bytes": session_context["artifact_size_bytes"],
             })
-            event["session_vault_ref"] = session_context["vault_ref"]
             if session_context.get("session_url_sha256"):
                 event["session_url_sha256"] = session_context["session_url_sha256"]
             if session_context.get("total_bytes") is not None:
