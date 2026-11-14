@@ -470,6 +470,19 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "UPLOAD_SESSION", "UPLOAD_CHUNK", "VIDEO_READ"],
         )
+        audit_records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertTrue(any(
+            record.get("operation") == "UPLOAD_SESSION" and record.get("phase") == "COMPLETED"
+            for record in audit_records
+        ))
+        completed_upload_audits = [
+            record for record in audit_records
+            if record.get("operation") == "UPLOAD_CHUNK" and record.get("phase") == "COMPLETED"
+        ]
+        self.assertEqual(len(completed_upload_audits), 1)
+        self.assertEqual(completed_upload_audits[0]["provider_resource_id"], "gateway-video")
+        self.assertEqual(completed_upload_audits[0]["publish_session_state"], "COMPLETE")
+        self.assertNotIn("private-session", audit_path.read_text())
         self.assertNotIn("gateway-access", repr(events))
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
