@@ -2,7 +2,10 @@ import unittest
 from copy import deepcopy
 from datetime import datetime, timezone
 
-from rhemascript.integrations.youtube_analytics_evidence import build_analytics_evidence_snapshot
+from rhemascript.integrations.youtube_analytics_evidence import (
+    YouTubeAnalyticsEvidenceError,
+    build_analytics_evidence_snapshot,
+)
 from rhemascript.integrations.youtube_analytics_insights import (
     YouTubeAnalyticsInsightError,
     compare_analytics_periods,
@@ -130,15 +133,11 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
         self.assertEqual(coverage["unobserved_day_count"], 5)
 
     def test_duplicate_day_rows_are_rejected(self):
-        previous = snapshot("2026-10-01", "2026-10-07", [
-            ["2026-10-01", 10, 2.5, 15.0, 1],
-            ["2026-10-01", 20, 4.5, 13.5, 2],
-        ])
-        current = snapshot("2026-10-08", "2026-10-14", [
-            ["2026-10-08", 15, 3.0, 12.0, 1],
-        ])
-        with self.assertRaisesRegex(YouTubeAnalyticsInsightError, "duplicate day"):
-            compare_analytics_periods(current, previous)
+        with self.assertRaisesRegex(YouTubeAnalyticsEvidenceError, "duplicate dimension"):
+            snapshot("2026-10-01", "2026-10-07", [
+                ["2026-10-01", 10, 2.5, 15.0, 1],
+                ["2026-10-01", 20, 4.5, 13.5, 2],
+            ])
 
     def test_day_outside_requested_range_is_rejected(self):
         previous = snapshot("2026-10-01", "2026-10-07", [
@@ -244,12 +243,10 @@ class YouTubeAnalyticsInsightsTests(unittest.TestCase):
             compare_analytics_periods(current, previous)
 
     def test_rejects_boolean_and_fractional_integer_metric_values(self):
-        for invalid in (1.5,):
+        for invalid in (True, 1.5):
             with self.subTest(invalid=invalid):
-                previous = snapshot("2026-10-01", "2026-10-01", [["2026-10-01", invalid, 1.0, 12.0, 1]])
-                current = snapshot("2026-10-02", "2026-10-02", [["2026-10-02", 6, 1.2, 12.0, 1]])
-                with self.assertRaises(YouTubeAnalyticsInsightError):
-                    compare_analytics_periods(current, previous)
+                with self.assertRaisesRegex(YouTubeAnalyticsEvidenceError, "dataType"):
+                    snapshot("2026-10-01", "2026-10-01", [["2026-10-01", invalid, 1.0, 12.0, 1]])
 
 
 if __name__ == "__main__":
