@@ -150,7 +150,9 @@ class JsonlAuditSink:
                                 existing = json.loads(line)
                             except (UnicodeDecodeError, json.JSONDecodeError):
                                 raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
-                            if isinstance(existing, dict) and existing.get("completion_event_id") == completion_event_id:
+                            if not isinstance(existing, dict):
+                                raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe")
+                            if existing.get("completion_event_id") == completion_event_id:
                                 if (existing.get("provider_resource_id") != resource_id
                                         or existing.get("request_id") != record_data.get("request_id")
                                         or existing.get("project_id") != record_data.get("project_id")
@@ -159,7 +161,7 @@ class JsonlAuditSink:
                                 existing_phase = existing.get("phase")
                                 if existing_phase == "COMPLETED":
                                     matching_completed = True
-                                if existing_phase == "INDETERMINATE":
+                                elif existing_phase == "INDETERMINATE":
                                     matching_indeterminate = True
                                 else:
                                     raise AuditSinkError("completion event ID exists in an unexpected audit phase")
