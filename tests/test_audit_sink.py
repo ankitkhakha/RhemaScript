@@ -229,7 +229,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
                 row = (
                     b'{"interface_id":"IF-18","provider":"youtube","request_id":"request-1",'
                     b'"operation":"CHANNEL_READ","phase":"REQUESTED","request_bytes":'
-                    + constant + b"}\\n"
+                    + constant + b"}" + bytes((10,))
                 )
                 path.write_bytes(row)
                 sink = JsonlAuditSink(path)
