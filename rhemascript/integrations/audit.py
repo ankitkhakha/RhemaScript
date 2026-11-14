@@ -28,10 +28,10 @@ _ALLOWED_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
-    "timestamp_utc", "provider_resource_id", "completion_event_id",
+    "timestamp_utc", "provider_resource_id", "completion_event_id", "schema_version",
     "approval_fingerprint", "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes", "status_reconciliation",
     "session_url_sha256", "publish_session_state", "chunk_start", "chunk_end",
-    "chunk_total_bytes", "acknowledged_offset",
+    "chunk_total_bytes", "acknowledged_offset", "schema_version",
 }
 _REQUIRED_FIELDS = {"interface_id", "provider", "request_id", "operation", "phase"}
 _ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED", "INDETERMINATE"}
@@ -63,6 +63,51 @@ _ALLOWED_SESSION_STATES = {
     "CREATING", "ACTIVE", "CHUNK_IN_FLIGHT", "RECONCILING",
     "COMPLETE", "FAILED", "INDETERMINATE",
 }
+_AUDIT_SCHEMA_VERSION = 1
+
+
+def _validate_record_schema(record: dict[str, Any], *, legacy: bool = False) -> None:
+    """Validate a stored audit row under its explicit or legacy schema contract."""
+    if not isinstance(record, dict) or not _REQUIRED_FIELDS.issubset(record):
+        raise AuditSinkError("audit record does not match the required schema")
+    if set(record) - _ALLOWED_FIELDS:
+        raise AuditSinkError("audit record contains fields outside the safe schema")
+    if record.get("phase") not in _ALLOWED_PHASES:
+        raise AuditSinkError("audit record phase is invalid")
+    if not legacy and record.get("schema_version") != _AUDIT_SCHEMA_VERSION:
+        raise AuditSinkError("audit record schema version is unsupported")
+    if legacy and "schema_version" in record:
+        raise AuditSinkError("legacy audit record unexpectedly declares a schema version")
+
+    for key, value in record.items():
+        if key in _SAFE_STRING_FIELDS:
+            if not isinstance(value, str) or not value:
+                raise AuditSinkError("audit record string field is invalid")
+            if not legacy and len(value) > _STRING_MAX_LENGTHS[key]:
+                raise AuditSinkError("audit record string field exceeds its schema bound")
+            if not legacy and key in _SHA256_FIELDS and not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise AuditSinkError("audit record digest field is invalid")
+            if not legacy and key == "provider_resource_id" and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+                raise AuditSinkError("audit record provider resource ID is invalid")
+            if not legacy and key == "publish_session_state" and value not in _ALLOWED_SESSION_STATES:
+                raise AuditSinkError("audit record publish-session state is invalid")
+        if key in _SAFE_INTEGER_FIELDS:
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+                or (not legacy and value > 2**63 - 1)
+            ):
+                raise AuditSinkError("audit record numeric field is invalid")
+        if key in _SAFE_BOOLEAN_FIELDS and not isinstance(value, bool):
+            raise AuditSinkError("audit record boolean field is invalid")
+
+    if "completion_event_id" in record:
+        event_id = record["completion_event_id"]
+        resource_id = record.get("provider_resource_id")
+        if (not isinstance(event_id, str) or not re.fullmatch(r"[0-9a-f]{64}", event_id)
+                or record["phase"] not in {"COMPLETED", "INDETERMINATE"}
+                or not isinstance(resource_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id)):
+            raise AuditSinkError("audit record completion identity is invalid")
 
 
 def _open_directory_without_symlinks(path: Path) -> int:
@@ -152,26 +197,12 @@ class JsonlAuditSink:
     def __call__(self, event: dict[str, Any]) -> None:
         if not isinstance(event, dict) or not _REQUIRED_FIELDS.issubset(event):
             raise AuditSinkError("audit event does not match the required schema")
-        if set(event) - _ALLOWED_FIELDS:
-            raise AuditSinkError("audit event contains fields outside the safe schema")
-        if event.get("phase") not in _ALLOWED_PHASES:
-            raise AuditSinkError("audit event phase is invalid")
+        if "schema_version" in event:
+            raise AuditSinkError("audit schema version is assigned by the sink")
         record_data = dict(event)
         record_data.setdefault("timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
-        for key, value in record_data.items():
-            if key in _SAFE_STRING_FIELDS:
-                if not isinstance(value, str) or not value or len(value) > _STRING_MAX_LENGTHS[key]:
-                    raise AuditSinkError("audit event string field is invalid")
-                if key in _SHA256_FIELDS and not re.fullmatch(r"[0-9a-f]{64}", value):
-                    raise AuditSinkError("audit event digest field is invalid")
-                if key == "provider_resource_id" and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
-                    raise AuditSinkError("audit event provider resource ID is invalid")
-                if key == "publish_session_state" and value not in _ALLOWED_SESSION_STATES:
-                    raise AuditSinkError("audit event publish-session state is invalid")
-            if key in _SAFE_INTEGER_FIELDS and (value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 2**63 - 1)):
-                raise AuditSinkError("audit event numeric field is invalid")
-            if key in _SAFE_BOOLEAN_FIELDS and not isinstance(value, bool):
-                raise AuditSinkError("audit event boolean field is invalid")
+        record_data["schema_version"] = _AUDIT_SCHEMA_VERSION
+        _validate_record_schema(record_data)
         try:
             record = (json.dumps(record_data, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
         except (TypeError, ValueError):
@@ -231,6 +262,10 @@ class JsonlAuditSink:
                             raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
                         if not isinstance(existing, dict):
                             raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe")
+                        try:
+                            _validate_record_schema(existing, legacy="schema_version" not in existing)
+                        except AuditSinkError:
+                            raise AuditSinkError("audit log contains records outside the supported schema") from None
                         if completion_event_id is not None and existing.get("completion_event_id") == completion_event_id:
                             if (existing.get("provider_resource_id") != resource_id
                                     or existing.get("request_id") != record_data.get("request_id")
