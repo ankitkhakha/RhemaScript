@@ -1,9 +1,11 @@
 import unittest
+import copy
 import threading
 import json
 import hashlib
 import os
 import tempfile
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -15,6 +17,7 @@ from rhemascript.core.approval_store import SQLitePublishSessionRegistry
 from rhemascript.integrations.session_url_vault import (
     SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
 )
+from rhemascript.integrations.audit import JsonlAuditSink
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
@@ -120,7 +123,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "artifact_binding": binding,
         } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
         verified = verifier.verify_many_and_consume(tuple(credentials), expectations)
-        return {"verified_approvals": verified}
+        return {"verified_approvals": verified, "verifier": verifier, "credentials": tuple(credentials), "expectations": expectations}
 
     def make_registry(self, authority, request_id, session_url=None):
         temporary = tempfile.TemporaryDirectory()
@@ -422,8 +425,13 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         temporary, registry, vault = self.make_registry(authority, "upload-2", session_url=session_url)
         self.addCleanup(temporary.cleanup)
         events = []
+        audit_path = Path(temporary.name) / "gateway-audit.jsonl"
+        durable_audit = JsonlAuditSink(audit_path)
+        def record_event(event):
+            durable_audit(event)
+            events.append(event)
         gateway = ExternalIntegrationGateway(
-            (binding,), transport=transport, audit_sink=events.append,
+            (binding,), transport=transport, audit_sink=record_event,
             publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
@@ -445,7 +453,109 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         )
         self.assertEqual(events[-1]["acknowledged_offset"], 5)
         self.assertEqual(events[-1]["publish_session_state"], "ACTIVE")
+        audit_records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        chunk_audit = [record for record in audit_records if record["operation"] == "UPLOAD_CHUNK"]
+        self.assertEqual(chunk_audit[-1]["phase"], "COMPLETED")
+        self.assertEqual(chunk_audit[-1]["acknowledged_offset"], 5)
+        self.assertEqual(chunk_audit[-1]["publish_session_state"], "ACTIVE")
+        self.assertNotIn("upload_id=session-opaque", audit_path.read_text())
         self.assertNotIn("upload_id=session-opaque", repr(events))
+
+    def test_successful_upload_session_creation_uses_real_audit_sink(self):
+        class MethodTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                return 200, b'{"session":"created"}', {
+                    "Location": "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=created-opaque"
+                }
+
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_SESSION": {
+                "method": "POST", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        authority = self.publish_authority("audit-create-success")
+        temporary, registry, vault = self.make_registry(authority, "audit-create-success")
+        self.addCleanup(temporary.cleanup)
+        audit_path = Path(temporary.name) / "create-audit.jsonl"
+        sink = JsonlAuditSink(audit_path)
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=MethodTransport(), audit_sink=sink,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            status, body, _headers = gateway.request(
+                "IF-18", "UPLOAD_SESSION",
+                "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable",
+                method="POST", body=b"metadata", request_id="audit-create-success",
+                project_id="RS-1", source_version="1.0", authority=authority,
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b'{"session":"created"}')
+        state = registry.get_publish_session(
+            project_id="RS-1", project_version="1.0", request_id="audit-create-success",
+        )
+        self.assertEqual(state["state"], "ACTIVE")
+        records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertEqual([record["phase"] for record in records], ["REQUESTED", "COMPLETED"])
+        completion = records[-1]
+        self.assertEqual(completion["publish_session_state"], "ACTIVE")
+        self.assertEqual(completion["session_url_sha256"], state["session_url_sha256"])
+        self.assertNotIn("upload_id=created-opaque", audit_path.read_text())
+
+    def test_successful_upload_chunk_completion_uses_real_audit_sink(self):
+        class MethodTransport:
+            def send_request(self, url, method, headers, body, timeout):
+                return 201, b'{"id":"video-audit-complete"}', {}
+
+        binding = ProviderBinding(
+            interface_id="IF-18", provider_name="youtube",
+            endpoint="https://www.googleapis.com",
+            allowed_hosts=("www.googleapis.com",),
+            operations={"UPLOAD_CHUNK": {
+                "method": "PUT", "hosts": ("www.googleapis.com",),
+                "path_prefix": "/upload/youtube/v3/videos",
+            }},
+        )
+        authority = self.publish_authority("audit-chunk-complete")
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos/session?upload_id=chunk-opaque"
+        temporary, registry, vault = self.make_registry(
+            authority, "audit-chunk-complete", session_url=session_url,
+        )
+        self.addCleanup(temporary.cleanup)
+        audit_path = Path(temporary.name) / "chunk-complete-audit.jsonl"
+        sink = JsonlAuditSink(audit_path)
+        gateway = ExternalIntegrationGateway(
+            (binding,), transport=MethodTransport(), audit_sink=sink,
+            publish_session_registry=registry, session_url_vault=vault, enabled=True,
+        )
+        with patch("rhemascript.core.authority.authorise_action", return_value=True):
+            status, body, _headers = gateway.request(
+                "IF-18", "UPLOAD_CHUNK", session_url,
+                method="PUT",
+                headers={"Authorization": "Bearer test",
+                         "Content-Range": "bytes 0-4/123456",
+                         "Content-Length": "5"},
+                body=b"chunk", request_id="audit-chunk-complete",
+                project_id="RS-1", source_version="1.0", authority=authority,
+            )
+        self.assertEqual(status, 201)
+        self.assertEqual(json.loads(body)["id"], "video-audit-complete")
+        state = registry.get_publish_session(
+            project_id="RS-1", project_version="1.0", request_id="audit-chunk-complete",
+        )
+        self.assertEqual(state["state"], "COMPLETE")
+        self.assertEqual(state["provider_resource_id"], "video-audit-complete")
+        records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertEqual([record["phase"] for record in records], ["REQUESTED", "COMPLETED"])
+        completion = records[-1]
+        self.assertEqual(completion["publish_session_state"], "COMPLETE")
+        self.assertEqual(completion["provider_resource_id"], "video-audit-complete")
+        self.assertEqual(completion["completion_event_id"], state["completion_audit_id"])
+        self.assertNotIn("upload_id=chunk-opaque", audit_path.read_text())
 
     def test_write_transport_failure_is_reported_as_indeterminate_not_failed(self):
         class AmbiguousTransport:
@@ -465,9 +575,14 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         authority = self.publish_authority("write-1")
         temporary, registry, vault = self.make_registry(authority, "write-1")
         self.addCleanup(temporary.cleanup)
+        audit_path = Path(temporary.name) / "indeterminate-audit.jsonl"
+        durable_audit = JsonlAuditSink(audit_path)
+        def record_event(event):
+            durable_audit(event)
+            events.append(event)
         gateway = ExternalIntegrationGateway(
             (binding,), transport=AmbiguousTransport(),
-            audit_sink=events.append, publish_session_registry=registry, session_url_vault=vault, enabled=True,
+            audit_sink=record_event, publish_session_registry=registry, session_url_vault=vault, enabled=True,
         )
         with patch("rhemascript.core.authority.authorise_action", return_value=True):
             with self.assertRaisesRegex(ExternalIntegrationError, "indeterminate.*do not retry automatically"):
@@ -481,6 +596,9 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         state = registry.get_publish_session(project_id="RS-1", project_version="1.0", request_id="write-1")
         self.assertEqual(state["state"], "INDETERMINATE")
         self.assertNotIn("FAILED", [event["phase"] for event in events])
+        audit_records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        self.assertIn("INDETERMINATE", [record["phase"] for record in audit_records])
+        self.assertNotIn("uploadType=resumable", audit_path.read_text())
 
     def test_thumbnail_write_is_blocked_at_gateway_before_transport(self):
         transport = NeverTransport()
@@ -505,6 +623,156 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 project_id="RS-1", source_version="1.0",
             )
         self.assertEqual(transport.calls, [])
+
+    def test_completed_upload_result_and_audit_recover_idempotently_after_crash(self):
+        authority = self.publish_authority("recover-complete-1")
+        approvals = authority["verified_approvals"]
+        first = approvals[0]
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque-complete"
+        temporary, registry, vault = self.make_registry(authority, "recover-complete-1", session_url=session_url)
+        self.addCleanup(temporary.cleanup)
+        self.assertTrue(registry.consume_many_once(approvals))
+        identity = {
+            "project_id": first.project_id,
+            "project_version": first.project_version,
+            "request_id": first.request_id,
+            "approval_fingerprint": _publish_approval_fingerprint(approvals),
+            "artifact_id": first.artifact_id,
+            "artifact_version": first.artifact_version,
+            "artifact_sha256": first.artifact_sha256,
+            "artifact_size_bytes": first.artifact_size_bytes,
+        }
+        url_digest = hashlib.sha256(session_url.encode()).hexdigest()
+        self.assertTrue(registry.begin_publish_chunk(
+            **identity, session_url_sha256=url_digest, owner_id="gateway-before-crash",
+            start=0, end=first.artifact_size_bytes - 1,
+            total=first.artifact_size_bytes, body_size=first.artifact_size_bytes,
+        ))
+        self.assertTrue(registry.record_publish_response(
+            project_id=first.project_id, project_version=first.project_version,
+            request_id=first.request_id, owner_id="gateway-before-crash",
+            status=201, provider_resource_id="video-recovered-1",
+        ))
+        completed = registry.get_publish_session(
+            project_id=first.project_id, project_version=first.project_version,
+            request_id=first.request_id,
+        )
+        self.assertEqual(completed["state"], "COMPLETE")
+        self.assertEqual(completed["provider_resource_id"], "video-recovered-1")
+        self.assertEqual(completed["completion_audited"], 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
+            calls = {"count": 0}
+            def crash_after_durable_audit(event):
+                sink(event)
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise OSError("simulated process loss after audit fsync")
+            first_gateway = ExternalIntegrationGateway(
+                (), audit_sink=crash_after_durable_audit,
+                publish_session_registry=registry, session_url_vault=vault,
+            )
+            forged_approvals = (copy.copy(approvals[0]), approvals[1])
+            with self.assertRaisesRegex(ExternalIntegrationError, "verifier-issued, durably consumed approvals"):
+                first_gateway.recover_completed_publish_result(
+                    project_id=first.project_id, project_version=first.project_version,
+                    request_id=first.request_id, verified_approvals=forged_approvals,
+                    artifact_binding={
+                        "artifact_id": first.artifact_id,
+                        "artifact_version": first.artifact_version,
+                        "artifact_sha256": first.artifact_sha256,
+                        "artifact_size_bytes": first.artifact_size_bytes,
+                    },
+                )
+            with self.assertRaisesRegex(ExternalIntegrationError, "waiting for the previous owner lease to expire"):
+                first_gateway.recover_completed_publish_result(
+                    project_id=first.project_id, project_version=first.project_version,
+                    request_id=first.request_id, verified_approvals=approvals,
+                    artifact_binding={
+                        "artifact_id": first.artifact_id,
+                        "artifact_version": first.artifact_version,
+                        "artifact_sha256": first.artifact_sha256,
+                        "artifact_size_bytes": first.artifact_size_bytes,
+                    },
+                )
+            self.assertFalse((Path(directory) / "audit.jsonl").exists())
+            with sqlite3.connect(registry.path) as db:
+                db.execute(
+                    "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                    ("2000-01-01T00:00:00+00:00", first.request_id),
+                )
+            with self.assertRaisesRegex(ExternalIntegrationError, "audit could not be recovered"):
+                first_gateway.recover_completed_publish_result(
+                    project_id=first.project_id, project_version=first.project_version,
+                    request_id=first.request_id, verified_approvals=approvals,
+                    artifact_binding={
+                        "artifact_id": first.artifact_id,
+                        "artifact_version": first.artifact_version,
+                        "artifact_sha256": first.artifact_sha256,
+                        "artifact_size_bytes": first.artifact_size_bytes,
+                    },
+                )
+            pending = registry.get_publish_session(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id,
+            )
+            self.assertEqual(pending["completion_audited"], 0)
+            with sqlite3.connect(registry.path) as db:
+                db.execute(
+                    "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                    ("2000-01-01T00:00:00+00:00", first.request_id),
+                )
+            resumed_approvals = authority["verifier"].verify_many_existing_consumed(
+                authority["credentials"], authority["expectations"],
+                consumed_records=registry.list_consumed_approval_records(),
+                is_revoked=registry.is_revoked,
+            )
+            self.assertIsNot(resumed_approvals[0], approvals[0])
+            restarted_gateway = ExternalIntegrationGateway(
+                (), audit_sink=sink, publish_session_registry=registry,
+                session_url_vault=vault,
+            )
+            recovered = restarted_gateway.recover_completed_publish_result(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id, verified_approvals=resumed_approvals,
+                artifact_binding={
+                    "artifact_id": first.artifact_id,
+                    "artifact_version": first.artifact_version,
+                    "artifact_sha256": first.artifact_sha256,
+                    "artifact_size_bytes": first.artifact_size_bytes,
+                },
+            )
+            self.assertEqual(recovered, "video-recovered-1")
+            finalized = registry.get_publish_session(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id,
+            )
+            self.assertEqual(finalized["completion_audited"], 1)
+            self.assertIsNone(finalized["inflight_owner"])
+            records = [json.loads(line) for line in (Path(directory) / "audit.jsonl").read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["provider_resource_id"], "video-recovered-1")
+            self.assertEqual(records[0]["completion_event_id"], completed["completion_audit_id"])
+            self.assertEqual(records[0]["approval_fingerprint"], completed["approval_fingerprint"])
+            self.assertEqual(records[0]["artifact_id"], first.artifact_id)
+            self.assertEqual(records[0]["artifact_version"], first.artifact_version)
+            self.assertEqual(records[0]["artifact_sha256"], first.artifact_sha256)
+            self.assertEqual(records[0]["artifact_size_bytes"], first.artifact_size_bytes)
+            self.assertEqual(records[0]["publish_session_state"], "COMPLETE")
+            self.assertNotIn("session_url", records[0])
+            self.assertNotIn("vault_reference", records[0])
+            self.assertEqual(restarted_gateway.recover_completed_publish_result(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id, verified_approvals=resumed_approvals,
+                artifact_binding={
+                    "artifact_id": first.artifact_id,
+                    "artifact_version": first.artifact_version,
+                    "artifact_sha256": first.artifact_sha256,
+                    "artifact_size_bytes": first.artifact_size_bytes,
+                },
+            ), "video-recovered-1")
+            self.assertEqual(len((Path(directory) / "audit.jsonl").read_text().splitlines()), 1)
 
     def test_write_completion_audit_failure_is_indeterminate(self):
         class SuccessTransport:

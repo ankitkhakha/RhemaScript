@@ -14,7 +14,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.core.approval_store import SQLitePublishSessionRegistry
-from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
+from rhemascript.integrations.audit import JsonlAuditSink
+from rhemascript.integrations.session_url_vault import (
+    SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
+)
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport, ExternalIntegrationError
 from rhemascript.integrations.youtube import (
@@ -411,9 +414,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
             vault = SQLiteEncryptedSessionUrlVault(
                 Path(registry_directory) / "session-url-vault.sqlite3", bytes(range(32)),
             )
+            audit_path = Path(registry_directory) / "provider-audit.jsonl"
+            durable_audit = JsonlAuditSink(audit_path)
+            def record_event(event):
+                durable_audit(event)
+                events.append(event)
             gateway = ExternalIntegrationGateway(
                 (youtube_provider_binding(),), transport=transport,
-                credential_resolver=lambda provider: {}, audit_sink=events.append,
+                credential_resolver=lambda provider: {}, audit_sink=record_event,
                 publish_session_registry=registry, session_url_vault=vault, enabled=True,
             )
             client = YouTubeClient(self.config(), gateway=gateway)
@@ -446,6 +454,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             self.assertEqual(session["acknowledged_offset"], len(b"approved-video-bytes"))
             self.assertEqual(len(session["session_url_sha256"]), 64)
             self.assertNotIn(b"private-session", registry.path.read_bytes())
+            audit_log_text = audit_path.read_text()
 
         self.assertEqual(result["video_id"], "gateway-video")
         self.assertTrue(result["upload_completed"])
@@ -462,6 +471,19 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "UPLOAD_SESSION", "UPLOAD_CHUNK", "VIDEO_READ"],
         )
+        audit_records = [json.loads(line) for line in audit_log_text.splitlines()]
+        self.assertTrue(any(
+            record.get("operation") == "UPLOAD_SESSION" and record.get("phase") == "COMPLETED"
+            for record in audit_records
+        ))
+        completed_upload_audits = [
+            record for record in audit_records
+            if record.get("operation") == "UPLOAD_CHUNK" and record.get("phase") == "COMPLETED"
+        ]
+        self.assertEqual(len(completed_upload_audits), 1)
+        self.assertEqual(completed_upload_audits[0]["provider_resource_id"], "gateway-video")
+        self.assertEqual(completed_upload_audits[0]["publish_session_state"], "COMPLETE")
+        self.assertNotIn("private-session", audit_log_text)
         self.assertNotIn("gateway-access", repr(events))
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
@@ -764,6 +786,84 @@ class YouTubeIntegrationTests(unittest.TestCase):
                 with self.assertRaises(YouTubeIntegrationError):
                     client.analytics(**kwargs)
 
+    def test_completed_publish_resume_returns_persisted_id_without_provider_or_oauth_call(self):
+        from rhemascript.integrations.youtube import _authorise_project_publish
+        from rhemascript.interfaces.external import _publish_approval_fingerprint
+        context = self.publish_context()
+        project_id, project_version, approvals, request_id, binding, stream = _authorise_project_publish(
+            evidence_pack=context["evidence_pack"],
+            final_film_evidence_ref=context["final_film_evidence_ref"],
+            evidence_root=context["evidence_root"],
+            approval_verifier=context["approval_verifier"],
+            approval_credentials=context["approval_credentials"],
+            approval_request_id=context["approval_request_id"],
+            publish_session_registry=context.registry,
+        )
+        self.assertIsNone(stream)
+        first = approvals[0]
+        identity = {
+            "project_id": project_id, "project_version": project_version,
+            "request_id": request_id,
+            "approval_fingerprint": _publish_approval_fingerprint(approvals),
+            "artifact_id": binding["artifact_id"],
+            "artifact_version": binding["artifact_version"],
+            "artifact_sha256": binding["sha256"],
+            "artifact_size_bytes": binding["size_bytes"],
+        }
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=completed-resume"
+        context.vault.store(publish_session_vault_reference(identity), session_url)
+        self.assertTrue(context.registry.reserve_publish_session(**identity, owner_id="seed-owner"))
+        self.assertTrue(context.registry.bind_publish_session(
+            **identity, session_url_sha256=hashlib.sha256(session_url.encode()).hexdigest(),
+            owner_id="seed-owner",
+        ))
+        self.assertTrue(context.registry.finalize_publish_session_operation(
+            project_id=project_id, project_version=project_version,
+            request_id=request_id, owner_id="seed-owner",
+        ))
+        self.assertTrue(context.registry.begin_publish_chunk(
+            **identity, session_url_sha256=hashlib.sha256(session_url.encode()).hexdigest(),
+            owner_id="seed-owner", start=0, end=binding["size_bytes"] - 1,
+            total=binding["size_bytes"], body_size=binding["size_bytes"],
+        ))
+        self.assertTrue(context.registry.record_publish_response(
+            project_id=project_id, project_version=project_version,
+            request_id=request_id, owner_id="seed-owner", status=201,
+            provider_resource_id="video-completed-1",
+        ))
+        record = context.registry.get_publish_session(
+            project_id=project_id, project_version=project_version, request_id=request_id,
+        )
+        self.assertTrue(context.registry.finalize_publish_completion_audit(
+            project_id=project_id, project_version=project_version, request_id=request_id,
+            owner_id="seed-owner", completion_audit_id=record["completion_audit_id"],
+        ))
+        client = self.make_publish_client(
+            context, lambda *args: self.fail("completed-session recovery must not contact provider"),
+        )
+        final_artifact = next(
+            item for item in context["evidence_pack"]["artifacts"]
+            if item["artifact_type"] == "EDITED_FILM"
+        )
+        final_path = os.path.join(context["evidence_root"], final_artifact["local_path"])
+        verified_stream = open(final_path, "rb")
+        with patch(
+            "rhemascript.integrations.youtube._authorise_project_publish",
+            return_value=(project_id, project_version, approvals, request_id, binding, verified_stream),
+        ):
+            result = client.upload_video(
+                final_path, title="Previously completed", description="Recovery test",
+                evidence_pack=context["evidence_pack"],
+                final_film_evidence_ref=context["final_film_evidence_ref"],
+                evidence_root=context["evidence_root"],
+                approval_verifier=context["approval_verifier"],
+                approval_credentials=context["approval_credentials"],
+                approval_request_id=context["approval_request_id"],
+            )
+        self.assertTrue(verified_stream.closed)
+        self.assertEqual(result["video_id"], "video-completed-1")
+        self.assertTrue(result["upload_completed"])
+
     def test_resumable_upload_retries_unacknowledged_bytes(self):
         chunk_size = 256 * 1024
         payload = bytes((i % 251 for i in range(chunk_size * 2)))
@@ -795,6 +895,13 @@ class YouTubeIntegrationTests(unittest.TestCase):
                                              **context)
 
         self.assertEqual(result["video_id"], "video-123")
+        completed = context.registry.get_publish_session(
+            project_id="RS-TEST-001", project_version="1.0", request_id="publish-request-001",
+        )
+        self.assertEqual(completed["state"], "COMPLETE")
+        self.assertEqual(completed["provider_resource_id"], "video-123")
+        self.assertEqual(completed["provider_http_status"], 201)
+        self.assertEqual(completed["completion_audited"], 1)
         self.assertEqual(len(put_requests), 3)
         self.assertEqual(put_requests[0][1], payload[:chunk_size])
         self.assertEqual(put_requests[1][1], payload[131072:131072 + chunk_size])
