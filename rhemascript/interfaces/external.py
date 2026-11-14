@@ -431,6 +431,14 @@ class ExternalIntegrationGateway:
                     or not isinstance(audit_id, str) or not re.fullmatch(r"[0-9a-f]{64}", audit_id)
                     or not isinstance(url_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", url_digest)):
                 raise ExternalIntegrationError("completed publish result is incomplete or invalid")
+            completion_payload = json.dumps({
+                "project_id": project_id, "project_version": project_version,
+                "request_id": request_id, "approval_fingerprint": approval_fingerprint,
+                "provider_resource_id": resource_id, "provider_http_status": status,
+            }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+            expected_audit_id = sha256(completion_payload).hexdigest()
+            if not hmac.compare_digest(audit_id, expected_audit_id):
+                raise ExternalIntegrationError("completed publish audit ID does not match its durable result")
             if record.get("completion_audited") == 1:
                 return resource_id
             recovery_owner_id = uuid.uuid4().hex

@@ -48,6 +48,23 @@ class JsonlAuditSinkTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["completion_event_id"], "a" * 64)
 
+    def test_completion_event_id_collision_with_different_result_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            event = self.event(
+                phase="COMPLETED", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="b" * 64,
+            )
+            sink(event)
+            conflicting = dict(event)
+            conflicting["provider_resource_id"] = "video-substituted"
+            with self.assertRaisesRegex(AuditSinkError, "different provider result"):
+                sink(conflicting)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["provider_resource_id"], "video-123")
+
     def test_rejects_payload_or_secret_bearing_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
