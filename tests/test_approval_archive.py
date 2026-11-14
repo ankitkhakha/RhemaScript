@@ -35,6 +35,7 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         self.assertTrue(result["archive_valid"])
         self.assertEqual(result["consumed_count"], 0)
         self.assertEqual(result["publish_session_count"], 0)
+        self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v5")
         self.assertTrue(result["matches_current_state"])
 
     def test_generation_bound_v2_archive_retains_generation_and_digest(self):
