@@ -12,6 +12,7 @@ import hashlib
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from pathlib import Path
+from unittest.mock import patch
 
 from rhemascript.core.approvals import ApprovalError, ApprovalVerifier, VerifiedApproval
 from rhemascript.core.approval_store import (
@@ -164,6 +165,67 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
         restored = SQLiteApprovalConsumptionStore(backup)
         self.assertTrue(restored.is_consumed(entry.approval_id, entry.nonce))
+
+    def test_backup_rejects_replaced_destination_and_preserves_replacement(self):
+        backup = self.directory / "backup-race.sqlite3"
+        original_path = self.directory / "original-backup-inode.sqlite3"
+        replacement = b"replacement backup must be preserved"
+        real_write = os.write
+        replaced = False
+
+        def replace_after_write(descriptor, data):
+            nonlocal replaced
+            written = real_write(descriptor, data)
+            if not replaced:
+                backup.rename(original_path)
+                backup.write_bytes(replacement)
+                replaced = True
+            return written
+
+        with patch(
+            "rhemascript.core.approval_store.os.write",
+            side_effect=replace_after_write,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "destination changed during export"
+            ):
+                self.store.backup_to(backup)
+
+        self.assertTrue(replaced)
+        self.assertEqual(backup.read_bytes(), replacement)
+        self.assertTrue(original_path.exists())
+        self.assertNotEqual(original_path.read_bytes(), replacement)
+
+    def test_backup_rejects_parent_directory_replacement_and_cleans_pinned_entry(self):
+        backup = self.directory / "backup-parent-race.sqlite3"
+        original_directory = self.directory.with_name("private-original")
+        replacement = b"replacement in new backup directory"
+        real_write = os.write
+        replaced = False
+
+        def replace_parent_after_write(descriptor, data):
+            nonlocal replaced
+            written = real_write(descriptor, data)
+            if not replaced:
+                self.directory.rename(original_directory)
+                self.directory.mkdir(mode=0o700)
+                os.chmod(self.directory, 0o700)
+                (self.directory / backup.name).write_bytes(replacement)
+                replaced = True
+            return written
+
+        with patch(
+            "rhemascript.core.approval_store.os.write",
+            side_effect=replace_parent_after_write,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "backup directory changed during operation"
+            ):
+                self.store.backup_to(backup)
+
+        self.assertTrue(replaced)
+        self.assertEqual((self.directory / backup.name).read_bytes(), replacement)
+        self.assertFalse((original_directory / backup.name).exists())
 
     def test_checkpoint_rejects_wrong_key_and_malformed_payload(self):
         checkpoint = self.store.checkpoint(b"approval-state-checkpoint-key-32-bytes!!")
