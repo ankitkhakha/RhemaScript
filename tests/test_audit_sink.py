@@ -310,6 +310,8 @@ class JsonlAuditSinkTests(unittest.TestCase):
     def test_append_rejects_syntactically_valid_records_outside_supported_schema(self):
         invalid_records = [
             dict(self.event(), phase="UNKNOWN"),
+            dict(self.event(), phase=[]),
+            dict(self.event(), phase={}),
             dict(self.event(), unexpected_metadata="must-not-be-accepted"),
             dict(self.event(), request_bytes="0"),
             dict(self.event(), schema_version=999),
