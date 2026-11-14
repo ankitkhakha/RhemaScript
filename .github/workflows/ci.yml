@@ -2,7 +2,7 @@ name: RhemaScript CI
 
 on:
   push:
-    branches: ["main", "ci/**", "feat/**"]
+    branches: ["main", "ci/**", "feat/**"] # Trigger current-base PR70 backup validation
   pull_request:
     branches: ["main"]
   workflow_dispatch:
