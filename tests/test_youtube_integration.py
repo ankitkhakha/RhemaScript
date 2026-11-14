@@ -825,16 +825,22 @@ class YouTubeIntegrationTests(unittest.TestCase):
             item for item in context["evidence_pack"]["artifacts"]
             if item["artifact_type"] == "EDITED_FILM"
         )
-        result = client.upload_video(
-            os.path.join(context["evidence_root"], final_artifact["local_path"]),
-            title="Previously completed", description="Recovery test",
-            evidence_pack=context["evidence_pack"],
-            final_film_evidence_ref=context["final_film_evidence_ref"],
-            evidence_root=context["evidence_root"],
-            approval_verifier=context["approval_verifier"],
-            approval_credentials=context["approval_credentials"],
-            approval_request_id=context["approval_request_id"],
-        )
+        final_path = os.path.join(context["evidence_root"], final_artifact["local_path"])
+        verified_stream = open(final_path, "rb")
+        with patch(
+            "rhemascript.integrations.youtube._authorise_project_publish",
+            return_value=(project_id, project_version, approvals, request_id, binding, verified_stream),
+        ):
+            result = client.upload_video(
+                final_path, title="Previously completed", description="Recovery test",
+                evidence_pack=context["evidence_pack"],
+                final_film_evidence_ref=context["final_film_evidence_ref"],
+                evidence_root=context["evidence_root"],
+                approval_verifier=context["approval_verifier"],
+                approval_credentials=context["approval_credentials"],
+                approval_request_id=context["approval_request_id"],
+            )
+        self.assertTrue(verified_stream.closed)
         self.assertEqual(result["video_id"], "video-completed-1")
         self.assertTrue(result["upload_completed"])
 
