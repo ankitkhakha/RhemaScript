@@ -624,8 +624,12 @@ class ApprovalVerifier:
                 "artifact_sha256", "artifact_size_bytes", "credential_schema",
                 "signature", "subject_id", "actor_role", "authn_context",
                 "identity_session_id", "identity_policy_version", "identity_provider_id",
-                "identity_max_authentication_age_seconds", "identity_clock_skew_seconds",
             )
+            # These two values are derived from the verifier's trusted policy
+            # and clock-skew configuration, not signed credential claims or
+            # persisted SQLite columns. _verify_one has just recomputed them
+            # under the current policy, so they must not be compared with
+            # absent consumed-record fields.
             for field in scalar_fields:
                 if record.get(field) != getattr(item, field, None):
                     raise ApprovalError("persisted consumed approval differs from the signed credential")

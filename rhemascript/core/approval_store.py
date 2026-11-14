@@ -24,6 +24,64 @@ class ApprovalStoreError(RuntimeError):
     """Safe, non-secret-bearing approval persistence error."""
 
 
+def _open_private_directory(path: Path) -> int:
+    """Open and pin an owner-private directory using no-follow descriptor traversal."""
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    if (os.name != "posix" or os.open not in getattr(os, "supports_dir_fd", set())
+            or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")):
+        raise ApprovalStoreError("safe backup directory anchoring is unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        descriptor = os.open(absolute.anchor, flags)
+    except OSError:
+        raise ApprovalStoreError("backup directory is unavailable or contains a symlink") from None
+    try:
+        for component in absolute.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        info = os.fstat(descriptor)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ApprovalStoreError("backup directory must be owner-owned and private")
+        return descriptor
+    except ApprovalStoreError:
+        os.close(descriptor)
+        raise
+    except OSError:
+        os.close(descriptor)
+        raise ApprovalStoreError("backup directory is unavailable or contains a symlink") from None
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _assert_private_directory_identity(
+    path: Path, expected_identity: tuple[int, int],
+) -> None:
+    descriptor = _open_private_directory(path)
+    try:
+        info = os.fstat(descriptor)
+        if (info.st_dev, info.st_ino) != expected_identity:
+            raise ApprovalStoreError("backup directory changed during operation")
+    finally:
+        os.close(descriptor)
+
+
+def _cleanup_created_backup(
+    parent_fd: int, filename: str, created_identity: tuple[int, int] | None,
+) -> None:
+    if created_identity is None:
+        return
+    try:
+        current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) == created_identity:
+            os.unlink(filename, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+    except OSError:
+        pass
+
+
 class SQLiteApprovalConsumptionStore:
     """Durable atomic approval consumption and revocation using SQLite."""
 
@@ -417,50 +475,67 @@ class SQLiteApprovalConsumptionStore:
         )
 
     def backup_to(self, destination: str | os.PathLike[str]) -> Path:
-        """Create an owner-only SQLite backup in an already-private directory."""
-        target = Path(destination).expanduser()
-        try:
-            absolute = target.absolute()
-            current = Path(absolute.anchor)
-            for component in absolute.parts[1:-1]:
-                current = current / component
-                if stat.S_ISLNK(current.lstat().st_mode):
-                    raise ApprovalStoreError("backup path must not contain symlinked directories")
-            parent_info = target.parent.lstat()
-            parent_stat = target.parent.stat()
-        except ApprovalStoreError:
-            raise
-        except OSError:
-            raise ApprovalStoreError("backup parent directory must already exist") from None
-        if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_stat.st_mode)
-                or parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) & 0o077):
-            raise ApprovalStoreError("backup parent directory must be owner-owned and private")
-        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
-        try:
-            fd = os.open(target, flags, 0o600)
-            os.fchmod(fd, 0o600)
-            os.close(fd)
-        except OSError:
-            raise ApprovalStoreError("approval backup destination could not be created safely") from None
-        source = self._connect()
+        """Create an owner-only SQLite backup through a pinned private directory."""
+        target = Path(os.path.abspath(os.fspath(Path(destination).expanduser())))
+        if not target.name:
+            raise ApprovalStoreError("backup destination must name a file")
+        parent_fd = _open_private_directory(target.parent)
+        parent_info = os.fstat(parent_fd)
+        parent_identity = (parent_info.st_dev, parent_info.st_ino)
+        source = None
         destination_db = None
+        file_fd = None
+        created_identity: tuple[int, int] | None = None
         try:
-            destination_db = sqlite3.connect(target)
+            source = self._connect()
+            destination_db = sqlite3.connect(":memory:")
             source.backup(destination_db)
+            # Python >=3.11 is required by this package; serialize the completed
+            # SQLite snapshot so the final file is written only through the
+            # already-pinned directory descriptor, never re-opened by pathname.
+            backup_bytes = destination_db.serialize()
             destination_db.close()
             destination_db = None
-            os.chmod(target, 0o600)
+
+            flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+            file_fd = os.open(target.name, flags, 0o600, dir_fd=parent_fd)
+            info = os.fstat(file_fd)
+            created_identity = (info.st_dev, info.st_ino)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise ApprovalStoreError("new backup is not an owner-owned regular file")
+            os.fchmod(file_fd, 0o600)
+            view = memoryview(backup_bytes)
+            while view:
+                written = os.write(file_fd, view)
+                if written <= 0:
+                    raise OSError("approval backup write made no progress")
+                view = view[written:]
+            os.fsync(file_fd)
+            os.fsync(parent_fd)
+
+            _assert_private_directory_identity(target.parent, parent_identity)
+            entry = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+            if (not stat.S_ISREG(entry.st_mode)
+                    or (entry.st_dev, entry.st_ino) != created_identity):
+                raise ApprovalStoreError("approval backup destination changed during export")
             return target
-        except (OSError, sqlite3.Error):
+        except FileExistsError:
+            _cleanup_created_backup(parent_fd, target.name, created_identity)
+            raise ApprovalStoreError("approval backup destination already exists") from None
+        except ApprovalStoreError:
+            _cleanup_created_backup(parent_fd, target.name, created_identity)
+            raise
+        except (OSError, sqlite3.Error, ValueError):
+            _cleanup_created_backup(parent_fd, target.name, created_identity)
+            raise ApprovalStoreError("approval database backup failed safely") from None
+        finally:
             if destination_db is not None:
                 destination_db.close()
-            try:
-                target.unlink()
-            except OSError:
-                pass
-            raise ApprovalStoreError("approval database backup failed") from None
-        finally:
-            source.close()
+            if source is not None:
+                source.close()
+            if file_fd is not None:
+                os.close(file_fd)
+            os.close(parent_fd)
 
 
 class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
@@ -476,6 +551,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes",
         "session_url_sha256", "state", "acknowledged_offset", "inflight_start",
         "inflight_end", "inflight_owner", "lease_expires_at", "created_at", "updated_at",
+        "provider_resource_id", "provider_http_status", "completion_audit_id", "completion_audited",
     )
     _SESSION_STATES = {
         "CREATING", "ACTIVE", "CHUNK_IN_FLIGHT", "RECONCILING",
@@ -533,9 +609,22 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                     lease_expires_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    provider_resource_id TEXT,
+                    provider_http_status INTEGER,
+                    completion_audit_id TEXT,
+                    completion_audited INTEGER NOT NULL DEFAULT 0 CHECK (completion_audited IN (0, 1)),
                     PRIMARY KEY (project_id, project_version, request_id)
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(publish_sessions)")}
+            for name, definition in (
+                ("provider_resource_id", "TEXT"),
+                ("provider_http_status", "INTEGER"),
+                ("completion_audit_id", "TEXT"),
+                ("completion_audited", "INTEGER NOT NULL DEFAULT 0 CHECK (completion_audited IN (0, 1))"),
+            ):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE publish_sessions ADD COLUMN {name} {definition}")
             db.execute("COMMIT")
         except sqlite3.Error:
             if db.in_transaction:
@@ -744,29 +833,47 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
 
     def record_publish_response(self, *, project_id: str, project_version: str,
                                 request_id: str, owner_id: str, status: int,
-                                range_header: str | None = None) -> bool:
+                                range_header: str | None = None,
+                                provider_resource_id: str | None = None) -> bool:
         if (not isinstance(status, int) or isinstance(status, bool)
                 or not 100 <= status <= 599):
             raise ValueError("provider status must be an HTTP status integer")
         if range_header is not None and not isinstance(range_header, str):
             raise ValueError("provider Range header must be a string")
+        if status in (200, 201):
+            if (not isinstance(provider_resource_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", provider_resource_id)):
+                raise ValueError("successful upload response requires a validated provider resource ID")
+        elif provider_resource_id is not None:
+            raise ValueError("provider resource ID is only valid for a completed upload response")
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
                 SELECT state, acknowledged_offset, inflight_start, inflight_end,
-                       artifact_size_bytes, inflight_owner
+                       artifact_size_bytes, inflight_owner, approval_fingerprint,
+                       provider_resource_id
                   FROM publish_sessions
                  WHERE project_id=? AND project_version=? AND request_id=?
             """, (project_id, project_version, request_id)).fetchone()
             if row is None or row[5] != owner_id or row[0] not in {"CHUNK_IN_FLIGHT", "RECONCILING"}:
                 db.execute("ROLLBACK")
                 return False
-            state, acknowledged, start, end, total, _owner = row
+            state, acknowledged, start, end, total, _owner, approval_fingerprint, old_resource_id = row
+            if old_resource_id is not None and old_resource_id != provider_resource_id:
+                db.execute("ROLLBACK")
+                return False
             new_offset = acknowledged
             new_state = "ACTIVE"
+            completion_audit_id = None
             if status in (200, 201):
                 new_state, new_offset = "COMPLETE", total
+                completion_payload = json.dumps({
+                    "project_id": project_id, "project_version": project_version,
+                    "request_id": request_id, "approval_fingerprint": approval_fingerprint,
+                    "provider_resource_id": provider_resource_id, "provider_http_status": status,
+                }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+                completion_audit_id = hashlib.sha256(completion_payload).hexdigest()
             elif status == 308:
                 if range_header:
                     match = re.fullmatch(r"bytes=0-(\d+)", range_header.strip())
@@ -793,16 +900,115 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                    SET state=?, acknowledged_offset=?, inflight_start=?,
                        inflight_end=?, inflight_owner=?,
                        lease_expires_at=CASE WHEN ?='INDETERMINATE' THEN NULL ELSE lease_expires_at END,
+                       provider_resource_id=COALESCE(?, provider_resource_id),
+                       provider_http_status=COALESCE(?, provider_http_status),
+                       completion_audit_id=COALESCE(?, completion_audit_id),
+                       completion_audited=CASE WHEN ?='COMPLETE' THEN 0 ELSE completion_audited END,
                        updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
             """, (new_state, new_offset, retained_start, retained_end, retained_owner,
-                  new_state, self._utc(datetime.now(timezone.utc)), project_id, project_version, request_id))
+                  new_state, provider_resource_id, status if status in (200, 201) else None,
+                  completion_audit_id, new_state, self._utc(datetime.now(timezone.utc)),
+                  project_id, project_version, request_id))
             db.execute("COMMIT")
             return new_state != "INDETERMINATE"
         except sqlite3.Error:
             if db.in_transaction:
                 db.execute("ROLLBACK")
             raise ApprovalStoreError("publish-session acknowledgement could not be committed") from None
+        finally:
+            db.close()
+
+    def begin_publish_completion_recovery(self, *, project_id: str, project_version: str,
+                                          request_id: str, approval_fingerprint: str,
+                                          artifact_id: str, artifact_version: str,
+                                          artifact_sha256: str, artifact_size_bytes: int,
+                                          session_url_sha256: str, owner_id: str,
+                                          lease_seconds: float = 60.0) -> bool:
+        identity = self._session_identity(
+            project_id, project_version, request_id, approval_fingerprint,
+            artifact_id, artifact_version, artifact_sha256, artifact_size_bytes,
+        )
+        url_digest = self._digest_text(session_url_sha256, "session_url_sha256")
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("owner_id must be non-empty")
+        if (not isinstance(lease_seconds, (int, float)) or isinstance(lease_seconds, bool)
+                or not math.isfinite(lease_seconds) or not 1 <= lease_seconds <= 600):
+            raise ValueError("lease_seconds must be finite and between 1 and 600")
+        now = datetime.now(timezone.utc)
+        now_text = self._utc(now)
+        lease = self._utc(now + timedelta(seconds=lease_seconds))
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""
+                SELECT approval_fingerprint, artifact_id, artifact_version,
+                       artifact_sha256, artifact_size_bytes, session_url_sha256,
+                       state, provider_resource_id, provider_http_status,
+                       completion_audit_id, completion_audited,
+                       inflight_owner, lease_expires_at
+                  FROM publish_sessions
+                 WHERE project_id=? AND project_version=? AND request_id=?
+            """, identity[:3]).fetchone()
+            if (row is None or tuple(row[:5]) != tuple(identity[3:])
+                    or row[5] != url_digest or row[6] != "COMPLETE"
+                    or not isinstance(row[7], str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", row[7])
+                    or row[8] not in (200, 201)
+                    or not isinstance(row[9], str) or not re.fullmatch(r"[0-9a-f]{64}", row[9])
+                    or row[10] != 0):
+                db.execute("ROLLBACK")
+                return False
+            previous_owner, previous_lease = row[11], row[12]
+            if previous_owner is not None and previous_owner != owner_id:
+                try:
+                    expired = (isinstance(previous_lease, str)
+                               and datetime.fromisoformat(previous_lease) <= now)
+                except ValueError:
+                    expired = False
+                if not expired:
+                    db.execute("ROLLBACK")
+                    return False
+            db.execute("""
+                UPDATE publish_sessions
+                   SET inflight_owner=?, lease_expires_at=?, updated_at=?
+                 WHERE project_id=? AND project_version=? AND request_id=?
+                   AND state='COMPLETE' AND completion_audited=0
+            """, (owner_id, lease, now_text, *identity[:3]))
+            claimed = db.execute("SELECT changes()").fetchone()[0] == 1
+            db.execute("COMMIT")
+            return claimed
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise ApprovalStoreError("completed publish-session recovery could not be claimed") from None
+        finally:
+            db.close()
+
+    def finalize_publish_completion_audit(self, *, project_id: str,
+                                          project_version: str, request_id: str,
+                                          owner_id: str, completion_audit_id: str) -> bool:
+        if (not isinstance(completion_audit_id, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", completion_audit_id)):
+            raise ValueError("completion_audit_id must be a lowercase SHA-256 digest")
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute("""
+                UPDATE publish_sessions
+                   SET completion_audited=1, inflight_start=NULL, inflight_end=NULL,
+                       inflight_owner=NULL, lease_expires_at=NULL, updated_at=?
+                 WHERE project_id=? AND project_version=? AND request_id=?
+                   AND inflight_owner=? AND state='COMPLETE'
+                   AND completion_audit_id=? AND completion_audited=0
+            """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
+                  request_id, owner_id, completion_audit_id))
+            db.execute("COMMIT")
+            return cursor.rowcount == 1
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise ApprovalStoreError("completed publish-session audit finalization failed") from None
         finally:
             db.close()
 
@@ -840,7 +1046,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                    SET inflight_start=NULL, inflight_end=NULL,
                        inflight_owner=NULL, lease_expires_at=NULL, updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
-                   AND inflight_owner=? AND state IN ('ACTIVE','COMPLETE','FAILED')
+                   AND inflight_owner=? AND state IN ('ACTIVE','FAILED')
             """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
                   request_id, owner_id))
             db.execute("COMMIT")
@@ -932,7 +1138,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         finally:
             db.close()
         payload = {
-            "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
             "consumed": [list(row) for row in consumed],
             "revoked": [list(row) for row in revoked],
             "publish_sessions": [list(row) for row in sessions],
@@ -946,7 +1152,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             raise ValueError("checkpoint key must contain at least 32 bytes")
         payload = self._snapshot_bytes()
         return {
-            "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
             "snapshot_sha256": hashlib.sha256(payload).hexdigest(),
             "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
         }
@@ -955,7 +1161,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         if not isinstance(key, bytes) or len(key) < 32 or not isinstance(checkpoint, dict):
             return False
         if (set(checkpoint) != {"schema", "snapshot_sha256", "hmac_sha256"}
-                or checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v4"):
+                or checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v5"):
             return False
         try:
             expected = self.checkpoint(key)
