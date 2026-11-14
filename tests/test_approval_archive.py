@@ -9,7 +9,9 @@ from unittest.mock import patch
 from pathlib import Path
 from datetime import datetime, timezone
 
-from rhemascript.core.approval_store import ApprovalStoreError, SQLiteApprovalConsumptionStore
+from rhemascript.core.approval_store import (
+    ApprovalStoreError, SQLiteApprovalConsumptionStore, SQLitePublishSessionRegistry,
+)
 from rhemascript.core.approval_archive import (
     export_checkpoint_archive, verify_checkpoint_archive,
 )
@@ -25,7 +27,7 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         self.archive_dir.mkdir(mode=0o700)
         os.chmod(self.db_dir, 0o700)
         os.chmod(self.archive_dir, 0o700)
-        self.store = SQLiteApprovalConsumptionStore(self.db_dir / "approvals.sqlite3")
+        self.store = SQLitePublishSessionRegistry(self.db_dir / "approvals.sqlite3")
         self.key = b"external-archive-authentication-key-32bytes"
         self.archive = self.archive_dir / "checkpoint-0001.json"
 
@@ -173,6 +175,27 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         result = verify_checkpoint_archive(self.archive, key=self.key)
         self.assertTrue(result["archive_valid"])
         self.assertEqual(result["publish_session_count"], 1)
+
+
+    def test_legacy_v3_archive_remains_verifiable(self):
+        legacy_store = SQLiteApprovalConsumptionStore(self.db_dir / "legacy.sqlite3")
+        legacy_archive = self.archive_dir / "legacy-v3.json"
+        export_checkpoint_archive(legacy_store, legacy_archive, key=self.key)
+        result = verify_checkpoint_archive(legacy_archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v3")
+        self.assertEqual(result["publish_session_count"], 0)
+
+    def test_v4_archive_with_empty_publish_sessions_remains_verifiable(self):
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
+            "consumed": [],
+            "revoked": [],
+            "publish_sessions": [],
+        })
+        result = verify_checkpoint_archive(self.archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v4")
 
     def test_archive_rejects_authenticated_consumed_row_with_wrong_width(self):
         self._write_authenticated_payload({
