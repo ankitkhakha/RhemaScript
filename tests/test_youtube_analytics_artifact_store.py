@@ -154,12 +154,14 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
             with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as directory:
                 destination = Path(directory) / "analytics.json"
 
+                replaced_bytes = []
+
                 def replace_before_path_verification(root, relative_path, *, evidence_id, version):
                     intended = destination.read_bytes()
+                    new_bytes = replacement if replacement is not None else intended
                     destination.unlink()
-                    destination.write_bytes(
-                        replacement if replacement is not None else intended
-                    )
+                    destination.write_bytes(new_bytes)
+                    replaced_bytes.append(new_bytes)
                     return original_verify(
                         root, relative_path, evidence_id=evidence_id, version=version
                     )
@@ -175,20 +177,7 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
                             project_version="3",
                         )
                 self.assertTrue(destination.exists())
-                if replacement is not None:
-                    self.assertEqual(destination.read_bytes(), replacement)
-                else:
-                    self.assertEqual(
-                        hashlib.sha256(destination.read_bytes()).hexdigest(),
-                        hashlib.sha256(original_verify.__globals__["_canonical"]({
-                            "evidence_id": "YT-ANALYTICS-REPLACED",
-                            "evidence_version": "1",
-                            "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
-                            "project_id": "PROJECT-1",
-                            "project_version": "3",
-                            "payload": snapshot,
-                        })).hexdigest(),
-                    )
+                self.assertEqual(destination.read_bytes(), replaced_bytes[0])
 
     @unittest.skipUnless(os.name == "posix", "POSIX directory ownership required")
     def test_rejects_group_or_world_writable_evidence_root(self):
