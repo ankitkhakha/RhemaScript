@@ -61,3 +61,29 @@ This is evidence resolution only. It does not change the six existing project ga
 The runtime graph validator now checks the ordered chain per final-film artifact, rather than accepting independent pairwise reachability across unrelated branches. Every EDITED_FILM must be the terminal node of a single directed path that visits every required artifact type in order. Adversarial tests reject (1) an orphan second final film when another film has a valid chain and (2) a chain assembled from disconnected source/script/narration segments. These checks establish structural path continuity only; they do not authenticate source publishers or prove that a claimed derivation is semantically genuine.
 
 Exact implementation/test head `4886efd07d13ef71d57d048979de1075d094fbe5` passed full contract and synthetic integration CI run #1692: https://github.com/ankitkhakha/RhemaScript/actions/runs/43417414768. The first run exposed a stale test assertion expecting the prior generic “disconnected” error; the assertion was aligned with the stricter per-film error and the exact-head run passed.
+
+
+## YouTube Analytics evidence artifacts — 13 November 2026
+
+The V1 artifact catalog now accepts `YOUTUBE_ANALYTICS_SNAPSHOT` and `YOUTUBE_ANALYTICS_COMPARISON` records.
+
+- A snapshot artifact must carry its internal `snapshot_sha256`.
+- A comparison artifact must carry its `comparison_sha256`, the distinct artifact IDs of its current and previous snapshot sources, and both source snapshots' exact `snapshot_sha256` values.
+- Both source IDs must resolve to artifacts of type `YOUTUBE_ANALYTICS_SNAPSHOT` in the same project and project version, and the recorded source digests must match those artifact records.
+- The Analytics artifact store requires both exact source snapshot objects and recomputes the comparison from them before persistence; an internally rehashed comparison envelope alone is not sufficient to establish derivation.
+- When a comparison is approved or referenced by capability evidence, `verify_pack_artifacts` also byte-reads both source snapshot envelopes and recomputes the comparison from those exact payloads; a byte-valid but forged comparison is rejected.
+- The provenance graph must contain explicit `DERIVED_FROM` edges from both exact snapshot artifacts to the comparison artifact.
+- The normal evidence-pack provenance graph can link each source snapshot to its derived comparison.
+- When an analytics artifact is marked VERIFIED/APPROVED/ACCEPTED or is referenced by capability evidence, the existing byte-verification path additionally requires its `local_path` and file-byte `sha256`; the internal snapshot/comparison digest and the file-byte digest are separate identities.
+
+These catalog additions do not write files, fetch provider data, establish source authenticity, or mark artifacts verified. Snapshot creation remains offline and synthetic until the owner performs an authorized read-only provider retrieval. The JSON Schema and runtime validator both enforce the Analytics artifact metadata shape; runtime checks also resolve comparison source IDs to actual snapshot artifacts.
+
+
+## Validated-pack trust boundary — 14 November 2026
+
+`validate_evidence_pack` now validates a detached deep copy of the caller's manifest, so later mutations to the original input do not alter the returned `ValidatedEvidencePack`. The dataclass is frozen only at the outer level; its nested dictionaries remain mutable and the type is publicly constructible. Accordingly, `verify_pack_artifacts` rebuilds and structurally revalidates a detached manifest snapshot before byte verification. It does not trust the dataclass type or assume that validation performed earlier still applies to the current nested contents. A regression verifies both input detachment and rejection of a mutated validated pack. This is integrity validation only; it does not grant generation or publishing authority.
+
+
+### Local-source resolver result provenance — 14 November 2026
+
+When \`run_evidence_pack\` resolves a catalogued local source, it now requires the returned \`EvidenceVersion\` to be an exact verifier-issued object from \`verify_artifact\`, not merely a dataclass with matching ID/version/digest fields. The accompanying \`LocalSourceReceipt\` must match the verified bytes, requested opaque reference, project/version scope and catalog fingerprint, and must retain \`CONTENT_VERIFIED\`, \`source_authentication=NOT_CHECKED\`, and \`claim_relevance=NOT_CHECKED\`. Regression tests reject a resolver subclass that fabricates a matching \`EvidenceVersion\` and another that returns real verified bytes but overstates source authentication in its receipt. Byte identity does not establish publisher authenticity or claim relevance.
