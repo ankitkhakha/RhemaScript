@@ -516,22 +516,47 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         ))
         self.assertTrue(self.store.record_publish_response(
             project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
-            owner_id="gateway-A", status=201,
-        ))
-        self.assertTrue(self.store.finalize_publish_session_operation(
-            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
-            owner_id="gateway-A",
+            owner_id="gateway-A", status=201, provider_resource_id="video-123",
         ))
         record = self.store.get_publish_session(
             project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
         )
         self.assertEqual(record["state"], "COMPLETE")
         self.assertEqual(record["acknowledged_offset"], 10)
+        self.assertEqual(record["provider_resource_id"], "video-123")
+        self.assertEqual(record["provider_http_status"], 201)
+        self.assertRegex(record["completion_audit_id"], r"^[0-9a-f]{64}$")
+        self.assertTrue(self.store.finalize_publish_completion_audit(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+            owner_id="gateway-A", completion_audit_id=record["completion_audit_id"],
+        ))
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["completion_audited"], 1)
         with self.assertRaisesRegex(ValueError, "chunk byte range is invalid"):
             self.store.begin_publish_chunk(
                 **args, owner_id="gateway-A", start=10, end=10, total=10,
                 body_size=1, lease_seconds=60,
             )
+
+    def test_completed_response_requires_a_valid_provider_resource_id(self):
+        self.reserve_and_bind()
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertTrue(self.store.begin_publish_chunk(
+            **args, owner_id="gateway-A", start=0, end=4, total=10,
+            body_size=5, lease_seconds=60,
+        ))
+        with self.assertRaisesRegex(ValueError, "validated provider resource ID"):
+            self.store.record_publish_response(
+                project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+                owner_id="gateway-A", status=201,
+            )
+        record = self.store.get_publish_session(
+            project_id="PROJECT-1", project_version="7", request_id="REQUEST-1",
+        )
+        self.assertEqual(record["state"], "CHUNK_IN_FLIGHT")
+        self.assertIsNone(record["provider_resource_id"])
 
     def test_wrong_session_url_and_out_of_order_ranges_are_rejected(self):
         self.reserve_and_bind()
@@ -651,7 +676,7 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.reserve_and_bind()
         key = b"publish-session-checkpoint-key-32-bytes!"
         checkpoint = self.store.checkpoint(key)
-        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v4")
+        self.assertEqual(checkpoint["schema"], "RhemaScript.ApprovalStateCheckpoint.v5")
         self.assertTrue(self.store.verify_checkpoint(checkpoint, key))
         with sqlite3.connect(self.path) as db:
             db.execute(

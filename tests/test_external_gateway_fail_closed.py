@@ -4,6 +4,7 @@ import json
 import hashlib
 import os
 import tempfile
+import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from rhemascript.core.approval_store import SQLitePublishSessionRegistry
 from rhemascript.integrations.session_url_vault import (
     SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
 )
+from rhemascript.integrations.audit import JsonlAuditSink
 
 from rhemascript.interfaces.external import (
     ExternalIntegrationError,
@@ -505,6 +507,117 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                 project_id="RS-1", source_version="1.0",
             )
         self.assertEqual(transport.calls, [])
+
+    def test_completed_upload_result_and_audit_recover_idempotently_after_crash(self):
+        authority = self.publish_authority("recover-complete-1")
+        approvals = authority["verified_approvals"]
+        first = approvals[0]
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque-complete"
+        temporary, registry, vault = self.make_registry(authority, "recover-complete-1", session_url=session_url)
+        self.addCleanup(temporary.cleanup)
+        identity = {
+            "project_id": first.project_id,
+            "project_version": first.project_version,
+            "request_id": first.request_id,
+            "approval_fingerprint": _publish_approval_fingerprint(approvals),
+            "artifact_id": first.artifact_id,
+            "artifact_version": first.artifact_version,
+            "artifact_sha256": first.artifact_sha256,
+            "artifact_size_bytes": first.artifact_size_bytes,
+        }
+        url_digest = hashlib.sha256(session_url.encode()).hexdigest()
+        self.assertTrue(registry.begin_publish_chunk(
+            **identity, session_url_sha256=url_digest, owner_id="gateway-before-crash",
+            start=0, end=first.artifact_size_bytes - 1,
+            total=first.artifact_size_bytes, body_size=first.artifact_size_bytes,
+        ))
+        self.assertTrue(registry.record_publish_response(
+            project_id=first.project_id, project_version=first.project_version,
+            request_id=first.request_id, owner_id="gateway-before-crash",
+            status=201, provider_resource_id="video-recovered-1",
+        ))
+        completed = registry.get_publish_session(
+            project_id=first.project_id, project_version=first.project_version,
+            request_id=first.request_id,
+        )
+        self.assertEqual(completed["state"], "COMPLETE")
+        self.assertEqual(completed["provider_resource_id"], "video-recovered-1")
+        self.assertEqual(completed["completion_audited"], 0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
+            with sqlite3.connect(registry.path) as db:
+                db.execute(
+                    "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                    ("2000-01-01T00:00:00+00:00", first.request_id),
+                )
+            calls = {"count": 0}
+            def crash_after_durable_audit(event):
+                sink(event)
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise OSError("simulated process loss after audit fsync")
+            first_gateway = ExternalIntegrationGateway(
+                (), audit_sink=crash_after_durable_audit,
+                publish_session_registry=registry, session_url_vault=vault,
+            )
+            with self.assertRaisesRegex(ExternalIntegrationError, "audit could not be recovered"):
+                first_gateway.recover_completed_publish_result(
+                    project_id=first.project_id, project_version=first.project_version,
+                    request_id=first.request_id, verified_approvals=approvals,
+                    artifact_binding={
+                        "artifact_id": first.artifact_id,
+                        "artifact_version": first.artifact_version,
+                        "artifact_sha256": first.artifact_sha256,
+                        "artifact_size_bytes": first.artifact_size_bytes,
+                    },
+                )
+            pending = registry.get_publish_session(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id,
+            )
+            self.assertEqual(pending["completion_audited"], 0)
+            with sqlite3.connect(registry.path) as db:
+                db.execute(
+                    "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
+                    ("2000-01-01T00:00:00+00:00", first.request_id),
+                )
+            restarted_gateway = ExternalIntegrationGateway(
+                (), audit_sink=sink, publish_session_registry=registry,
+                session_url_vault=vault,
+            )
+            recovered = restarted_gateway.recover_completed_publish_result(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id, verified_approvals=approvals,
+                artifact_binding={
+                    "artifact_id": first.artifact_id,
+                    "artifact_version": first.artifact_version,
+                    "artifact_sha256": first.artifact_sha256,
+                    "artifact_size_bytes": first.artifact_size_bytes,
+                },
+            )
+            self.assertEqual(recovered, "video-recovered-1")
+            finalized = registry.get_publish_session(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id,
+            )
+            self.assertEqual(finalized["completion_audited"], 1)
+            self.assertIsNone(finalized["inflight_owner"])
+            records = [json.loads(line) for line in (Path(directory) / "audit.jsonl").read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["provider_resource_id"], "video-recovered-1")
+            self.assertEqual(records[0]["completion_event_id"], completed["completion_audit_id"])
+            self.assertEqual(restarted_gateway.recover_completed_publish_result(
+                project_id=first.project_id, project_version=first.project_version,
+                request_id=first.request_id, verified_approvals=approvals,
+                artifact_binding={
+                    "artifact_id": first.artifact_id,
+                    "artifact_version": first.artifact_version,
+                    "artifact_sha256": first.artifact_sha256,
+                    "artifact_size_bytes": first.artifact_size_bytes,
+                },
+            ), "video-recovered-1")
+            self.assertEqual(len((Path(directory) / "audit.jsonl").read_text().splitlines()), 1)
 
     def test_write_completion_audit_failure_is_indeterminate(self):
         class SuccessTransport:

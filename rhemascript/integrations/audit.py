@@ -6,8 +6,13 @@ payloads, headers, credentials, URLs, and arbitrary caller-supplied fields.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX import compatibility
+    fcntl = None
 import json
 import os
+import re
 import stat
 import threading
 from pathlib import Path
@@ -22,14 +27,14 @@ _ALLOWED_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
-    "timestamp_utc",
+    "timestamp_utc", "provider_resource_id", "completion_event_id",
 }
 _REQUIRED_FIELDS = {"interface_id", "provider", "request_id", "operation", "phase"}
 _ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED"}
 _SAFE_STRING_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key", "phase", "error_type",
-    "timestamp_utc",
+    "timestamp_utc", "provider_resource_id", "completion_event_id",
 }
 _SAFE_INTEGER_FIELDS = {"request_bytes", "response_bytes", "http_status"}
 
@@ -76,7 +81,16 @@ class JsonlAuditSink:
         except (TypeError, ValueError):
             raise AuditSinkError("audit event is not serializable") from None
 
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        completion_event_id = record_data.get("completion_event_id")
+        if completion_event_id is not None:
+            if fcntl is None:
+                raise AuditSinkError("idempotent completion audit requires POSIX file locking")
+            if not isinstance(completion_event_id, str) or not re.fullmatch(r"[0-9a-f]{64}", completion_event_id):
+                raise AuditSinkError("completion event ID must be a lowercase SHA-256 digest")
+            resource_id = record_data.get("provider_resource_id")
+            if not isinstance(resource_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id):
+                raise AuditSinkError("completed provider resource ID is invalid")
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
         flags |= getattr(os, "O_NOFOLLOW", 0)
         with self._lock:
             descriptor = None
@@ -89,6 +103,17 @@ class JsonlAuditSink:
                     raise AuditSinkError("audit destination must be owned by the current user")
                 if hasattr(os, "fchmod"):
                     os.fchmod(descriptor, 0o600)
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                if completion_event_id is not None:
+                    with os.fdopen(os.dup(descriptor), "rb") as existing_log:
+                        for line in existing_log:
+                            try:
+                                existing = json.loads(line)
+                            except (UnicodeDecodeError, json.JSONDecodeError):
+                                raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
+                            if isinstance(existing, dict) and existing.get("completion_event_id") == completion_event_id:
+                                return
                 view = memoryview(record)
                 while view:
                     written = os.write(descriptor, view)
@@ -102,4 +127,9 @@ class JsonlAuditSink:
                 raise AuditSinkError("audit record could not be durably persisted") from None
             finally:
                 if descriptor is not None:
+                    try:
+                        if fcntl is not None:
+                            fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
                     os.close(descriptor)

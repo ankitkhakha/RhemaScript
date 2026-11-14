@@ -34,6 +34,20 @@ class JsonlAuditSinkTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    def test_completion_audit_event_is_idempotent_across_retries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            event = self.event(
+                phase="COMPLETED", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="a" * 64,
+            )
+            sink(event)
+            sink(event)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["completion_event_id"], "a" * 64)
+
     def test_rejects_payload_or_secret_bearing_fields(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
