@@ -1,4 +1,5 @@
 import json
+import multiprocessing
 import os
 import stat
 import tempfile
@@ -283,6 +284,61 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaises(AuditSinkError):
                 sink(self.event())
             self.assertEqual(target.read_text(), "")
+
+
+    @unittest.skipUnless(os.name == "posix", "POSIX flock semantics required")
+    def test_independent_processes_serialize_appends_to_one_audit_file(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            workers, writes_per_worker = 4, 4
+            barrier = context.Barrier(workers)
+            processes = [
+                context.Process(
+                    target=_append_audit_events_from_process,
+                    args=(str(path), worker_id, writes_per_worker, barrier, False),
+                )
+                for worker_id in range(workers)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=30)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            self.assertTrue(all(process.exitcode == 0 for process in processes))
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            expected = workers * writes_per_worker
+            self.assertEqual(len(records), expected)
+            request_ids = [record["request_id"] for record in records]
+            self.assertEqual(len(set(request_ids)), expected)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX flock semantics required")
+    def test_independent_processes_deduplicate_same_completion_event(self):
+        context = multiprocessing.get_context("fork")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            workers, retries_per_worker = 4, 3
+            barrier = context.Barrier(workers)
+            processes = [
+                context.Process(
+                    target=_append_audit_events_from_process,
+                    args=(str(path), worker_id, retries_per_worker, barrier, True),
+                )
+                for worker_id in range(workers)
+            ]
+            for process in processes:
+                process.start()
+            for process in processes:
+                process.join(timeout=30)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+            self.assertTrue(all(process.exitcode == 0 for process in processes))
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["completion_event_id"], "c" * 64)
 
 
 if __name__ == "__main__":
