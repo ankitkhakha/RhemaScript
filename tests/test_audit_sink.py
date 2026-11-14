@@ -222,6 +222,15 @@ class JsonlAuditSinkTests(unittest.TestCase):
                 with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                     sink(self.event(request_id=f"after-duplicate-{index}"))
 
+    def test_rejects_excessively_nested_historical_json_as_audit_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            nested = b"[" * 10000 + b"0" + b"]" * 10000
+            path.write_bytes(b'{"metadata":' + nested + b"}\\n")
+            sink = JsonlAuditSink(path)
+            with self.assertRaisesRegex(AuditSinkError, "malformed records"):
+                sink(self.event(request_id="after-deep-json"))
+
     def test_rejects_nonstandard_numeric_constants_in_historical_audit_rows(self):
         for constant in (b"NaN", b"Infinity", b"-Infinity"):
             with self.subTest(constant=constant), tempfile.TemporaryDirectory() as directory:
