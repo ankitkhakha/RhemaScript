@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.core.approval_store import SQLitePublishSessionRegistry
+from rhemascript.integrations.audit import JsonlAuditSink
 from rhemascript.integrations.session_url_vault import (
     SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
 )
@@ -413,9 +414,14 @@ class YouTubeIntegrationTests(unittest.TestCase):
             vault = SQLiteEncryptedSessionUrlVault(
                 Path(registry_directory) / "session-url-vault.sqlite3", bytes(range(32)),
             )
+            audit_path = Path(registry_directory) / "provider-audit.jsonl"
+            durable_audit = JsonlAuditSink(audit_path)
+            def record_event(event):
+                durable_audit(event)
+                events.append(event)
             gateway = ExternalIntegrationGateway(
                 (youtube_provider_binding(),), transport=transport,
-                credential_resolver=lambda provider: {}, audit_sink=events.append,
+                credential_resolver=lambda provider: {}, audit_sink=record_event,
                 publish_session_registry=registry, session_url_vault=vault, enabled=True,
             )
             client = YouTubeClient(self.config(), gateway=gateway)
