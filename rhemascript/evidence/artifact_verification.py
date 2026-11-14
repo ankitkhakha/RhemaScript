@@ -292,7 +292,7 @@ def verify_json_artifact(
     rel_path, content = _read_artifact_bytes(root, relative_path)
     try:
         payload = json.loads(content)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise EvidenceIntegrityError("evidence artifact must contain valid JSON") from exc
     if not isinstance(payload, dict):
         raise EvidenceIntegrityError("evidence artifact JSON must be an object")
