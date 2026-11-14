@@ -47,6 +47,21 @@ def _canonical(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build a JSON object while rejecting duplicate member names at every depth."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("JSON object contains a duplicate member name")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    """Reject JavaScript-style NaN/Infinity tokens, which are not standard JSON."""
+    raise ValueError(f"JSON contains a non-standard numeric constant: {value}")
+
+
 @dataclass(frozen=True)
 class EvidenceVersion:
     evidence_id: str
@@ -291,9 +306,13 @@ def verify_json_artifact(
     """
     rel_path, content = _read_artifact_bytes(root, relative_path)
     try:
-        payload = json.loads(content)
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
-        raise EvidenceIntegrityError("evidence artifact must contain valid JSON") from exc
+        payload = json.loads(
+            content.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise EvidenceIntegrityError("evidence artifact must contain valid unambiguous UTF-8 JSON") from exc
     if not isinstance(payload, dict):
         raise EvidenceIntegrityError("evidence artifact JSON must be an object")
     evidence_id = payload.get("evidence_id")
