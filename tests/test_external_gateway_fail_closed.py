@@ -638,6 +638,14 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["provider_resource_id"], "video-recovered-1")
             self.assertEqual(records[0]["completion_event_id"], completed["completion_audit_id"])
+            self.assertEqual(records[0]["approval_fingerprint"], completed["approval_fingerprint"])
+            self.assertEqual(records[0]["artifact_id"], first.artifact_id)
+            self.assertEqual(records[0]["artifact_version"], first.artifact_version)
+            self.assertEqual(records[0]["artifact_sha256"], first.artifact_sha256)
+            self.assertEqual(records[0]["artifact_size_bytes"], first.artifact_size_bytes)
+            self.assertEqual(records[0]["publish_session_state"], "COMPLETE")
+            self.assertNotIn("session_url", records[0])
+            self.assertNotIn("vault_reference", records[0])
             self.assertEqual(restarted_gateway.recover_completed_publish_result(
                 project_id=first.project_id, project_version=first.project_version,
                 request_id=first.request_id, verified_approvals=approvals,
