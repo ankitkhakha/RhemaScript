@@ -324,12 +324,18 @@ def export_checkpoint_archive(
     file_fd: int | None = None
     created_identity: tuple[int, int] | None = None
     try:
-        store_parent_fd = _open_private_directory(store.path.parent)
+        store_parent_path = Path(os.path.abspath(os.fspath(store.path.parent)))
+        if (target.parent == store_parent_path
+                or store_parent_path in target.parent.parents):
+            raise ApprovalStoreError(
+                "checkpoint archive must be outside the approval database directory"
+            )
+        store_parent_fd = _open_private_directory(store_parent_path)
         try:
             store_parent = os.fstat(store_parent_fd)
-            if ((store_parent.st_dev, store_parent.st_ino) == parent_identity):
+            if (store_parent.st_dev, store_parent.st_ino) == parent_identity:
                 raise ApprovalStoreError(
-                    "checkpoint archive must be outside the approval database directory"
+                    "checkpoint archive directory identity aliases the database directory"
                 )
         finally:
             os.close(store_parent_fd)
