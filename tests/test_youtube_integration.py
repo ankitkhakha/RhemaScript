@@ -713,10 +713,245 @@ class YouTubeIntegrationTests(unittest.TestCase):
                     privacy_status="public", publish_at="2026-12-01T12:00:00Z",
                     **self.publish_context())
 
+    def test_analytics_report_validates_header_order_and_empty_rows(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,likes",
+        }
+        valid = {
+            "kind": "youtubeAnalytics#resultTable",
+            "columnHeaders": [
+                {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+                {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+                {"name": "likes", "columnType": "METRIC", "dataType": "INTEGER"},
+            ],
+            "rows": [["2026-11-01", 12, 2]],
+        }
+        self.assertEqual(_validate_analytics_report(valid, params), valid)
+        empty = {**valid}
+        empty.pop("rows")
+        self.assertEqual(_validate_analytics_report(empty, params), empty)
+
+        invalid_reports = (
+            {**valid, "kind": "unexpected"},
+            {**valid, "columnHeaders": list(reversed(valid["columnHeaders"]))},
+            {**valid, "rows": [["2026-11-01", 12]]},
+            {**valid, "rows": "not-a-list"},
+            {**valid, "rows": [["2026-11-01", {"unexpected": "object"}, 2]]},
+        )
+        for report in invalid_reports:
+            with self.subTest(report=report):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_report(report, params)
+
+    def test_analytics_report_enforces_header_and_row_data_types(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,estimatedMinutesWatched",
+        }
+        valid = {
+            "kind": "youtubeAnalytics#resultTable",
+            "columnHeaders": [
+                {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+                {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+                {"name": "estimatedMinutesWatched", "columnType": "METRIC", "dataType": "FLOAT"},
+            ],
+            "rows": [["2026-11-01", 12, 3.5]],
+        }
+        self.assertEqual(_validate_analytics_report(valid, params), valid)
+        invalid = []
+        invalid.append({
+            **valid,
+            "columnHeaders": [
+                {**valid["columnHeaders"][0], "dataType": "INTEGER"},
+                *valid["columnHeaders"][1:],
+            ],
+        })
+        invalid.append({
+            **valid,
+            "columnHeaders": [
+                valid["columnHeaders"][0],
+                {**valid["columnHeaders"][1], "dataType": "STRING"},
+                valid["columnHeaders"][2],
+            ],
+        })
+        invalid.append({**valid, "columnHeaders": [
+            *valid["columnHeaders"][:2],
+            {**valid["columnHeaders"][2], "dataType": "UNRECOGNIZED"},
+        ]})
+        invalid.extend((
+            {**valid, "rows": [[20261101, 12, 3.5]]},
+            {**valid, "rows": [["2026-11-01", "12", 3.5]]},
+            {**valid, "rows": [["2026-11-01", 12, "3.5"]]},
+            {**valid, "rows": [["2026-11-01", 12, None]]},
+            {**valid, "rows": [["2026-11-01", True, 3.5]]},
+        ))
+        for report in invalid:
+            with self.subTest(report=report):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_report(report, params)
+
+    def test_analytics_report_rejects_duplicate_full_dimension_tuples(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day,country",
+            "metrics": "views",
+        }
+        headers = [
+            {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+            {"name": "country", "columnType": "DIMENSION", "dataType": "STRING"},
+            {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+        ]
+        valid = {
+            "kind": "youtubeAnalytics#resultTable",
+            "columnHeaders": headers,
+            "rows": [
+                ["2026-11-01", "US", 12],
+                ["2026-11-01", "CA", 7],
+                ["2026-11-02", "US", 9],
+            ],
+        }
+        self.assertEqual(_validate_analytics_report(valid, params), valid)
+        duplicate = {
+            **valid,
+            "rows": [
+                ["2026-11-01", "US", 12],
+                ["2026-11-01", "US", 13],
+            ],
+        }
+        with self.assertRaisesRegex(YouTubeIntegrationError, "duplicate dimension"):
+            _validate_analytics_report(duplicate, params)
+
+    def test_dimensionless_analytics_report_has_at_most_one_aggregate_row(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "metrics": "views",
+        }
+        report = {
+            "kind": "youtubeAnalytics#resultTable",
+            "columnHeaders": [
+                {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+            ],
+            "rows": [[12], [13]],
+        }
+        with self.assertRaisesRegex(YouTubeIntegrationError, "duplicate dimension"):
+            _validate_analytics_report(report, params)
+
+    def test_analytics_client_omits_optional_dimensions_parameter(self):
+        from urllib.parse import parse_qs, urlparse
+
+        class Gateway:
+            def __init__(self):
+                self.analytics_url = None
+
+            def request(self, interface_id, operation, url, **kwargs):
+                if operation == "OAUTH_TOKEN":
+                    return 200, b'{"access_token":"analytics-token"}', {}
+                if operation == "ANALYTICS_READ":
+                    self.analytics_url = url
+                    return 200, (
+                        b'{"kind":"youtubeAnalytics#resultTable",'
+                        b'"columnHeaders":[{"name":"views","columnType":"METRIC","dataType":"INTEGER"}],'
+                        b'"rows":[[12]]}'
+                    ), {}
+                raise AssertionError("unexpected provider operation")
+
+        gateway = Gateway()
+        client = YouTubeClient(self.config(), gateway=gateway)
+        result = client.analytics(
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 11, 2),
+            metrics="views",
+            dimensions="",
+        )
+        self.assertEqual(result["rows"], [[12]])
+        query = parse_qs(urlparse(gateway.analytics_url).query)
+        self.assertNotIn("dimensions", query)
+
+    def test_analytics_report_rejects_non_finite_and_boolean_values(self):
+        from rhemascript.integrations.youtube import _validate_analytics_report
+
+        params = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,likes",
+        }
+        headers = [
+            {"name": "day", "columnType": "DIMENSION", "dataType": "STRING"},
+            {"name": "views", "columnType": "METRIC", "dataType": "INTEGER"},
+            {"name": "likes", "columnType": "METRIC", "dataType": "INTEGER"},
+        ]
+        for invalid in (float("nan"), float("inf"), float("-inf"), True):
+            report = {
+                "kind": "youtubeAnalytics#resultTable",
+                "columnHeaders": headers,
+                "rows": [["2026-11-01", invalid, 2]],
+            }
+            with self.subTest(value=repr(invalid)):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_report(report, params)
+
+    def test_analytics_request_rejects_injected_or_duplicate_identifiers_and_bad_filters(self):
+        from rhemascript.integrations.youtube import _validate_analytics_request
+
+        base = {
+            "ids": "channel==MINE", "startDate": "2026-11-01",
+            "endDate": "2026-11-02", "dimensions": "day",
+            "metrics": "views,likes",
+        }
+        invalid = (
+            {**base, "metrics": "views,views"},
+            {**base, "metrics": "views&alt=csv"},
+            {**base, "dimensions": "day;country"},
+            {**base, "filters": "country=US"},
+            {**base, "filters": "country=="},
+            {**base, "filters": "country==US;"},
+            {**base, "filters": "country==US\ncountry==IN"},
+            {**base, "filters": "country==U\tS"},
+            {**base, "filters": "country==U\x00S"},
+            {**base, "filters": "country==U\x1fS"},
+            {**base, "filters": "country==U\x7fS"},
+            {**base, "filters": "country==U\x85S"},
+            {**base, "filters": "country==U\x9fS"},
+            {**base, "alt": "csv"},
+            {**base, "ids": "channel==OTHER"},
+            {**base, "startDate": "2026-2-1"},
+        )
+        for params in invalid:
+            with self.subTest(params=params):
+                with self.assertRaises(YouTubeIntegrationError):
+                    _validate_analytics_request(params)
+
     def test_analytics_date_range_is_validated_before_network(self):
         client = YouTubeClient(self.config(), transport=lambda *args: self.fail("network must not be called"))
         with self.assertRaisesRegex(YouTubeIntegrationError, "cannot precede"):
             client.analytics(start_date=date(2026, 12, 2), end_date=date(2026, 12, 1))
+
+    def test_analytics_date_range_is_bounded_before_diagnostic_enumeration(self):
+        from rhemascript.integrations.youtube import (
+            MAX_ANALYTICS_DATE_RANGE_DAYS,
+            _validate_analytics_request,
+        )
+
+        base = {
+            "ids": "channel==MINE", "startDate": "2000-01-01",
+            "endDate": "2027-05-18", "metrics": "views", "dimensions": "day",
+        }
+        self.assertEqual(MAX_ANALYTICS_DATE_RANGE_DAYS, 10_000)
+        _validate_analytics_request(base)  # inclusive boundary is accepted
+        oversized = {**base, "endDate": "2027-05-19"}
+        with self.assertRaisesRegex(YouTubeIntegrationError, "cannot exceed 10000 inclusive days"):
+            _validate_analytics_request(oversized)
 
     def test_upload_rejects_invalid_tags_and_category_before_network(self):
         client = YouTubeClient(
