@@ -227,6 +227,38 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         self.assertEqual((self.directory / backup.name).read_bytes(), replacement)
         self.assertFalse((original_directory / backup.name).exists())
 
+    def test_backup_cleans_partial_file_after_write_failure(self):
+        backup = self.directory / "backup-partial.sqlite3"
+        real_write = os.write
+        calls = 0
+
+        def partial_then_fail(descriptor, data):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_write(descriptor, data[: min(16, len(data))])
+            raise OSError("simulated disk-full during backup write")
+
+        with patch("rhemascript.core.approval_store.os.write", side_effect=partial_then_fail):
+            with self.assertRaisesRegex(ApprovalStoreError, "backup failed safely"):
+                self.store.backup_to(backup)
+
+        self.assertGreaterEqual(calls, 2)
+        self.assertFalse(backup.exists())
+        self.assertTrue(self.path.exists())
+
+    def test_backup_cleans_created_file_after_fsync_failure(self):
+        backup = self.directory / "backup-fsync.sqlite3"
+        with patch(
+            "rhemascript.core.approval_store.os.fsync",
+            side_effect=OSError("simulated fsync failure"),
+        ):
+            with self.assertRaisesRegex(ApprovalStoreError, "backup failed safely"):
+                self.store.backup_to(backup)
+
+        self.assertFalse(backup.exists())
+        self.assertTrue(self.path.exists())
+
     def test_checkpoint_rejects_wrong_key_and_malformed_payload(self):
         checkpoint = self.store.checkpoint(b"approval-state-checkpoint-key-32-bytes!!")
         self.assertFalse(self.store.verify_checkpoint(checkpoint, b"wrong-key-which-is-at-least-32-bytes!"))
