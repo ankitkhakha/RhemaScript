@@ -32,26 +32,64 @@ def _canonical(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def _private_directory(path: Path) -> None:
+def _open_private_directory(path: Path) -> int:
+    """Open and pin an owner-private directory without following any path symlink."""
+    absolute = Path(os.path.abspath(os.fspath(path)))
+    if (os.name != "posix" or os.open not in getattr(os, "supports_dir_fd", set())
+            or not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW")):
+        raise ApprovalStoreError("safe archive directory anchoring is unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    descriptor = os.open(absolute.anchor, flags)
     try:
-        absolute = path.absolute()
-        current = Path(absolute.anchor)
         for component in absolute.parts[1:]:
-            current = current / component
-            info = current.lstat()
-            if stat.S_ISLNK(info.st_mode):
-                raise ApprovalStoreError("archive path must not contain symlinked directories")
-        info = path.lstat()
-        actual = path.stat()
-    except ApprovalStoreError:
+            next_descriptor = os.open(
+                component, flags, dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = next_descriptor
+        info = os.fstat(descriptor)
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or stat.S_IMODE(info.st_mode) & 0o077):
+            raise ApprovalStoreError(
+                "archive directory must be owner-owned and private (0700 or stricter)"
+            )
+        return descriptor
+    except Exception:
+        os.close(descriptor)
         raise
-    except OSError:
-        raise ApprovalStoreError("archive directory must already exist") from None
-    if (stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(actual.st_mode)
-            or actual.st_uid != os.getuid()
-            or stat.S_IMODE(actual.st_mode) & 0o077):
-        raise ApprovalStoreError("archive directory must be owner-owned and private (0700 or stricter)")
 
+
+def _assert_private_directory_identity(
+    path: Path, expected_identity: tuple[int, int],
+) -> None:
+    descriptor = _open_private_directory(path)
+    try:
+        info = os.fstat(descriptor)
+        if (info.st_dev, info.st_ino) != expected_identity:
+            raise ApprovalStoreError("archive directory changed during operation")
+    finally:
+        os.close(descriptor)
+
+
+def _private_directory(path: Path) -> None:
+    """Compatibility validation wrapper for an owner-private directory."""
+    descriptor = _open_private_directory(path)
+    os.close(descriptor)
+
+
+def _cleanup_created_archive(
+    parent_fd: int, filename: str, created_identity: tuple[int, int] | None,
+) -> None:
+    """Remove only the exact inode created by this export, relative to its pinned parent."""
+    if created_identity is None:
+        return
+    try:
+        current = os.stat(filename, dir_fd=parent_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) == created_identity:
+            os.unlink(filename, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+    except OSError:
+        pass
 
 def _validate_key(key: bytes) -> None:
     if not isinstance(key, bytes) or len(key) < 32:
@@ -259,7 +297,7 @@ def export_checkpoint_archive(
     key: bytes,
     generation: int | None = None,
 ) -> Path:
-    """Write a one-time authenticated snapshot; V2 binds a monotonic generation."""
+    """Write a one-time authenticated snapshot through a pinned private directory."""
     if not isinstance(store, SQLiteApprovalConsumptionStore):
         raise TypeError("store must be a SQLiteApprovalConsumptionStore")
     _validate_key(key)
@@ -267,55 +305,80 @@ def export_checkpoint_archive(
         not isinstance(generation, int) or isinstance(generation, bool) or generation < 1
     ):
         raise ValueError("checkpoint generation must be a positive integer")
-    target = Path(destination).expanduser()
-    _private_directory(target.parent)
-    if target.parent.resolve() == store.path.parent.resolve():
-        raise ApprovalStoreError("checkpoint archive must be outside the approval database directory")
-    if target.resolve(strict=False) == store.path.resolve(strict=False):
-        raise ApprovalStoreError("checkpoint archive must not overwrite the approval database")
+    target = Path(os.path.abspath(os.fspath(Path(destination).expanduser())))
+    if not target.name:
+        raise ApprovalStoreError("checkpoint archive destination must name a file")
 
-    snapshot = store._snapshot_bytes()
-    digest = hashlib.sha256(snapshot).hexdigest()
-    created = datetime.now(timezone.utc).isoformat()
-    signed_fields = {
-        "schema": ARCHIVE_SCHEMA_V2 if generation is not None else ARCHIVE_SCHEMA_V1,
-        "created_at": created,
-        "snapshot_sha256": digest,
-        "snapshot_b64": base64.b64encode(snapshot).decode("ascii"),
-    }
-    if generation is not None:
-        signed_fields["generation"] = generation
-    envelope = dict(signed_fields)
-    envelope["hmac_sha256"] = hmac.new(key, _canonical(signed_fields), hashlib.sha256).hexdigest()
-    encoded = _canonical(envelope)
-    if len(encoded) > MAX_ARCHIVE_BYTES:
-        raise ApprovalStoreError("checkpoint archive exceeds the permitted size")
-
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = _open_private_directory(target.parent)
+    parent_info = os.fstat(parent_fd)
+    parent_identity = (parent_info.st_dev, parent_info.st_ino)
+    file_fd: int | None = None
+    created_identity: tuple[int, int] | None = None
     try:
-        fd = os.open(target, flags, 0o600)
+        store_parent_fd = _open_private_directory(store.path.parent)
         try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "wb", closefd=False) as stream:
-                stream.write(encoded)
-                stream.flush()
-                os.fsync(fd)
+            store_parent = os.fstat(store_parent_fd)
+            if ((store_parent.st_dev, store_parent.st_ino) == parent_identity):
+                raise ApprovalStoreError(
+                    "checkpoint archive must be outside the approval database directory"
+                )
         finally:
-            os.close(fd)
-        directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+            os.close(store_parent_fd)
+
+        snapshot = store._snapshot_bytes()
+        digest = hashlib.sha256(snapshot).hexdigest()
+        created = datetime.now(timezone.utc).isoformat()
+        signed_fields = {
+            "schema": ARCHIVE_SCHEMA_V2 if generation is not None else ARCHIVE_SCHEMA_V1,
+            "created_at": created,
+            "snapshot_sha256": digest,
+            "snapshot_b64": base64.b64encode(snapshot).decode("ascii"),
+        }
+        if generation is not None:
+            signed_fields["generation"] = generation
+        envelope = dict(signed_fields)
+        envelope["hmac_sha256"] = hmac.new(
+            key, _canonical(signed_fields), hashlib.sha256
+        ).hexdigest()
+        encoded = _canonical(envelope)
+        if len(encoded) > MAX_ARCHIVE_BYTES:
+            raise ApprovalStoreError("checkpoint archive exceeds the permitted size")
+
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+        file_fd = os.open(target.name, flags, 0o600, dir_fd=parent_fd)
+        info = os.fstat(file_fd)
+        created_identity = (info.st_dev, info.st_ino)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+            raise ApprovalStoreError("new checkpoint archive is not an owner-owned regular file")
+        os.fchmod(file_fd, 0o600)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(file_fd, view)
+            if written <= 0:
+                raise OSError("checkpoint archive write made no progress")
+            view = view[written:]
+        os.fsync(file_fd)
+        os.fsync(parent_fd)
+
+        _assert_private_directory_identity(target.parent, parent_identity)
+        entry = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(entry.st_mode)
+                or (entry.st_dev, entry.st_ino) != created_identity):
+            raise ApprovalStoreError("checkpoint archive destination changed during export")
         return target
     except FileExistsError:
+        _cleanup_created_archive(parent_fd, target.name, created_identity)
         raise ApprovalStoreError("checkpoint archive destination already exists") from None
+    except ApprovalStoreError:
+        _cleanup_created_archive(parent_fd, target.name, created_identity)
+        raise
     except (OSError, ValueError):
-        try:
-            target.unlink()
-        except OSError:
-            pass
+        _cleanup_created_archive(parent_fd, target.name, created_identity)
         raise ApprovalStoreError("checkpoint archive could not be written safely") from None
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        os.close(parent_fd)
 
 
 def verify_checkpoint_archive(
@@ -324,32 +387,60 @@ def verify_checkpoint_archive(
     key: bytes,
     current_store: SQLiteApprovalConsumptionStore | None = None,
 ) -> dict[str, object]:
-    """Verify archive bytes and optionally reconcile them with current SQLite state.
-
-    This validates an archive for controlled recovery; it never writes to or
-    replaces the live approval database.
-    """
+    """Verify bounded archive bytes while proving the path still names the opened inode."""
     _validate_key(key)
-    path = Path(archive_path).expanduser()
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    path = Path(os.path.abspath(os.fspath(Path(archive_path).expanduser())))
+    if not path.name:
+        raise ApprovalStoreError("checkpoint archive path must name a file")
+    parent_fd = _open_private_directory(path.parent)
+    parent_info = os.fstat(parent_fd)
+    parent_identity = (parent_info.st_dev, parent_info.st_ino)
+    fd: int | None = None
     try:
-        fd = os.open(path, flags)
-    except OSError:
-        raise ApprovalStoreError("checkpoint archive is missing, inaccessible or a symbolic link") from None
-    try:
-        info = os.fstat(fd)
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
-                or stat.S_IMODE(info.st_mode) & 0o077
-                or info.st_size <= 0 or info.st_size > MAX_ARCHIVE_BYTES):
-            raise ApprovalStoreError("checkpoint archive must be a bounded, owner-owned private regular file")
-        with os.fdopen(fd, "rb", closefd=False) as stream:
-            raw = stream.read(MAX_ARCHIVE_BYTES + 1)
+        try:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=parent_fd)
+        except OSError:
+            raise ApprovalStoreError(
+                "checkpoint archive is missing, inaccessible or a symbolic link"
+            ) from None
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != os.getuid()
+                or stat.S_IMODE(before.st_mode) & 0o077
+                or before.st_size <= 0 or before.st_size > MAX_ARCHIVE_BYTES):
+            raise ApprovalStoreError(
+                "checkpoint archive must be a bounded, owner-owned private regular file"
+            )
+        chunks: list[bytes] = []
+        remaining = MAX_ARCHIVE_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
         if len(raw) > MAX_ARCHIVE_BYTES:
             raise ApprovalStoreError("checkpoint archive exceeds the permitted size")
+        after = os.fstat(fd)
+        if (before.st_dev, before.st_ino, before.st_size,
+                before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_dev, after.st_ino, after.st_size,
+                after.st_mtime_ns, after.st_ctime_ns):
+            raise ApprovalStoreError("checkpoint archive changed while being read")
+        entry = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (not stat.S_ISREG(entry.st_mode)
+                or (entry.st_dev, entry.st_ino) != (before.st_dev, before.st_ino)):
+            raise ApprovalStoreError("checkpoint archive destination changed during verification")
+        _assert_private_directory_identity(path.parent, parent_identity)
+    except ApprovalStoreError:
+        raise
     except OSError:
         raise ApprovalStoreError("checkpoint archive could not be read safely") from None
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
+        os.close(parent_fd)
+
     try:
         envelope = json.loads(raw.decode("utf-8"))
         if not isinstance(envelope, dict) or _canonical(envelope) != raw:
