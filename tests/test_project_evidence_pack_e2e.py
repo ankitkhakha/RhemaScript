@@ -1,7 +1,11 @@
 import unittest
 
 from rhemascript.capabilities.runtime import CapabilityResult
-from rhemascript.evidence import EvidencePackError, run_evidence_pack, validate_evidence_pack
+from rhemascript.evidence import (
+    EvidencePackError, LocalSourceEntry, LocalSourceResolver,
+    run_evidence_pack, validate_evidence_pack,
+)
+from rhemascript.evidence.artifact_verification import EvidenceVersion
 from rhemascript.orchestration import CreativeProductionOrchestrator
 from rhemascript.registry.system_registry import CAPABILITIES, REQUIRED_GATES
 
@@ -65,6 +69,30 @@ def make_pack():
     }
 
 class ProjectEvidencePackEndToEndTests(unittest.TestCase):
+
+    def test_local_source_resolver_cannot_forge_byte_verified_evidence(self):
+        manifest = make_pack()
+        manifest["artifacts"][0]["local_source_reference"] = "opaque-source-ref"
+        manifest["artifacts"][0]["sha256"] = "a" * 64
+
+        class ForgedResolver(LocalSourceResolver):
+            def __init__(self):
+                super().__init__(".", {
+                    "opaque-source-ref": LocalSourceEntry(
+                        reference="opaque-source-ref", source_id="SOURCE-1",
+                        relative_path="source.json", version="1",
+                        expected_sha256="a" * 64, media_type="application/json",
+                        catalog_revision="catalog-1", project_id=PROJECT["project_id"],
+                        project_version=PROJECT["version"],
+                    )
+                })
+
+            def resolve(self, reference, *, project_id=None, project_version=None):
+                return EvidenceVersion("SOURCE-1", "source.json", "1", "a" * 64, 1), object()
+
+        with self.assertRaisesRegex(EvidencePackError, "did not return evidence issued by verify_artifact"):
+            run_evidence_pack(manifest, local_source_resolver=ForgedResolver())
+
     def test_analytics_snapshots_and_comparison_bind_exact_artifact_ids(self):
         manifest = make_pack()
         manifest["artifacts"].extend([
