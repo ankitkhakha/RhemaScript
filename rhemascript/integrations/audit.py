@@ -148,39 +148,42 @@ class JsonlAuditSink:
                     if os.read(descriptor, 1) != b"\n":
                         raise AuditSinkError("audit log contains unterminated records; append is unsafe")
                     os.lseek(descriptor, 0, os.SEEK_SET)
-                if completion_event_id is not None:
-                    matching_indeterminate = False
-                    matching_completed = False
-                    with os.fdopen(os.dup(descriptor), "rb") as existing_log:
-                        for line in existing_log:
-                            if not line.endswith(b"\n"):
-                                raise AuditSinkError("audit log contains unterminated records; idempotent recovery is unsafe")
-                            try:
-                                existing = json.loads(line)
-                            except (UnicodeDecodeError, json.JSONDecodeError):
-                                raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
-                            if not isinstance(existing, dict):
-                                raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe")
-                            if existing.get("completion_event_id") == completion_event_id:
-                                if (existing.get("provider_resource_id") != resource_id
-                                        or existing.get("request_id") != record_data.get("request_id")
-                                        or existing.get("project_id") != record_data.get("project_id")
-                                        or existing.get("http_status") != record_data.get("http_status")):
-                                    raise AuditSinkError("completion event ID already exists with a different provider result")
-                                existing_phase = existing.get("phase")
-                                if existing_phase == "COMPLETED":
-                                    matching_completed = True
-                                elif existing_phase == "INDETERMINATE":
-                                    matching_indeterminate = True
-                                else:
-                                    raise AuditSinkError("completion event ID exists in an unexpected audit phase")
-                    if matching_completed or (
+                matching_indeterminate = False
+                matching_completed = False
+                # Validate the complete existing log before every append, not only
+                # completion deduplication, so corruption is never extended.
+                with os.fdopen(os.dup(descriptor), "rb") as existing_log:
+                    for line in existing_log:
+                        if not line.endswith(b"\\n"):
+                            raise AuditSinkError("audit log contains unterminated records; idempotent recovery is unsafe")
+                        try:
+                            existing = json.loads(line)
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
+                        if not isinstance(existing, dict):
+                            raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe")
+                        if completion_event_id is not None and existing.get("completion_event_id") == completion_event_id:
+                            if (existing.get("provider_resource_id") != resource_id
+                                    or existing.get("request_id") != record_data.get("request_id")
+                                    or existing.get("project_id") != record_data.get("project_id")
+                                    or existing.get("http_status") != record_data.get("http_status")):
+                                raise AuditSinkError("completion event ID already exists with a different provider result")
+                            existing_phase = existing.get("phase")
+                            if existing_phase == "COMPLETED":
+                                matching_completed = True
+                            elif existing_phase == "INDETERMINATE":
+                                matching_indeterminate = True
+                            else:
+                                raise AuditSinkError("completion event ID exists in an unexpected audit phase")
+                if completion_event_id is not None and (
+                    matching_completed or (
                         record_data["phase"] == "INDETERMINATE" and matching_indeterminate
-                    ):
-                        # Scan the complete log before accepting a duplicate, then re-sync:
-                        # a prior append may be visible even though its fsync failed.
-                        os.fsync(descriptor)
-                        return
+                    )
+                ):
+                    # Scan the complete log before accepting a duplicate, then re-sync:
+                    # a prior append may be visible even though its fsync failed.
+                    os.fsync(descriptor)
+                    return
                 view = memoryview(record)
                 while view:
                     written = os.write(descriptor, view)
