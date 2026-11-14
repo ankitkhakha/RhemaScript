@@ -121,7 +121,8 @@ def _validate_consumed_rows(rows: list[object]) -> None:
             if not isinstance(identity_json, str):
                 raise ValueError
             identity = json.loads(identity_json)
-            if not isinstance(identity, dict) or set(identity) != identity_keys:
+            if (not isinstance(identity, dict) or set(identity) != identity_keys
+                    or _canonical(identity) != identity_json.encode("utf-8")):
                 raise ValueError
         if credential_schema == "RhemaScript.ApprovalCredential.v3":
             if any(not _nonempty_text(identity.get(key)) for key in identity_keys - {"authenticated_at"}):
@@ -351,7 +352,7 @@ def verify_checkpoint_archive(
         os.close(fd)
     try:
         envelope = json.loads(raw.decode("utf-8"))
-        if not isinstance(envelope, dict):
+        if not isinstance(envelope, dict) or _canonical(envelope) != raw:
             raise ValueError
         if envelope.get("schema") == ARCHIVE_SCHEMA_V1:
             expected = {"schema", "created_at", "snapshot_sha256", "snapshot_b64", "hmac_sha256"}
@@ -386,7 +387,10 @@ def verify_checkpoint_archive(
         expected_mac = hmac.new(key, _canonical(signed_fields), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expected_mac, str(envelope["hmac_sha256"])):
             raise ValueError
-        payload = _validate_snapshot_payload(json.loads(snapshot.decode("utf-8")))
+        decoded_payload = json.loads(snapshot.decode("utf-8"))
+        if _canonical(decoded_payload) != snapshot:
+            raise ValueError
+        payload = _validate_snapshot_payload(decoded_payload)
         payload_schema = payload["schema"]
     except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         raise ApprovalStoreError("checkpoint archive is malformed or authentication failed") from None
