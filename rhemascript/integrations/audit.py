@@ -121,6 +121,8 @@ class JsonlAuditSink:
                 raise AuditSinkError("idempotent completion audit requires POSIX file locking")
             if not isinstance(completion_event_id, str) or not re.fullmatch(r"[0-9a-f]{64}", completion_event_id):
                 raise AuditSinkError("completion event ID must be a lowercase SHA-256 digest")
+            if record_data["phase"] not in {"COMPLETED", "INDETERMINATE"}:
+                raise AuditSinkError("completion event ID is only valid for completion outcomes")
             resource_id = record_data.get("provider_resource_id")
             if not isinstance(resource_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id):
                 raise AuditSinkError("completed provider resource ID is invalid")
@@ -140,6 +142,7 @@ class JsonlAuditSink:
                 if fcntl is not None:
                     fcntl.flock(descriptor, fcntl.LOCK_EX)
                 if completion_event_id is not None:
+                    matching_indeterminate = False
                     with os.fdopen(os.dup(descriptor), "rb") as existing_log:
                         for line in existing_log:
                             try:
@@ -152,7 +155,15 @@ class JsonlAuditSink:
                                         or existing.get("project_id") != record_data.get("project_id")
                                         or existing.get("http_status") != record_data.get("http_status")):
                                     raise AuditSinkError("completion event ID already exists with a different provider result")
-                                return
+                                existing_phase = existing.get("phase")
+                                if existing_phase == "COMPLETED":
+                                    return
+                                if existing_phase == "INDETERMINATE":
+                                    matching_indeterminate = True
+                                else:
+                                    raise AuditSinkError("completion event ID exists in an unexpected audit phase")
+                    if record_data["phase"] == "INDETERMINATE" and matching_indeterminate:
+                        return
                 view = memoryview(record)
                 while view:
                     written = os.write(descriptor, view)
