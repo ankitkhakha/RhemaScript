@@ -226,7 +226,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
             nested = b"[" * 10000 + b"0" + b"]" * 10000
-            path.write_bytes(b\'{"metadata":\' + nested + b"}" + bytes((10,)))
+            path.write_bytes(b'{"metadata":' + nested + b'}' + bytes((10,)))
             sink = JsonlAuditSink(path)
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(self.event(request_id="after-deep-json"))
