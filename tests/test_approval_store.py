@@ -259,6 +259,37 @@ class SQLiteApprovalConsumptionStoreTests(unittest.TestCase):
         self.assertFalse(backup.exists())
         self.assertTrue(self.path.exists())
 
+    def test_backup_rejects_symlinked_destination_parent(self):
+        outside = Path(self.temp.name) / "outside-private"
+        outside.mkdir(mode=0o700)
+        os.chmod(outside, 0o700)
+        linked_parent = self.directory / "linked-parent"
+        linked_parent.symlink_to(outside, target_is_directory=True)
+        destination = linked_parent / "backup.sqlite3"
+
+        with self.assertRaisesRegex(
+            ApprovalStoreError, "backup directory is unavailable or contains a symlink"
+        ):
+            self.store.backup_to(destination)
+
+        self.assertFalse((outside / "backup.sqlite3").exists())
+        self.assertTrue(self.path.exists())
+
+    def test_backup_rejects_and_preserves_symlink_destination(self):
+        outside = Path(self.temp.name) / "outside-target.sqlite3"
+        outside.write_bytes(b"must not be overwritten")
+        destination = self.directory / "linked-backup.sqlite3"
+        destination.symlink_to(outside)
+
+        with self.assertRaisesRegex(
+            ApprovalStoreError, "backup destination already exists"
+        ):
+            self.store.backup_to(destination)
+
+        self.assertTrue(destination.is_symlink())
+        self.assertEqual(outside.read_bytes(), b"must not be overwritten")
+        self.assertTrue(self.path.exists())
+
     def test_checkpoint_rejects_wrong_key_and_malformed_payload(self):
         checkpoint = self.store.checkpoint(b"approval-state-checkpoint-key-32-bytes!!")
         self.assertFalse(self.store.verify_checkpoint(checkpoint, b"wrong-key-which-is-at-least-32-bytes!"))
