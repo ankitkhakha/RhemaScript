@@ -79,6 +79,14 @@ class JsonlAuditSinkTests(unittest.TestCase):
             with self.assertRaisesRegex(AuditSinkError, "phase is invalid"):
                 sink(self.event(phase="UNKNOWN"))
 
+    def test_accepts_indeterminate_provider_write_phase(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            sink(self.event(phase="INDETERMINATE", error_type="TimeoutError"))
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual(records[0]["phase"], "INDETERMINATE")
+
     def test_requires_existing_parent_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing" / "audit.jsonl"
