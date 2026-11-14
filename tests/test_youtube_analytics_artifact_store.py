@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 
 from rhemascript.integrations.youtube_analytics_evidence import build_analytics_evidence_snapshot
@@ -145,6 +146,63 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
                 EvidencePackIntegrityError, "failed structural revalidation"
             ):
                 verify_pack_artifacts(validated, directory)
+
+    def test_rejects_replaced_destination_and_preserves_replacement_during_cleanup(self):
+        snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
+        original_verify = verify_artifact
+        for replacement in (b"unexpected replacement", None):
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as directory:
+                destination = Path(directory) / "analytics.json"
+
+                def replace_before_path_verification(root, relative_path, *, evidence_id, version):
+                    intended = destination.read_bytes()
+                    destination.unlink()
+                    destination.write_bytes(
+                        replacement if replacement is not None else intended
+                    )
+                    return original_verify(
+                        root, relative_path, evidence_id=evidence_id, version=version
+                    )
+
+                with patch(
+                    "rhemascript.integrations.youtube_analytics_artifact_store.verify_artifact",
+                    side_effect=replace_before_path_verification,
+                ):
+                    with self.assertRaises(YouTubeAnalyticsArtifactStoreError):
+                        persist_analytics_evidence_artifact(
+                            snapshot, evidence_root=directory, relative_path="analytics.json",
+                            artifact_id="YT-ANALYTICS-REPLACED", project_id="PROJECT-1",
+                            project_version="3",
+                        )
+                self.assertTrue(destination.exists())
+                if replacement is not None:
+                    self.assertEqual(destination.read_bytes(), replacement)
+                else:
+                    self.assertEqual(
+                        hashlib.sha256(destination.read_bytes()).hexdigest(),
+                        hashlib.sha256(original_verify.__globals__["_canonical"]({
+                            "evidence_id": "YT-ANALYTICS-REPLACED",
+                            "evidence_version": "1",
+                            "artifact_type": "YOUTUBE_ANALYTICS_SNAPSHOT",
+                            "project_id": "PROJECT-1",
+                            "project_version": "3",
+                            "payload": snapshot,
+                        })).hexdigest(),
+                    )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory ownership required")
+    def test_rejects_group_or_world_writable_evidence_root(self):
+        snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
+        with tempfile.TemporaryDirectory() as directory:
+            os.chmod(directory, 0o770)
+            with self.assertRaisesRegex(
+                YouTubeAnalyticsArtifactStoreError, "not group/world writable"
+            ):
+                persist_analytics_evidence_artifact(
+                    snapshot, evidence_root=directory, relative_path="analytics.json",
+                    artifact_id="YT-ANALYTICS-UNSAFE-DIR", project_id="PROJECT-1",
+                    project_version="3",
+                )
 
     def test_refuses_to_overwrite_existing_evidence(self):
         snapshot = make_snapshot("2026-10-01", "2026-10-01", 10)
