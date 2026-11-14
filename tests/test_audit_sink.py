@@ -175,7 +175,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
             )
             sink(event)
             with path.open("ab") as log:
-                log.write(b'{"truncated":\\n')
+                log.write(b'{"truncated":\n')
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(event)
 
