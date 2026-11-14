@@ -25,7 +25,7 @@ This contract hardens the response boundary for the channel-scoped YouTube Analy
 
 The client applies an explicit supported type contract before returning or snapshotting a result table:
 - Dimension columns must declare `STRING` and contain string values.
-- Metric columns must declare `INTEGER`, `FLOAT`, or `CURRENCY`. Integer columns require JSON integers (booleans are rejected); float/currency columns require finite JSON numbers. Numeric strings, booleans, nulls, and non-finite numbers are rejected.
+- Metric columns must declare `INTEGER` or `FLOAT`. Integer columns require JSON integers (booleans are rejected); float/currency columns require finite JSON numbers. Numeric strings, booleans, nulls, and non-finite numbers are rejected.
 - Unknown or newly introduced provider data types fail closed until the integration contract and tests are deliberately extended. This is the integration's supported subset, not a claim that Google's published type vocabulary is exhaustive.
 - Every row must have a unique complete tuple of dimension values, matching Google's reports.query contract. Multiple rows may share one dimension value (for example, the same day across countries), but not the entire dimension tuple. A dimensionless aggregate report may contain at most one row.
 
