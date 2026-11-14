@@ -476,6 +476,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes",
         "session_url_sha256", "state", "acknowledged_offset", "inflight_start",
         "inflight_end", "inflight_owner", "lease_expires_at", "created_at", "updated_at",
+        "provider_resource_id", "provider_http_status", "completion_audit_id", "completion_audited",
     )
     _SESSION_STATES = {
         "CREATING", "ACTIVE", "CHUNK_IN_FLIGHT", "RECONCILING",
@@ -533,9 +534,22 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                     lease_expires_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    provider_resource_id TEXT,
+                    provider_http_status INTEGER,
+                    completion_audit_id TEXT,
+                    completion_audited INTEGER NOT NULL DEFAULT 0 CHECK (completion_audited IN (0, 1)),
                     PRIMARY KEY (project_id, project_version, request_id)
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(publish_sessions)")}
+            for name, definition in (
+                ("provider_resource_id", "TEXT"),
+                ("provider_http_status", "INTEGER"),
+                ("completion_audit_id", "TEXT"),
+                ("completion_audited", "INTEGER NOT NULL DEFAULT 0 CHECK (completion_audited IN (0, 1))"),
+            ):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE publish_sessions ADD COLUMN {name} {definition}")
             db.execute("COMMIT")
         except sqlite3.Error:
             if db.in_transaction:
@@ -744,29 +758,47 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
 
     def record_publish_response(self, *, project_id: str, project_version: str,
                                 request_id: str, owner_id: str, status: int,
-                                range_header: str | None = None) -> bool:
+                                range_header: str | None = None,
+                                provider_resource_id: str | None = None) -> bool:
         if (not isinstance(status, int) or isinstance(status, bool)
                 or not 100 <= status <= 599):
             raise ValueError("provider status must be an HTTP status integer")
         if range_header is not None and not isinstance(range_header, str):
             raise ValueError("provider Range header must be a string")
+        if status in (200, 201):
+            if (not isinstance(provider_resource_id, str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", provider_resource_id)):
+                raise ValueError("successful upload response requires a validated provider resource ID")
+        elif provider_resource_id is not None:
+            raise ValueError("provider resource ID is only valid for a completed upload response")
         db = self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
                 SELECT state, acknowledged_offset, inflight_start, inflight_end,
-                       artifact_size_bytes, inflight_owner
+                       artifact_size_bytes, inflight_owner, approval_fingerprint,
+                       provider_resource_id
                   FROM publish_sessions
                  WHERE project_id=? AND project_version=? AND request_id=?
             """, (project_id, project_version, request_id)).fetchone()
             if row is None or row[5] != owner_id or row[0] not in {"CHUNK_IN_FLIGHT", "RECONCILING"}:
                 db.execute("ROLLBACK")
                 return False
-            state, acknowledged, start, end, total, _owner = row
+            state, acknowledged, start, end, total, _owner, approval_fingerprint, old_resource_id = row
+            if old_resource_id is not None and old_resource_id != provider_resource_id:
+                db.execute("ROLLBACK")
+                return False
             new_offset = acknowledged
             new_state = "ACTIVE"
+            completion_audit_id = None
             if status in (200, 201):
                 new_state, new_offset = "COMPLETE", total
+                completion_payload = json.dumps({
+                    "project_id": project_id, "project_version": project_version,
+                    "request_id": request_id, "approval_fingerprint": approval_fingerprint,
+                    "provider_resource_id": provider_resource_id, "provider_http_status": status,
+                }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+                completion_audit_id = hashlib.sha256(completion_payload).hexdigest()
             elif status == 308:
                 if range_header:
                     match = re.fullmatch(r"bytes=0-(\d+)", range_header.strip())
@@ -793,16 +825,115 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                    SET state=?, acknowledged_offset=?, inflight_start=?,
                        inflight_end=?, inflight_owner=?,
                        lease_expires_at=CASE WHEN ?='INDETERMINATE' THEN NULL ELSE lease_expires_at END,
+                       provider_resource_id=COALESCE(?, provider_resource_id),
+                       provider_http_status=COALESCE(?, provider_http_status),
+                       completion_audit_id=COALESCE(?, completion_audit_id),
+                       completion_audited=CASE WHEN ?='COMPLETE' THEN 0 ELSE completion_audited END,
                        updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
             """, (new_state, new_offset, retained_start, retained_end, retained_owner,
-                  new_state, self._utc(datetime.now(timezone.utc)), project_id, project_version, request_id))
+                  new_state, provider_resource_id, status if status in (200, 201) else None,
+                  completion_audit_id, new_state, self._utc(datetime.now(timezone.utc)),
+                  project_id, project_version, request_id))
             db.execute("COMMIT")
             return new_state != "INDETERMINATE"
         except sqlite3.Error:
             if db.in_transaction:
                 db.execute("ROLLBACK")
             raise ApprovalStoreError("publish-session acknowledgement could not be committed") from None
+        finally:
+            db.close()
+
+    def begin_publish_completion_recovery(self, *, project_id: str, project_version: str,
+                                          request_id: str, approval_fingerprint: str,
+                                          artifact_id: str, artifact_version: str,
+                                          artifact_sha256: str, artifact_size_bytes: int,
+                                          session_url_sha256: str, owner_id: str,
+                                          lease_seconds: float = 60.0) -> bool:
+        identity = self._session_identity(
+            project_id, project_version, request_id, approval_fingerprint,
+            artifact_id, artifact_version, artifact_sha256, artifact_size_bytes,
+        )
+        url_digest = self._digest_text(session_url_sha256, "session_url_sha256")
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("owner_id must be non-empty")
+        if (not isinstance(lease_seconds, (int, float)) or isinstance(lease_seconds, bool)
+                or not math.isfinite(lease_seconds) or not 1 <= lease_seconds <= 600):
+            raise ValueError("lease_seconds must be finite and between 1 and 600")
+        now = datetime.now(timezone.utc)
+        now_text = self._utc(now)
+        lease = self._utc(now + timedelta(seconds=lease_seconds))
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""
+                SELECT approval_fingerprint, artifact_id, artifact_version,
+                       artifact_sha256, artifact_size_bytes, session_url_sha256,
+                       state, provider_resource_id, provider_http_status,
+                       completion_audit_id, completion_audited,
+                       inflight_owner, lease_expires_at
+                  FROM publish_sessions
+                 WHERE project_id=? AND project_version=? AND request_id=?
+            """, identity[:3]).fetchone()
+            if (row is None or tuple(row[:5]) != tuple(identity[3:])
+                    or row[5] != url_digest or row[6] != "COMPLETE"
+                    or not isinstance(row[7], str)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", row[7])
+                    or row[8] not in (200, 201)
+                    or not isinstance(row[9], str) or not re.fullmatch(r"[0-9a-f]{64}", row[9])
+                    or row[10] != 0):
+                db.execute("ROLLBACK")
+                return False
+            previous_owner, previous_lease = row[11], row[12]
+            if previous_owner is not None and previous_owner != owner_id:
+                try:
+                    expired = (isinstance(previous_lease, str)
+                               and datetime.fromisoformat(previous_lease) <= now)
+                except ValueError:
+                    expired = False
+                if not expired:
+                    db.execute("ROLLBACK")
+                    return False
+            db.execute("""
+                UPDATE publish_sessions
+                   SET inflight_owner=?, lease_expires_at=?, updated_at=?
+                 WHERE project_id=? AND project_version=? AND request_id=?
+                   AND state='COMPLETE' AND completion_audited=0
+            """, (owner_id, lease, now_text, *identity[:3]))
+            claimed = db.execute("SELECT changes()").fetchone()[0] == 1
+            db.execute("COMMIT")
+            return claimed
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise ApprovalStoreError("completed publish-session recovery could not be claimed") from None
+        finally:
+            db.close()
+
+    def finalize_publish_completion_audit(self, *, project_id: str,
+                                          project_version: str, request_id: str,
+                                          owner_id: str, completion_audit_id: str) -> bool:
+        if (not isinstance(completion_audit_id, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", completion_audit_id)):
+            raise ValueError("completion_audit_id must be a lowercase SHA-256 digest")
+        db = self._connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute("""
+                UPDATE publish_sessions
+                   SET completion_audited=1, inflight_start=NULL, inflight_end=NULL,
+                       inflight_owner=NULL, lease_expires_at=NULL, updated_at=?
+                 WHERE project_id=? AND project_version=? AND request_id=?
+                   AND inflight_owner=? AND state='COMPLETE'
+                   AND completion_audit_id=? AND completion_audited=0
+            """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
+                  request_id, owner_id, completion_audit_id))
+            db.execute("COMMIT")
+            return cursor.rowcount == 1
+        except sqlite3.Error:
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise ApprovalStoreError("completed publish-session audit finalization failed") from None
         finally:
             db.close()
 
@@ -840,7 +971,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
                    SET inflight_start=NULL, inflight_end=NULL,
                        inflight_owner=NULL, lease_expires_at=NULL, updated_at=?
                  WHERE project_id=? AND project_version=? AND request_id=?
-                   AND inflight_owner=? AND state IN ('ACTIVE','COMPLETE','FAILED')
+                   AND inflight_owner=? AND state IN ('ACTIVE','FAILED')
             """, (self._utc(datetime.now(timezone.utc)), project_id, project_version,
                   request_id, owner_id))
             db.execute("COMMIT")
@@ -932,7 +1063,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         finally:
             db.close()
         payload = {
-            "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
             "consumed": [list(row) for row in consumed],
             "revoked": [list(row) for row in revoked],
             "publish_sessions": [list(row) for row in sessions],
@@ -946,7 +1077,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
             raise ValueError("checkpoint key must contain at least 32 bytes")
         payload = self._snapshot_bytes()
         return {
-            "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
             "snapshot_sha256": hashlib.sha256(payload).hexdigest(),
             "hmac_sha256": hmac.new(key, payload, hashlib.sha256).hexdigest(),
         }
@@ -955,7 +1086,7 @@ class SQLitePublishSessionRegistry(SQLiteApprovalConsumptionStore):
         if not isinstance(key, bytes) or len(key) < 32 or not isinstance(checkpoint, dict):
             return False
         if (set(checkpoint) != {"schema", "snapshot_sha256", "hmac_sha256"}
-                or checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v4"):
+                or checkpoint.get("schema") != "RhemaScript.ApprovalStateCheckpoint.v5"):
             return False
         try:
             expected = self.checkpoint(key)
