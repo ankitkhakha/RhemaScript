@@ -28,15 +28,24 @@ _ALLOWED_FIELDS = {
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
     "timestamp_utc", "provider_resource_id", "completion_event_id",
+    "approval_fingerprint", "artifact_id", "artifact_version", "artifact_sha256",
+    "session_url_sha256", "publish_session_state", "chunk_start", "chunk_end",
+    "chunk_total_bytes", "acknowledged_offset",
 }
 _REQUIRED_FIELDS = {"interface_id", "provider", "request_id", "operation", "phase"}
-_ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED"}
+_ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED", "INDETERMINATE"}
 _SAFE_STRING_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key", "phase", "error_type",
     "timestamp_utc", "provider_resource_id", "completion_event_id",
+    "approval_fingerprint", "artifact_id", "artifact_version", "artifact_sha256",
+    "session_url_sha256", "publish_session_state",
 }
-_SAFE_INTEGER_FIELDS = {"request_bytes", "response_bytes", "http_status"}
+_SAFE_INTEGER_FIELDS = {
+    "request_bytes", "response_bytes", "http_status", "chunk_start", "chunk_end",
+    "chunk_total_bytes", "acknowledged_offset",
+}
+_SAFE_BOOLEAN_FIELDS = {"status_reconciliation"}
 
 
 class JsonlAuditSink:
@@ -74,8 +83,10 @@ class JsonlAuditSink:
         for key, value in record_data.items():
             if key in _SAFE_STRING_FIELDS and (not isinstance(value, str) or not value):
                 raise AuditSinkError("audit event string field is invalid")
-            if key in _SAFE_INTEGER_FIELDS and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            if key in _SAFE_INTEGER_FIELDS and (value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0)):
                 raise AuditSinkError("audit event numeric field is invalid")
+            if key in _SAFE_BOOLEAN_FIELDS and not isinstance(value, bool):
+                raise AuditSinkError("audit event boolean field is invalid")
         try:
             record = (json.dumps(record_data, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
         except (TypeError, ValueError):
