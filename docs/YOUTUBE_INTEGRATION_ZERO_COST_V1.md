@@ -163,3 +163,14 @@ Historical examples using `human_director_acceptance` or `publishing_authorisati
 ### Analytics evidence hand-off — provenance requirement
 
 The Analytics client returns a report response; it does not by itself create verified CAP-15 evidence. A future adapter must bind the exact retained report bytes to a verified evidence version, the actual request parameters, exact video ID, and RhemaScript production version. A caller-supplied video filter or evidence-reference string alone is not proof that the report came from that query. Until that binding exists, Analytics observations are descriptive inputs only, not independently verified training evidence. Correlation must not be presented as causation.
+
+
+### Completed resumable-upload result recovery — WRK-103
+
+For resumable upload chunk/status responses returning HTTP 200 or 201, the IF-18 gateway now parses and validates the provider resource ID before committing completion. The ID, response status, deterministic completion-audit ID and audit-pending state are persisted atomically with COMPLETE in the SQLite publish-session registry. The registry schema/checkpoint is V5 so the completion result is covered by the authenticated snapshot. A successful completion without a valid resource ID is marked indeterminate and must not be retried.
+
+When the client encounters an existing COMPLETE session, it revalidates the existing approval and exact artifact binding, then returns the durable provider resource ID. It does not create another upload session, contact the provider, or request a fresh OAuth token. If the completion audit is pending, recovery is claimed under a lease; another owner cannot take over until the prior lease expires. The stable completion event ID lets the built-in JSONL audit sink deduplicate a repeated append under a cross-process lock. The audit flag and lease release are committed only after the audit sink succeeds.
+
+Old completed records created before V5 may lack a provider resource ID and cannot be reconstructed automatically from the old database fields; they remain fail-closed for manual reconciliation. This work does not authorize live provider writes and does not close the separate ambiguous CREATING-before-URL-binding gap. Independent review and production authorization/key-custody gates remain mandatory.
+
+Exact candidate code commit: d4b455c620e2740141f6d9a0f1a0d4845e407fc0. Full synthetic CI: run #2229 passed. No live OAuth, upload, thumbnail, Analytics or publishing request was made.
