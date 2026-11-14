@@ -253,6 +253,29 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
             verify_checkpoint_archive(self.archive, key=self.key)
 
+
+    def test_archive_rejects_noncanonical_nested_identity_claims(self):
+        now = datetime.now(timezone.utc).isoformat()
+        identity = {
+            "subject_id": None, "actor_role": None, "authn_context": None,
+            "authenticated_at": None, "identity_session_id": None,
+            "identity_policy_version": None, "identity_provider_id": None,
+        }
+        noncanonical_identity = json.dumps(identity, ensure_ascii=False)
+        row = [
+            "approval-001", "nonce-001", "issuer-001", "actor-001", "PUBLISH",
+            "project-001", "v1", "request-001", now, now, "key-001", now,
+            None, None, None, None, None, None, noncanonical_identity,
+        ]
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
+            "consumed": [row],
+            "revoked": [],
+            "publish_sessions": [],
+        })
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
+
     def test_archive_rejects_authenticated_consumed_row_with_wrong_width(self):
         self._write_authenticated_payload({
             "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
