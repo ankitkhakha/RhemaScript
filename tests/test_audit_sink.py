@@ -325,13 +325,13 @@ class JsonlAuditSinkTests(unittest.TestCase):
 
     def test_versioned_audit_records_enforce_metadata_grammar(self):
         invalid_events = [
-            self.event(interface_id="IF-18\\nforged"),
+            self.event(interface_id="IF-18\nforged"),
             self.event(provider="YouTube"),
             self.event(operation="upload_chunk"),
             self.event(method="TRACE"),
             self.event(host="https://www.googleapis.com"),
             self.event(timestamp_utc="not-a-timestamp"),
-            self.event(request_id="request\\nforged"),
+            self.event(request_id="request\nforged"),
         ]
         for index, event in enumerate(invalid_events):
             with self.subTest(index=index), tempfile.TemporaryDirectory() as directory:
