@@ -15,6 +15,7 @@ import os
 import re
 import stat
 import threading
+import weakref
 from pathlib import Path
 from typing import Any
 
@@ -64,9 +65,35 @@ _ALLOWED_SESSION_STATES = {
 }
 
 
-def _fsync_parent_directory(path: Path) -> None:
-    """Persist directory-entry changes after syncing the audit file."""
+def _open_directory_without_symlinks(path: Path) -> int:
+    """Open an absolute directory path component-by-component without following symlinks."""
+    if os.name != "posix" or os.open not in getattr(os, "supports_dir_fd", set()):
+        raise AuditSinkError("stable audit directory anchoring is unavailable on this platform")
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if no_follow is None or directory_flag is None:
+        raise AuditSinkError("safe audit directory traversal is unavailable on this platform")
+    flags = os.O_RDONLY | directory_flag
+    descriptor = os.open(path.anchor, flags)
+    try:
+        for component in path.parts[1:]:
+            next_descriptor = os.open(
+                component, flags | no_follow, dir_fd=descriptor,
+            )
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except OSError:
+        os.close(descriptor)
+        raise
+
+
+def _fsync_parent_directory(path: Path, directory_descriptor: int | None = None) -> None:
+    """Persist directory-entry changes using the pinned directory when available."""
     if os.name != "posix":
+        return
+    if directory_descriptor is not None:
+        os.fsync(directory_descriptor)
         return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     directory_descriptor = os.open(path.parent, flags)
@@ -85,19 +112,38 @@ class JsonlAuditSink:
     """
 
     def __init__(self, path: str | os.PathLike[str]):
-        self.path = Path(path).expanduser()
-        if not self.path.name or not self.path.parent.is_dir():
-            raise AuditSinkError("audit log parent directory must already exist")
+        self.path = Path(os.path.abspath(os.fspath(Path(path).expanduser())))
+        if not self.path.name:
+            raise AuditSinkError("audit log path must name a file")
+        self._lock = threading.Lock()
+        self._parent_fd: int | None = None
+        self._parent_finalizer = None
+        self._closed = False
         if os.name == "posix":
             try:
-                parent_info = os.lstat(self.path.parent)
-            except OSError:
-                raise AuditSinkError("audit log parent directory is unavailable") from None
-            if (stat.S_ISLNK(parent_info.st_mode) or not stat.S_ISDIR(parent_info.st_mode)
+                self._parent_fd = _open_directory_without_symlinks(self.path.parent)
+                parent_info = os.fstat(self._parent_fd)
+            except (OSError, AuditSinkError):
+                raise AuditSinkError("audit log parent directory is unavailable or contains a symlink") from None
+            if (not stat.S_ISDIR(parent_info.st_mode)
                     or parent_info.st_uid != os.getuid()
                     or stat.S_IMODE(parent_info.st_mode) & 0o077):
+                os.close(self._parent_fd)
+                self._parent_fd = None
                 raise AuditSinkError("audit log parent must be an owner-controlled directory with mode 0700 or stricter")
-        self._lock = threading.Lock()
+            self._parent_finalizer = weakref.finalize(self, os.close, self._parent_fd)
+        elif not self.path.parent.is_dir():
+            raise AuditSinkError("audit log parent directory must already exist")
+
+    def close(self) -> None:
+        """Release the pinned audit directory descriptor."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._parent_finalizer is not None and self._parent_finalizer.alive:
+                self._parent_finalizer()
+            self._parent_fd = None
 
     def __call__(self, event: dict[str, Any]) -> None:
         if not isinstance(event, dict) or not _REQUIRED_FIELDS.issubset(event):
@@ -141,9 +187,16 @@ class JsonlAuditSink:
         flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
         flags |= getattr(os, "O_NOFOLLOW", 0)
         with self._lock:
+            if self._closed:
+                raise AuditSinkError("audit sink is closed")
             descriptor = None
             try:
-                descriptor = os.open(self.path, flags, 0o600)
+                if self._parent_fd is not None:
+                    descriptor = os.open(
+                        self.path.name, flags, 0o600, dir_fd=self._parent_fd,
+                    )
+                else:
+                    descriptor = os.open(self.path, flags, 0o600)
                 info = os.fstat(descriptor)
                 if not stat.S_ISREG(info.st_mode):
                     raise AuditSinkError("audit destination must be a regular file")
@@ -195,7 +248,7 @@ class JsonlAuditSink:
                     # Scan the complete log before accepting a duplicate, then re-sync:
                     # a prior append may be visible even though its fsync failed.
                     os.fsync(descriptor)
-                    _fsync_parent_directory(self.path)
+                    _fsync_parent_directory(self.path, self._parent_fd)
                     return
                 view = memoryview(record)
                 while view:
