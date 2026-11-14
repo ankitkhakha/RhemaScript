@@ -732,6 +732,10 @@ class SQLitePublishSessionRegistryTests(unittest.TestCase):
         self.assertEqual(row[0], "ACTIVE")
         self.assertEqual(row[1], "gateway-A")
         self.assertIsNotNone(row[2])
+        args = {**self.identity, "session_url_sha256": self.url_digest}
+        self.assertFalse(self.store.begin_publish_reconciliation(
+            **args, owner_id="gateway-B", total=10, lease_seconds=60,
+        ))
         with sqlite3.connect(self.path) as db:
             db.execute(
                 "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
