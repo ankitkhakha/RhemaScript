@@ -123,7 +123,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             "artifact_binding": binding,
         } for action in ("FINAL_ACCEPTANCE", "PUBLISH"))
         verified = verifier.verify_many_and_consume(tuple(credentials), expectations)
-        return {"verified_approvals": verified}
+        return {"verified_approvals": verified, "verifier": verifier, "credentials": tuple(credentials), "expectations": expectations}
 
     def make_registry(self, authority, request_id, session_url=None):
         temporary = tempfile.TemporaryDirectory()
@@ -535,6 +535,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
         session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=opaque-complete"
         temporary, registry, vault = self.make_registry(authority, "recover-complete-1", session_url=session_url)
         self.addCleanup(temporary.cleanup)
+        self.assertTrue(registry.consume_many_once(approvals))
         identity = {
             "project_id": first.project_id,
             "project_version": first.project_version,
@@ -626,13 +627,19 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
                     "UPDATE publish_sessions SET lease_expires_at=? WHERE request_id=?",
                     ("2000-01-01T00:00:00+00:00", first.request_id),
                 )
+            resumed_approvals = authority["verifier"].verify_many_existing_consumed(
+                authority["credentials"], authority["expectations"],
+                consumed_records=registry.list_consumed_approval_records(),
+                is_revoked=registry.is_revoked,
+            )
+            self.assertIsNot(resumed_approvals[0], approvals[0])
             restarted_gateway = ExternalIntegrationGateway(
                 (), audit_sink=sink, publish_session_registry=registry,
                 session_url_vault=vault,
             )
             recovered = restarted_gateway.recover_completed_publish_result(
                 project_id=first.project_id, project_version=first.project_version,
-                request_id=first.request_id, verified_approvals=approvals,
+                request_id=first.request_id, verified_approvals=resumed_approvals,
                 artifact_binding={
                     "artifact_id": first.artifact_id,
                     "artifact_version": first.artifact_version,
@@ -661,7 +668,7 @@ class ExternalGatewayFailClosedTests(unittest.TestCase):
             self.assertNotIn("vault_reference", records[0])
             self.assertEqual(restarted_gateway.recover_completed_publish_result(
                 project_id=first.project_id, project_version=first.project_version,
-                request_id=first.request_id, verified_approvals=approvals,
+                request_id=first.request_id, verified_approvals=resumed_approvals,
                 artifact_binding={
                     "artifact_id": first.artifact_id,
                     "artifact_version": first.artifact_version,
