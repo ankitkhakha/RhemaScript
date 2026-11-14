@@ -10,7 +10,7 @@ Retain an authenticated snapshot of the approval-consumption and revocation stat
 
 The implementation provides:
 
-- a canonical JSON envelope containing the exact approval-state snapshot; current V5 snapshots include consumed approvals, revocations and durable publish-session records; the verifier retains read compatibility with V3 snapshots;
+- a canonical JSON envelope containing the exact approval-state snapshot; current V5 snapshots include consumed approvals, revocations and durable publish-session records; the verifier retains read compatibility with V3 and V4 snapshots;
 - SHA-256 content digest and HMAC-SHA256 authentication over the archive schema, creation time, digest and encoded snapshot;
 - owner-only archive file permissions (0600), an already-existing owner-owned private directory (0700 or stricter), no-follow file creation and exclusive destination creation;
 - rejection of archive destinations in the same directory as the approval database;
@@ -34,10 +34,10 @@ Create the archive directory in advance with owner-only permissions. It must be 
 Example:
 
 ```python
-from rhemascript.core.approval_store import SQLiteApprovalConsumptionStore
+from rhemascript.core.approval_store import SQLitePublishSessionRegistry
 from rhemascript.core.approval_archive import export_checkpoint_archive
 
-store = SQLiteApprovalConsumptionStore("/owner-private/db/approvals.sqlite3")
+store = SQLitePublishSessionRegistry("/owner-private/db/approvals.sqlite3")
 # Load this from external/offline key custody; never hardcode or commit it.
 archive_key = load_archive_key_from_approved_custody()
 export_checkpoint_archive(
@@ -63,14 +63,14 @@ result = verify_checkpoint_archive(
 
 Interpretation:
 
-- `archive_valid = true`: envelope, digest, HMAC and supported V3/V4 snapshot top-level structure verified with the supplied key; V4 additionally reports `publish_session_count`.
+- `archive_valid = true`: envelope, digest, HMAC and supported V3/V4/V5 snapshot row structures verified with the supplied key; `publish_session_count` is zero for V3 and reports the validated session rows for V4/V5.
 - `matches_current_state = true`: current SQLite state is byte-identical to the archived snapshot.
 - `matches_current_state = false`: the archive is valid but current state differs. Preserve both states and initiate a documented reconciliation; do not overwrite either.
 - `matches_current_state = null`: archive verified without a live-store comparison.
 
 ## Snapshot schema compatibility
 
-The current approval store emits `RhemaScript.ApprovalStateCheckpoint.v5`, which includes the `consumed`, `revoked` and `publish_sessions` collections from one SQLite read transaction. The archive verifier accepts the legacy V3 shape (`consumed` and `revoked`) and the current V5 shape (those collections plus `publish_sessions`). New exports are verified against the same schema emitted by the current store. The archive byte limit applies on both export and verification.
+The publish-session registry emits `RhemaScript.ApprovalStateCheckpoint.v5`, which includes the `consumed`, `revoked` and `publish_sessions` collections from one SQLite read transaction. The base approval-consumption store continues to emit V3 (`consumed` and `revoked`). The archive verifier accepts V3, V4 and V5 and validates each row before reporting `archive_valid=true`: consumed rows have 19 fields, revocation rows have 5 fields, V4 publish-session rows have 17 fields, and V5 publish-session rows have 21 fields. Validation covers scalar types, timezone-aware timestamps, credential/identity claim shape, SHA-256 values, known session states, bounded offsets, completion metadata and uniqueness constraints. These checks are structural consistency checks; they do not independently re-verify approval signatures or restore state. The archive byte limit applies on both export and verification.
 
 ## Recovery controls
 
@@ -85,7 +85,7 @@ This primitive intentionally does not restore or replace the live SQLite databas
 
 ## Validation and limitations
 
-Synthetic tests cover private export, wrong-key rejection, archive tampering, state mismatch reporting without database mutation, same-directory rejection, create-once behavior and minimum key length. CI success validates these code contracts only. It does not establish independent storage, external key custody, production retention, disaster-recovery readiness or production certification.
+Synthetic tests cover private export, populated V5 publish sessions, legacy V3 and V4 compatibility, correctly authenticated malformed-row rejection, wrong-key rejection, archive tampering, state mismatch reporting without database mutation, same-directory rejection, create-once behavior and minimum key length. CI success validates these code contracts only. It does not establish independent storage, external key custody, production retention, disaster-recovery readiness or production certification.
 
 
 ## Atomic read-snapshot hardening — 13 November 2026
