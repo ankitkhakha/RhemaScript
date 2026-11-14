@@ -142,7 +142,7 @@ def _validate_analytics_report(result: Any, params: dict[str, Any]) -> dict[str,
     for row in rows:
         if not isinstance(row, list) or len(row) != len(headers):
             raise YouTubeIntegrationError("YouTube Analytics report contains a malformed row")
-        for index, (value, header) in enumerate(zip(row, headers)):
+        for value, header in zip(row, headers):
             data_type = header["dataType"]
             if data_type == "STRING":
                 valid_value = isinstance(value, str)
@@ -150,8 +150,8 @@ def _validate_analytics_report(result: Any, params: dict[str, Any]) -> dict[str,
                 valid_value = isinstance(value, int) and not isinstance(value, bool)
             else:
                 valid_value = (
-                    isinstance(value, (int, float)) and not isinstance(value, bool)
-                    and math.isfinite(value)
+                    (isinstance(value, int) and not isinstance(value, bool))
+                    or (isinstance(value, float) and math.isfinite(value))
                 )
             if not valid_value:
                 raise YouTubeIntegrationError(
