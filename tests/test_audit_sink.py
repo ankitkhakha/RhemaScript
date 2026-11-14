@@ -87,6 +87,18 @@ class JsonlAuditSinkTests(unittest.TestCase):
             records = [json.loads(line) for line in path.read_text().splitlines()]
             self.assertEqual(records[0]["phase"], "INDETERMINATE")
 
+    def test_bounds_and_validates_upload_session_audit_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sink = JsonlAuditSink(Path(directory) / "audit.jsonl")
+            with self.assertRaisesRegex(AuditSinkError, "digest field"):
+                sink(self.event(phase="COMPLETED", session_url_sha256="not-a-digest"))
+            with self.assertRaisesRegex(AuditSinkError, "string field"):
+                sink(self.event(phase="COMPLETED", artifact_id="x" * 129))
+            with self.assertRaisesRegex(AuditSinkError, "publish-session state"):
+                sink(self.event(phase="COMPLETED", publish_session_state="UNKNOWN"))
+            with self.assertRaisesRegex(AuditSinkError, "numeric field"):
+                sink(self.event(phase="COMPLETED", acknowledged_offset=2**63))
+
     def test_requires_existing_parent_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing" / "audit.jsonl"
