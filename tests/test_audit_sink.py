@@ -156,7 +156,7 @@ class JsonlAuditSinkTests(unittest.TestCase):
             )
             sink(event)
             with path.open("ab") as log:
-                log.write(b'[]\\n')
+                log.write(b'[]\n')
             with self.assertRaisesRegex(AuditSinkError, "malformed records"):
                 sink(event)
 
