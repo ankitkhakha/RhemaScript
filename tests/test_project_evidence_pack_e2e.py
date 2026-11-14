@@ -1,4 +1,7 @@
+import hashlib
+import tempfile
 import unittest
+from dataclasses import replace
 
 from rhemascript.capabilities.runtime import CapabilityResult
 from rhemascript.evidence import (
@@ -92,6 +95,39 @@ class ProjectEvidencePackEndToEndTests(unittest.TestCase):
 
         with self.assertRaisesRegex(EvidencePackError, "did not return evidence issued by verify_artifact"):
             run_evidence_pack(manifest, local_source_resolver=ForgedResolver())
+
+
+    def test_local_source_resolver_cannot_overstate_receipt_assurance(self):
+        manifest = make_pack()
+        manifest["artifacts"][0]["local_source_reference"] = "opaque-source-ref"
+        content = b"approved local source bytes"
+        digest = hashlib.sha256(content).hexdigest()
+        manifest["artifacts"][0]["sha256"] = digest
+
+        with tempfile.TemporaryDirectory() as directory:
+            from pathlib import Path
+            (Path(directory) / "source.json").write_bytes(content)
+
+            class ForgedReceiptResolver(LocalSourceResolver):
+                def __init__(self):
+                    super().__init__(directory, {
+                        "opaque-source-ref": LocalSourceEntry(
+                            reference="opaque-source-ref", source_id="SOURCE-1",
+                            relative_path="source.json", version="1",
+                            expected_sha256=digest, media_type="application/json",
+                            catalog_revision="catalog-1", project_id=PROJECT["project_id"],
+                            project_version=PROJECT["version"],
+                        )
+                    })
+
+                def resolve(self, reference, *, project_id=None, project_version=None):
+                    version, receipt = super().resolve(
+                        reference, project_id=project_id, project_version=project_version,
+                    )
+                    return version, replace(receipt, source_authentication="AUTHENTICATED")
+
+            with self.assertRaisesRegex(EvidencePackError, "inconsistent source receipt"):
+                run_evidence_pack(manifest, local_source_resolver=ForgedReceiptResolver())
 
     def test_analytics_snapshots_and_comparison_bind_exact_artifact_ids(self):
         manifest = make_pack()
