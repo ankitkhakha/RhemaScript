@@ -48,6 +48,38 @@ class JsonlAuditSinkTests(unittest.TestCase):
             self.assertEqual(len(records), 1)
             self.assertEqual(records[0]["completion_event_id"], "a" * 64)
 
+    def test_indeterminate_completion_record_does_not_suppress_recovered_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            indeterminate = self.event(
+                phase="INDETERMINATE", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="c" * 64,
+                error_type="CompletionAuditFailure",
+            )
+            completed = dict(indeterminate, phase="COMPLETED")
+            sink(indeterminate)
+            sink(indeterminate)
+            sink(completed)
+            sink(completed)
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual([record["phase"] for record in records],
+                             ["INDETERMINATE", "COMPLETED"])
+            self.assertEqual(records[0]["completion_event_id"], records[1]["completion_event_id"])
+
+    def test_existing_completion_suppresses_later_indeterminate_duplicate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.jsonl"
+            sink = JsonlAuditSink(path)
+            completed = self.event(
+                phase="COMPLETED", http_status=201, response_bytes=24,
+                provider_resource_id="video-123", completion_event_id="d" * 64,
+            )
+            sink(completed)
+            sink(dict(completed, phase="INDETERMINATE", error_type="LateFailure"))
+            records = [json.loads(line) for line in path.read_text().splitlines()]
+            self.assertEqual([record["phase"] for record in records], ["COMPLETED"])
+
     def test_completion_event_id_collision_with_different_result_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.jsonl"
