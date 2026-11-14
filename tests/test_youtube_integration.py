@@ -785,6 +785,10 @@ class YouTubeIntegrationTests(unittest.TestCase):
             *valid["columnHeaders"][:2],
             {**valid["columnHeaders"][2], "dataType": "UNRECOGNIZED"},
         ]})
+        invalid.append({**valid, "columnHeaders": [
+            *valid["columnHeaders"][:2],
+            {**valid["columnHeaders"][2], "dataType": "CURRENCY"},
+        ]})
         invalid.extend((
             {**valid, "rows": [[20261101, 12, 3.5]]},
             {**valid, "rows": [["2026-11-01", "12", 3.5]]},
