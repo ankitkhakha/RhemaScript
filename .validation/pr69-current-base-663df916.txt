@@ -1,0 +1,1 @@
+Temporary CI trigger marker. Validation tree is PR #62 head 663df916 plus all 21 changed-file blobs from PR #69 head 24fc4360. This branch is validation-only; do not merge or deploy.
