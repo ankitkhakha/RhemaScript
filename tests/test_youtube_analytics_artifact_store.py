@@ -17,7 +17,11 @@ from rhemascript.integrations.youtube_analytics_artifact_store import (
     YouTubeAnalyticsArtifactStoreError,
     persist_analytics_evidence_artifact,
 )
-from rhemascript.evidence.artifact_verification import verify_artifact
+from rhemascript.evidence.artifact_verification import (
+    EvidenceIntegrityError,
+    verify_artifact,
+    verify_json_artifact,
+)
 from rhemascript.evidence import validate_evidence_pack
 from rhemascript.evidence.evidence_pack_integrity import (
     EvidencePackIntegrityError,
@@ -479,6 +483,42 @@ class YouTubeAnalyticsArtifactStoreTests(unittest.TestCase):
                     current_snapshot=current, previous_snapshot=previous,
                 )
             self.assertFalse((Path(directory) / "forged-comparison.json").exists())
+
+
+    @unittest.skipUnless(os.name == "posix", "POSIX descriptor-relative reads required")
+    def test_json_artifact_reader_rejects_file_replacement_during_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "evidence"
+            root.mkdir()
+            artifact = root / "analytics.json"
+            original_bytes = b'{"evidence_id":"YT-ORIGINAL","evidence_version":"1"}'
+            replacement_bytes = b'{"evidence_id":"YT-REPLACEMENT","evidence_version":"1"}'
+            original_path = root / "original-opened-inode.json"
+            artifact.write_bytes(original_bytes)
+            real_read = os.read
+            replaced = False
+
+            def replace_after_first_read(descriptor, size):
+                nonlocal replaced
+                chunk = real_read(descriptor, size)
+                if chunk and not replaced:
+                    artifact.rename(original_path)
+                    artifact.write_bytes(replacement_bytes)
+                    replaced = True
+                return chunk
+
+            with patch(
+                "rhemascript.evidence.artifact_verification.os.read",
+                side_effect=replace_after_first_read,
+            ):
+                with self.assertRaisesRegex(
+                    EvidenceIntegrityError, "destination changed during verification"
+                ):
+                    verify_json_artifact(root, "analytics.json")
+
+            self.assertTrue(replaced)
+            self.assertEqual(artifact.read_bytes(), replacement_bytes)
+            self.assertEqual(original_path.read_bytes(), original_bytes)
 
 
 if __name__ == "__main__":
