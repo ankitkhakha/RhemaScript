@@ -14,7 +14,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from rhemascript.core.approvals import ApprovalVerifier
 from rhemascript.core.approval_store import SQLitePublishSessionRegistry
-from rhemascript.integrations.session_url_vault import SQLiteEncryptedSessionUrlVault
+from rhemascript.integrations.session_url_vault import (
+    SQLiteEncryptedSessionUrlVault, publish_session_vault_reference,
+)
 
 from rhemascript.interfaces.external import ExternalIntegrationGateway, UrllibTransport, ExternalIntegrationError
 from rhemascript.integrations.youtube import (
@@ -763,6 +765,78 @@ class YouTubeIntegrationTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(YouTubeIntegrationError):
                     client.analytics(**kwargs)
+
+    def test_completed_publish_resume_returns_persisted_id_without_provider_or_oauth_call(self):
+        from rhemascript.integrations.youtube import _authorise_project_publish
+        from rhemascript.interfaces.external import _publish_approval_fingerprint
+        context = self.publish_context()
+        project_id, project_version, approvals, request_id, binding, stream = _authorise_project_publish(
+            evidence_pack=context["evidence_pack"],
+            final_film_evidence_ref=context["final_film_evidence_ref"],
+            evidence_root=context["evidence_root"],
+            approval_verifier=context["approval_verifier"],
+            approval_credentials=context["approval_credentials"],
+            approval_request_id=context["approval_request_id"],
+            publish_session_registry=context.registry,
+        )
+        self.assertIsNone(stream)
+        first = approvals[0]
+        identity = {
+            "project_id": project_id, "project_version": project_version,
+            "request_id": request_id,
+            "approval_fingerprint": _publish_approval_fingerprint(approvals),
+            "artifact_id": binding["artifact_id"],
+            "artifact_version": binding["artifact_version"],
+            "artifact_sha256": binding["sha256"],
+            "artifact_size_bytes": binding["size_bytes"],
+        }
+        session_url = "https://www.googleapis.com/upload/youtube/v3/videos?upload_id=completed-resume"
+        context.vault.store(publish_session_vault_reference(identity), session_url)
+        self.assertTrue(context.registry.reserve_publish_session(**identity, owner_id="seed-owner"))
+        self.assertTrue(context.registry.bind_publish_session(
+            **identity, session_url_sha256=hashlib.sha256(session_url.encode()).hexdigest(),
+            owner_id="seed-owner",
+        ))
+        self.assertTrue(context.registry.finalize_publish_session_operation(
+            project_id=project_id, project_version=project_version,
+            request_id=request_id, owner_id="seed-owner",
+        ))
+        self.assertTrue(context.registry.begin_publish_chunk(
+            **identity, session_url_sha256=hashlib.sha256(session_url.encode()).hexdigest(),
+            owner_id="seed-owner", start=0, end=binding["size_bytes"] - 1,
+            total=binding["size_bytes"], body_size=binding["size_bytes"],
+        ))
+        self.assertTrue(context.registry.record_publish_response(
+            project_id=project_id, project_version=project_version,
+            request_id=request_id, owner_id="seed-owner", status=201,
+            provider_resource_id="video-completed-1",
+        ))
+        record = context.registry.get_publish_session(
+            project_id=project_id, project_version=project_version, request_id=request_id,
+        )
+        self.assertTrue(context.registry.finalize_publish_completion_audit(
+            project_id=project_id, project_version=project_version, request_id=request_id,
+            owner_id="seed-owner", completion_audit_id=record["completion_audit_id"],
+        ))
+        client = self.make_publish_client(
+            context, lambda *args: self.fail("completed-session recovery must not contact provider"),
+        )
+        final_artifact = next(
+            item for item in context["evidence_pack"]["artifacts"]
+            if item["artifact_type"] == "EDITED_FILM"
+        )
+        result = client.upload_video(
+            os.path.join(context["evidence_root"], final_artifact["local_path"]),
+            title="Previously completed", description="Recovery test",
+            evidence_pack=context["evidence_pack"],
+            final_film_evidence_ref=context["final_film_evidence_ref"],
+            evidence_root=context["evidence_root"],
+            approval_verifier=context["approval_verifier"],
+            approval_credentials=context["approval_credentials"],
+            approval_request_id=context["approval_request_id"],
+        )
+        self.assertEqual(result["video_id"], "video-completed-1")
+        self.assertTrue(result["upload_completed"])
 
     def test_resumable_upload_retries_unacknowledged_bytes(self):
         chunk_size = 256 * 1024

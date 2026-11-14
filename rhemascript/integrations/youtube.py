@@ -708,7 +708,6 @@ class YouTubeClient:
                 metadata["status"]["publishAt"] = publish_at
             query = urlencode({"uploadType": "resumable", "part": "snippet,status"})
             headers = {
-                "Authorization": f"Bearer {self._token()}",
                 "Content-Type": "application/json; charset=UTF-8",
                 "X-Upload-Content-Type": "video/*",
                 "X-Upload-Content-Length": str(artifact_binding["size_bytes"]),
@@ -769,6 +768,7 @@ class YouTubeClient:
                     offset = reconciled_offset
                     video.seek(offset)
             else:
+                headers["Authorization"] = f"Bearer {self._token()}"
                 status, raw, response_headers = self._authorized_request(
                     f"{UPLOAD_BASE}?{query}", method="POST",
                     body=json.dumps(metadata).encode(), headers=headers,
