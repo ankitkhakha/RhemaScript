@@ -224,6 +224,7 @@ def verify_checkpoint_archive(
     return {
         "archive_valid": True,
         "schema": envelope["schema"],
+        "snapshot_schema": payload_schema,
         "created_at": envelope["created_at"],
         "generation": envelope.get("generation"),
         "snapshot_sha256": digest,
