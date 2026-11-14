@@ -6,8 +6,13 @@ payloads, headers, credentials, URLs, and arbitrary caller-supplied fields.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX import compatibility
+    fcntl = None
 import json
 import os
+import re
 import stat
 import threading
 from pathlib import Path
@@ -22,16 +27,53 @@ _ALLOWED_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key",
     "request_bytes", "response_bytes", "http_status", "phase", "error_type",
-    "timestamp_utc",
+    "timestamp_utc", "provider_resource_id", "completion_event_id",
+    "approval_fingerprint", "artifact_id", "artifact_version", "artifact_sha256", "artifact_size_bytes", "status_reconciliation",
+    "session_url_sha256", "publish_session_state", "chunk_start", "chunk_end",
+    "chunk_total_bytes", "acknowledged_offset",
 }
 _REQUIRED_FIELDS = {"interface_id", "provider", "request_id", "operation", "phase"}
-_ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED"}
+_ALLOWED_PHASES = {"REQUESTED", "COMPLETED", "FAILED", "INDETERMINATE"}
 _SAFE_STRING_FIELDS = {
     "interface_id", "provider", "request_id", "project_id", "operation",
     "method", "host", "request_fingerprint", "idempotency_key", "phase", "error_type",
-    "timestamp_utc",
+    "timestamp_utc", "provider_resource_id", "completion_event_id",
+    "approval_fingerprint", "artifact_id", "artifact_version", "artifact_sha256",
+    "session_url_sha256", "publish_session_state",
 }
-_SAFE_INTEGER_FIELDS = {"request_bytes", "response_bytes", "http_status"}
+_SAFE_INTEGER_FIELDS = {
+    "request_bytes", "response_bytes", "http_status", "artifact_size_bytes", "chunk_start", "chunk_end",
+    "chunk_total_bytes", "acknowledged_offset",
+}
+_SAFE_BOOLEAN_FIELDS = {"status_reconciliation"}
+_STRING_MAX_LENGTHS = {
+    "interface_id": 64, "provider": 64, "request_id": 128, "project_id": 128,
+    "operation": 64, "method": 16, "host": 253, "request_fingerprint": 64,
+    "idempotency_key": 256, "phase": 16, "error_type": 128, "timestamp_utc": 64,
+    "provider_resource_id": 128, "completion_event_id": 64,
+    "approval_fingerprint": 64, "artifact_id": 128, "artifact_version": 128,
+    "artifact_sha256": 64, "session_url_sha256": 64, "publish_session_state": 32,
+}
+_SHA256_FIELDS = {
+    "request_fingerprint", "completion_event_id", "approval_fingerprint",
+    "artifact_sha256", "session_url_sha256",
+}
+_ALLOWED_SESSION_STATES = {
+    "CREATING", "ACTIVE", "CHUNK_IN_FLIGHT", "RECONCILING",
+    "COMPLETE", "FAILED", "INDETERMINATE",
+}
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    """Persist directory-entry changes after syncing the audit file."""
+    if os.name != "posix":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_descriptor = os.open(path.parent, flags)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
 
 
 class JsonlAuditSink:
@@ -67,16 +109,36 @@ class JsonlAuditSink:
         record_data = dict(event)
         record_data.setdefault("timestamp_utc", datetime.now(timezone.utc).isoformat(timespec="seconds"))
         for key, value in record_data.items():
-            if key in _SAFE_STRING_FIELDS and (not isinstance(value, str) or not value):
-                raise AuditSinkError("audit event string field is invalid")
-            if key in _SAFE_INTEGER_FIELDS and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            if key in _SAFE_STRING_FIELDS:
+                if not isinstance(value, str) or not value or len(value) > _STRING_MAX_LENGTHS[key]:
+                    raise AuditSinkError("audit event string field is invalid")
+                if key in _SHA256_FIELDS and not re.fullmatch(r"[0-9a-f]{64}", value):
+                    raise AuditSinkError("audit event digest field is invalid")
+                if key == "provider_resource_id" and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
+                    raise AuditSinkError("audit event provider resource ID is invalid")
+                if key == "publish_session_state" and value not in _ALLOWED_SESSION_STATES:
+                    raise AuditSinkError("audit event publish-session state is invalid")
+            if key in _SAFE_INTEGER_FIELDS and (value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0 or value > 2**63 - 1)):
                 raise AuditSinkError("audit event numeric field is invalid")
+            if key in _SAFE_BOOLEAN_FIELDS and not isinstance(value, bool):
+                raise AuditSinkError("audit event boolean field is invalid")
         try:
             record = (json.dumps(record_data, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode("utf-8")
         except (TypeError, ValueError):
             raise AuditSinkError("audit event is not serializable") from None
 
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        completion_event_id = record_data.get("completion_event_id")
+        if completion_event_id is not None:
+            if fcntl is None:
+                raise AuditSinkError("idempotent completion audit requires POSIX file locking")
+            if not isinstance(completion_event_id, str) or not re.fullmatch(r"[0-9a-f]{64}", completion_event_id):
+                raise AuditSinkError("completion event ID must be a lowercase SHA-256 digest")
+            if record_data["phase"] not in {"COMPLETED", "INDETERMINATE"}:
+                raise AuditSinkError("completion event ID is only valid for completion outcomes")
+            resource_id = record_data.get("provider_resource_id")
+            if not isinstance(resource_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", resource_id):
+                raise AuditSinkError("completed provider resource ID is invalid")
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT
         flags |= getattr(os, "O_NOFOLLOW", 0)
         with self._lock:
             descriptor = None
@@ -89,6 +151,52 @@ class JsonlAuditSink:
                     raise AuditSinkError("audit destination must be owned by the current user")
                 if hasattr(os, "fchmod"):
                     os.fchmod(descriptor, 0o600)
+                if fcntl is not None:
+                    fcntl.flock(descriptor, fcntl.LOCK_EX)
+                # Never append after an unterminated tail, even for non-idempotent events.
+                file_size = os.fstat(descriptor).st_size
+                if file_size:
+                    os.lseek(descriptor, -1, os.SEEK_END)
+                    if os.read(descriptor, 1) != b"\n":
+                        raise AuditSinkError("audit log contains unterminated records; append is unsafe")
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                matching_indeterminate = False
+                matching_completed = False
+                # Validate the complete existing log before every append, not only
+                # completion deduplication, so corruption is never extended.
+                with os.fdopen(os.dup(descriptor), "rb") as existing_log:
+                    for line in existing_log:
+                        if not line.endswith(b"\n"):
+                            raise AuditSinkError("audit log contains unterminated records; idempotent recovery is unsafe")
+                        try:
+                            existing = json.loads(line)
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe") from None
+                        if not isinstance(existing, dict):
+                            raise AuditSinkError("audit log contains malformed records; idempotent recovery is unsafe")
+                        if completion_event_id is not None and existing.get("completion_event_id") == completion_event_id:
+                            if (existing.get("provider_resource_id") != resource_id
+                                    or existing.get("request_id") != record_data.get("request_id")
+                                    or existing.get("project_id") != record_data.get("project_id")
+                                    or existing.get("http_status") != record_data.get("http_status")):
+                                raise AuditSinkError("completion event ID already exists with a different provider result")
+                            existing_phase = existing.get("phase")
+                            if existing_phase == "COMPLETED":
+                                matching_completed = True
+                            elif existing_phase == "INDETERMINATE":
+                                matching_indeterminate = True
+                            else:
+                                raise AuditSinkError("completion event ID exists in an unexpected audit phase")
+                if completion_event_id is not None and (
+                    matching_completed or (
+                        record_data["phase"] == "INDETERMINATE" and matching_indeterminate
+                    )
+                ):
+                    # Scan the complete log before accepting a duplicate, then re-sync:
+                    # a prior append may be visible even though its fsync failed.
+                    os.fsync(descriptor)
+                    _fsync_parent_directory(self.path)
+                    return
                 view = memoryview(record)
                 while view:
                     written = os.write(descriptor, view)
@@ -96,10 +204,16 @@ class JsonlAuditSink:
                         raise AuditSinkError("audit record write made no progress")
                     view = view[written:]
                 os.fsync(descriptor)
+                _fsync_parent_directory(self.path)
             except AuditSinkError:
                 raise
             except OSError:
                 raise AuditSinkError("audit record could not be durably persisted") from None
             finally:
                 if descriptor is not None:
+                    try:
+                        if fcntl is not None:
+                            fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
                     os.close(descriptor)
