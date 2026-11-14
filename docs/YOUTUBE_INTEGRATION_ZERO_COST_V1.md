@@ -186,3 +186,6 @@ PR #70 candidate head \`ee26b820b650b1c726d086c3abe433dcb664d149\` is open, draf
 
 
 A process-restart regression also verifies the consumed-approval re-verification path. The verifier no longer compares policy-derived authentication-age/clock-skew values against nonexistent SQLite columns; it recomputes those values from the signed V3 claims and current trusted identity policy, while still matching all persisted credential and identity fields. Recovery uses the newly re-verified resume-only approval objects, not copied or manually constructed objects. This change is committed but not test-executed; exact-head CI remains unverified.
+
+
+**Expiry/key-state limitation:** after a process restart, re-verification through \`verify_many_existing_consumed\` currently re-applies credential expiry, current identity-authentication freshness and key-registry active-status checks. If the approval has expired, identity authentication is stale under current policy, or the key is no longer active, automatic recovery fails closed and requires manual reconciliation. No historical-expiry bypass is implemented. Whether a completed result with no provider call should permit historical signature + durable consumed/non-revoked-record verification after expiry is an explicit approval/security policy decision, not assumed by this candidate.
