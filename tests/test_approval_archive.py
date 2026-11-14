@@ -1,11 +1,17 @@
+import base64
+import hashlib
+import hmac
 import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from datetime import datetime, timezone
 
-from rhemascript.core.approval_store import ApprovalStoreError, SQLiteApprovalConsumptionStore
+from rhemascript.core.approval_store import (
+    ApprovalStoreError, SQLiteApprovalConsumptionStore, SQLitePublishSessionRegistry,
+)
 from rhemascript.core.approval_archive import (
     export_checkpoint_archive, verify_checkpoint_archive,
 )
@@ -21,7 +27,7 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         self.archive_dir.mkdir(mode=0o700)
         os.chmod(self.db_dir, 0o700)
         os.chmod(self.archive_dir, 0o700)
-        self.store = SQLiteApprovalConsumptionStore(self.db_dir / "approvals.sqlite3")
+        self.store = SQLitePublishSessionRegistry(self.db_dir / "approvals.sqlite3")
         self.key = b"external-archive-authentication-key-32bytes"
         self.archive = self.archive_dir / "checkpoint-0001.json"
 
@@ -34,6 +40,8 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         result = verify_checkpoint_archive(path, key=self.key, current_store=self.store)
         self.assertTrue(result["archive_valid"])
         self.assertEqual(result["consumed_count"], 0)
+        self.assertEqual(result["publish_session_count"], 0)
+        self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v5")
         self.assertTrue(result["matches_current_state"])
 
     def test_generation_bound_v2_archive_retains_generation_and_digest(self):
@@ -126,6 +134,165 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
         envelope["hmac_sha256"] = hmac.new(self.key, archive_module._canonical(signed), hashlib.sha256).hexdigest()
         self.archive.write_text(json.dumps(envelope), encoding="utf-8")
         os.chmod(self.archive, 0o600)
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
+
+
+    def _write_authenticated_payload(self, payload, *, canonical=True):
+        import rhemascript.core.approval_archive as archive_module
+        snapshot = (archive_module._canonical(payload) if canonical
+                    else json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        signed = {
+            "schema": "RhemaScript.ApprovalCheckpointArchive.v1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
+            "snapshot_b64": base64.b64encode(snapshot).decode("ascii"),
+        }
+        envelope = dict(signed)
+        envelope["hmac_sha256"] = hmac.new(
+            self.key, archive_module._canonical(signed), hashlib.sha256
+        ).hexdigest()
+        self.archive.write_bytes(archive_module._canonical(envelope))
+        os.chmod(self.archive, 0o600)
+
+    def test_v5_archive_verifies_populated_publish_session_rows(self):
+        fingerprint = "a" * 64
+        artifact_digest = "b" * 64
+        session_digest = "c" * 64
+        self.assertTrue(self.store.reserve_publish_session(
+            project_id="project-1", project_version="v1", request_id="request-1",
+            approval_fingerprint=fingerprint, artifact_id="artifact-1",
+            artifact_version="v1", artifact_sha256=artifact_digest,
+            artifact_size_bytes=1024, owner_id="worker-1",
+        ))
+        self.assertTrue(self.store.bind_publish_session(
+            project_id="project-1", project_version="v1", request_id="request-1",
+            approval_fingerprint=fingerprint, artifact_id="artifact-1",
+            artifact_version="v1", artifact_sha256=artifact_digest,
+            artifact_size_bytes=1024, session_url_sha256=session_digest,
+            owner_id="worker-1",
+        ))
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        result = verify_checkpoint_archive(self.archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["publish_session_count"], 1)
+
+
+
+    def test_v5_archive_verifies_completed_publish_session_metadata(self):
+        fingerprint = "d" * 64
+        artifact_digest = "e" * 64
+        session_digest = "f" * 64
+        identity = dict(
+            project_id="project-complete", project_version="v2", request_id="request-complete",
+            approval_fingerprint=fingerprint, artifact_id="artifact-complete",
+            artifact_version="v2", artifact_sha256=artifact_digest,
+            artifact_size_bytes=1024,
+        )
+        self.assertTrue(self.store.reserve_publish_session(
+            **identity, owner_id="creator",
+        ))
+        self.assertTrue(self.store.bind_publish_session(
+            **identity, session_url_sha256=session_digest, owner_id="creator",
+        ))
+        self.assertTrue(self.store.finalize_publish_session_operation(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"], owner_id="creator",
+        ))
+        self.assertTrue(self.store.begin_publish_chunk(
+            **identity, session_url_sha256=session_digest, owner_id="uploader",
+            start=0, end=1023, total=1024, body_size=1024,
+        ))
+        self.assertTrue(self.store.record_publish_response(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"], owner_id="uploader", status=201,
+            provider_resource_id="provider_resource_123",
+        ))
+        session = self.store.get_publish_session(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"],
+        )
+        self.assertTrue(self.store.finalize_publish_completion_audit(
+            project_id=identity["project_id"], project_version=identity["project_version"],
+            request_id=identity["request_id"], owner_id="uploader",
+            completion_audit_id=session["completion_audit_id"],
+        ))
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        result = verify_checkpoint_archive(self.archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["publish_session_count"], 1)
+
+    def test_legacy_v3_archive_remains_verifiable(self):
+        legacy_store = SQLiteApprovalConsumptionStore(self.db_dir / "legacy.sqlite3")
+        legacy_archive = self.archive_dir / "legacy-v3.json"
+        export_checkpoint_archive(legacy_store, legacy_archive, key=self.key)
+        result = verify_checkpoint_archive(legacy_archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v3")
+        self.assertEqual(result["publish_session_count"], 0)
+
+    def test_v4_archive_with_empty_publish_sessions_remains_verifiable(self):
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v4",
+            "consumed": [],
+            "revoked": [],
+            "publish_sessions": [],
+        })
+        result = verify_checkpoint_archive(self.archive, key=self.key)
+        self.assertTrue(result["archive_valid"])
+        self.assertEqual(result["snapshot_schema"], "RhemaScript.ApprovalStateCheckpoint.v4")
+
+
+    def test_archive_rejects_authenticated_noncanonical_snapshot_json(self):
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
+            "consumed": [],
+            "revoked": [],
+            "publish_sessions": [],
+        }, canonical=False)
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
+
+
+    def test_archive_rejects_noncanonical_nested_identity_claims(self):
+        now = datetime.now(timezone.utc).isoformat()
+        identity = {
+            "subject_id": None, "actor_role": None, "authn_context": None,
+            "authenticated_at": None, "identity_session_id": None,
+            "identity_policy_version": None, "identity_provider_id": None,
+        }
+        noncanonical_identity = json.dumps(identity, ensure_ascii=False)
+        row = [
+            "approval-001", "nonce-001", "issuer-001", "actor-001", "PUBLISH",
+            "project-001", "v1", "request-001", now, now, "key-001", now,
+            None, None, None, None, None, None, noncanonical_identity,
+        ]
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
+            "consumed": [row],
+            "revoked": [],
+            "publish_sessions": [],
+        })
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
+
+    def test_archive_rejects_authenticated_consumed_row_with_wrong_width(self):
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
+            "consumed": [["approval-id"]],
+            "revoked": [],
+            "publish_sessions": [],
+        })
+        with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
+            verify_checkpoint_archive(self.archive, key=self.key)
+
+    def test_archive_rejects_authenticated_publish_session_with_wrong_width(self):
+        self._write_authenticated_payload({
+            "schema": "RhemaScript.ApprovalStateCheckpoint.v5",
+            "consumed": [],
+            "revoked": [],
+            "publish_sessions": [["project-1", "v1", "request-1"]],
+        })
         with self.assertRaisesRegex(ApprovalStoreError, "malformed or authentication failed"):
             verify_checkpoint_archive(self.archive, key=self.key)
 
