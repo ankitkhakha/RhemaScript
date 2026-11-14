@@ -1,0 +1,98 @@
+name: Generate reproducible CI dependency lock
+
+on:
+  push:
+    branches: ["feat/ieif-raei-integration"]
+    paths:
+      - ".github/workflows/generate-ci-lock.yml"
+      - "requirements-ci.in"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rhemascript-ci-lock-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    name: Generate hash lock on supported CI target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Record lock generator toolchain
+        run: |
+          python -m pip --version
+          python -m pip install --disable-pip-version-check "pip==24.3.1"
+          python -m pip install --disable-pip-version-check "pip-tools==7.4.1"
+          python -m pip show pip-tools
+          pip-compile --version
+      - name: Compile complete dependency lock with hashes
+        run: |
+          pip-compile \
+            --resolver=backtracking \
+            --generate-hashes \
+            --allow-unsafe \
+            --strip-extras \
+            --output-file requirements-ci.lock \
+            requirements-ci.in
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          lines = Path("requirements-ci.lock").read_text().splitlines()
+          blocks = []
+          current = []
+          for line in lines:
+              if line and not line[0].isspace() and not line.startswith(("#", "--")):
+                  if current:
+                      blocks.append(current)
+                  current = [line]
+              elif current:
+                  current.append(line)
+          if current:
+              blocks.append(current)
+          if not blocks:
+              raise SystemExit("lock contains no requirements")
+          for block in blocks:
+              header = block[0].rstrip().rstrip("\\").strip()
+              if not re.search(r"==[^ ;]+$", header):
+                  raise SystemExit(f"non-exact requirement: {block[0]}")
+              hashes = [line.strip() for line in block[1:] if "--hash=" in line]
+              if not hashes or any(not re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", item.split()[0]) for item in hashes):
+                  raise SystemExit(f"missing or invalid SHA-256 hashes: {block[0]}")
+          PY
+      - name: Verify locked artifacts resolve for this runner
+        run: |
+          python -m pip download --disable-pip-version-check \
+            --require-hashes --only-binary=:all: \
+            --dest lock-wheelhouse -r requirements-ci.lock
+      - name: Record lock digest and generator toolchain
+        run: |
+          sha256sum requirements-ci.lock > requirements-ci.lock.sha256
+          {
+            python --version
+            python -m pip --version
+            pip-compile --version
+            cat requirements-ci.lock.sha256
+          } > lock-generation-record.txt
+      - name: Upload generated lock candidate
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rhemascript-ci-lock-candidate
+          path: |
+            requirements-ci.lock
+            requirements-ci.lock.sha256
+            lock-generation-record.txt
+          if-no-files-found: error
+          retention-days: 14

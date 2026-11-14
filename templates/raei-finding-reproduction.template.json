@@ -1,0 +1,15 @@
+{
+  "schema": "raei-finding-reproduction-v1",
+  "finding_id": "RS-FND-REPLACE",
+  "finding_version": "1.0",
+  "outcome": "INCONCLUSIVE",
+  "environment": "Record exact environment, versions and relevant configuration.",
+  "steps": [
+    "Record each reproduction step exactly."
+  ],
+  "expected_behavior": "Describe the expected behavior.",
+  "observed_behavior": "Describe the observed behavior, including deviations.",
+  "evidence_id": "EV-FND-REPRODUCTION-REPLACE",
+  "evidence_version": "1.0",
+  "created_at_utc": "2026-11-13T00:00:00+00:00"
+}
