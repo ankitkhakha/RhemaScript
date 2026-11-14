@@ -454,6 +454,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             self.assertEqual(session["acknowledged_offset"], len(b"approved-video-bytes"))
             self.assertEqual(len(session["session_url_sha256"]), 64)
             self.assertNotIn(b"private-session", registry.path.read_bytes())
+            audit_log_text = audit_path.read_text()
 
         self.assertEqual(result["video_id"], "gateway-video")
         self.assertTrue(result["upload_completed"])
@@ -470,7 +471,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
             [event["operation"] for event in events if event["phase"] == "REQUESTED"],
             ["OAUTH_TOKEN", "UPLOAD_SESSION", "UPLOAD_CHUNK", "VIDEO_READ"],
         )
-        audit_records = [json.loads(line) for line in audit_path.read_text().splitlines()]
+        audit_records = [json.loads(line) for line in audit_log_text.splitlines()]
         self.assertTrue(any(
             record.get("operation") == "UPLOAD_SESSION" and record.get("phase") == "COMPLETED"
             for record in audit_records
@@ -482,7 +483,7 @@ class YouTubeIntegrationTests(unittest.TestCase):
         self.assertEqual(len(completed_upload_audits), 1)
         self.assertEqual(completed_upload_audits[0]["provider_resource_id"], "gateway-video")
         self.assertEqual(completed_upload_audits[0]["publish_session_state"], "COMPLETE")
-        self.assertNotIn("private-session", audit_path.read_text())
+        self.assertNotIn("private-session", audit_log_text)
         self.assertNotIn("gateway-access", repr(events))
         self.assertNotIn("private-session", repr(events))
         self.assertNotIn("approved-video-bytes", repr(events))
