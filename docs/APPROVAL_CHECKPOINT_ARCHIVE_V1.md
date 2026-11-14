@@ -10,7 +10,7 @@ Retain an authenticated snapshot of the approval-consumption and revocation stat
 
 The implementation provides:
 
-- a canonical JSON envelope containing the exact approval-state snapshot; current V4 snapshots include consumed approvals, revocations and durable publish-session records; the verifier retains read compatibility with V3 snapshots;
+- a canonical JSON envelope containing the exact approval-state snapshot; current V5 snapshots include consumed approvals, revocations and durable publish-session records; the verifier retains read compatibility with V3 snapshots;
 - SHA-256 content digest and HMAC-SHA256 authentication over the archive schema, creation time, digest and encoded snapshot;
 - owner-only archive file permissions (0600), an already-existing owner-owned private directory (0700 or stricter), no-follow file creation and exclusive destination creation;
 - rejection of archive destinations in the same directory as the approval database;
@@ -70,7 +70,7 @@ Interpretation:
 
 ## Snapshot schema compatibility
 
-The current approval store emits `RhemaScript.ApprovalStateCheckpoint.v4`, which includes the `consumed`, `revoked` and `publish_sessions` collections from one SQLite read transaction. The archive verifier accepts the legacy V3 shape (`consumed` and `revoked`) and the current V4 shape (those collections plus `publish_sessions`). New exports are verified against the same schema emitted by the current store. The archive byte limit applies on both export and verification.
+The current approval store emits `RhemaScript.ApprovalStateCheckpoint.v5`, which includes the `consumed`, `revoked` and `publish_sessions` collections from one SQLite read transaction. The archive verifier accepts the legacy V3 shape (`consumed` and `revoked`) and the current V5 shape (those collections plus `publish_sessions`). New exports are verified against the same schema emitted by the current store. The archive byte limit applies on both export and verification.
 
 ## Recovery controls
 
