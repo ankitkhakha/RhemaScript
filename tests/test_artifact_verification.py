@@ -45,6 +45,37 @@ class ArtifactVerificationTests(unittest.TestCase):
             with self.assertRaises(EvidenceIntegrityError):
                 verify_json_artifact(self.root, "invalid.json")
 
+    def test_json_artifact_rejects_duplicate_object_members_at_every_depth(self):
+        contents = (
+            b'{"evidence_id":"EV-JSON","evidence_id":"EV-FORGED","evidence_version":"v1"}',
+            b'{"evidence_id":"EV-JSON","evidence_version":"v1","nested":{"role":"reader","role":"admin"}}',
+        )
+        for content in contents:
+            with self.subTest(content=content):
+                (self.root / "duplicate.json").write_bytes(content)
+                with self.assertRaisesRegex(EvidenceIntegrityError, "unambiguous UTF-8 JSON"):
+                    verify_json_artifact(self.root, "duplicate.json")
+
+    def test_json_artifact_rejects_nonstandard_numeric_constants(self):
+        for constant in (b"NaN", b"Infinity", b"-Infinity"):
+            with self.subTest(constant=constant):
+                content = (
+                    b'{"evidence_id":"EV-JSON","evidence_version":"v1","value":'
+                    + constant + b"}"
+                )
+                (self.root / "constant.json").write_bytes(content)
+                with self.assertRaisesRegex(EvidenceIntegrityError, "unambiguous UTF-8 JSON"):
+                    verify_json_artifact(self.root, "constant.json")
+
+    def test_json_artifact_rejects_excessive_nesting_with_integrity_error(self):
+        content = (
+            b'{"evidence_id":"EV-DEEP","evidence_version":"v1","nested":'
+            + b"[" * 10000 + b"0" + b"]" * 10000 + b"}"
+        )
+        (self.root / "deep.json").write_bytes(content)
+        with self.assertRaisesRegex(EvidenceIntegrityError, "unambiguous UTF-8 JSON"):
+            verify_json_artifact(self.root, "deep.json")
+
     def test_json_artifact_rejects_symlink(self):
         target = self.root / "target.json"
         target.write_text('{"evidence_id":"EV-1","evidence_version":"v1"}', encoding="utf-8")
