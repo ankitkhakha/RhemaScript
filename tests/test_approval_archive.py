@@ -301,5 +301,78 @@ class ApprovalCheckpointArchiveTests(unittest.TestCase):
             export_checkpoint_archive(self.store, self.archive, key=b"short")
 
 
+    @unittest.skipUnless(os.name == "posix", "POSIX descriptor-relative archive writes required")
+    def test_export_rejects_replaced_destination_and_preserves_replacement(self):
+        original_path = self.archive_dir / "original-opened-inode.json"
+        replacement = b"replacement archive must be preserved"
+        real_write = os.write
+        replaced = False
+
+        def replace_after_open(descriptor, data):
+            nonlocal replaced
+            if not replaced:
+                self.archive.rename(original_path)
+                replacement_fd = os.open(
+                    self.archive, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                )
+                try:
+                    real_write(replacement_fd, replacement)
+                finally:
+                    os.close(replacement_fd)
+                replaced = True
+            return real_write(descriptor, data)
+
+        with patch(
+            "rhemascript.core.approval_archive.os.write",
+            side_effect=replace_after_open,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError, "destination changed during export"
+            ):
+                export_checkpoint_archive(self.store, self.archive, key=self.key)
+
+        self.assertTrue(replaced)
+        self.assertEqual(self.archive.read_bytes(), replacement)
+        self.assertTrue(original_path.exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX descriptor-relative archive reads required")
+    def test_verify_rejects_archive_replacement_during_read(self):
+        export_checkpoint_archive(self.store, self.archive, key=self.key)
+        original_path = self.archive_dir / "original-opened-inode.json"
+        replacement = b"replacement archive must not be verified"
+        real_read = os.read
+        real_write = os.write
+        replaced = False
+
+        def replace_after_read(descriptor, size):
+            nonlocal replaced
+            chunk = real_read(descriptor, size)
+            if chunk and not replaced:
+                self.archive.rename(original_path)
+                replacement_fd = os.open(
+                    self.archive, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+                )
+                try:
+                    real_write(replacement_fd, replacement)
+                finally:
+                    os.close(replacement_fd)
+                replaced = True
+            return chunk
+
+        with patch(
+            "rhemascript.core.approval_archive.os.read",
+            side_effect=replace_after_read,
+        ):
+            with self.assertRaisesRegex(
+                ApprovalStoreError,
+                "changed while being read|destination changed during verification",
+            ):
+                verify_checkpoint_archive(self.archive, key=self.key)
+
+        self.assertTrue(replaced)
+        self.assertEqual(self.archive.read_bytes(), replacement)
+        self.assertTrue(original_path.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
