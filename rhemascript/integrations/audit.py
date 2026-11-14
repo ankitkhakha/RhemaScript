@@ -64,6 +64,18 @@ _ALLOWED_SESSION_STATES = {
 }
 
 
+def _fsync_parent_directory(path: Path) -> None:
+    """Persist directory-entry changes after syncing the audit file."""
+    if os.name != "posix":
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    directory_descriptor = os.open(path.parent, flags)
+    try:
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
 class JsonlAuditSink:
     """Append-only local audit log; each event is fsynced before return.
 
@@ -183,6 +195,7 @@ class JsonlAuditSink:
                     # Scan the complete log before accepting a duplicate, then re-sync:
                     # a prior append may be visible even though its fsync failed.
                     os.fsync(descriptor)
+                    _fsync_parent_directory(self.path)
                     return
                 view = memoryview(record)
                 while view:
@@ -191,6 +204,7 @@ class JsonlAuditSink:
                         raise AuditSinkError("audit record write made no progress")
                     view = view[written:]
                 os.fsync(descriptor)
+                _fsync_parent_directory(self.path)
             except AuditSinkError:
                 raise
             except OSError:
