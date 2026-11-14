@@ -15,9 +15,11 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import hashlib
 import json
+import math
 import os
 import re
 import stat
+import unicodedata
 import tempfile
 import uuid
 from urllib.request import build_opener, HTTPRedirectHandler
@@ -30,6 +32,9 @@ YOUTUBE_INTERFACE_ID = "IF-18"
 API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_BASE = "https://www.googleapis.com/upload/youtube/v3/videos"
 ANALYTICS_BASE = "https://youtubeanalytics.googleapis.com/v2/reports"
+
+# Bound local calendar-coverage/comparison work while covering the platform history.
+MAX_ANALYTICS_DATE_RANGE_DAYS = 10_000
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 REQUIRED_SCOPES = (
     "https://www.googleapis.com/auth/youtube.upload",
@@ -50,6 +55,115 @@ class _NoRedirect(HTTPRedirectHandler):
     """Reject redirects so credentials and media never follow an untrusted hop."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
+
+
+def _analytics_identifiers(value: Any, name: str, *, required: bool) -> list[str]:
+    """Parse a comma-separated Analytics identifier list without accepting query syntax."""
+    if not isinstance(value, str):
+        raise YouTubeIntegrationError(f"{name} must be a comma-separated string")
+    if not value.strip():
+        if required:
+            raise YouTubeIntegrationError(f"{name} must contain at least one identifier")
+        return []
+    parts = value.split(",")
+    if any(not part or part != part.strip()
+           or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", part) for part in parts):
+        raise YouTubeIntegrationError(f"{name} contains an invalid identifier")
+    if len(set(parts)) != len(parts):
+        raise YouTubeIntegrationError(f"{name} must not contain duplicate identifiers")
+    return parts
+
+
+def _validate_analytics_request(params: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Validate query syntax only; Google's report-specific matrix remains authoritative."""
+    if not isinstance(params, dict):
+        raise YouTubeIntegrationError("Analytics query parameters must be an object")
+    allowed_parameters = {"ids", "startDate", "endDate", "metrics", "dimensions", "filters"}
+    if set(params) - allowed_parameters:
+        raise YouTubeIntegrationError("Analytics query contains unsupported parameters")
+    metrics = _analytics_identifiers(params.get("metrics"), "metrics", required=True)
+    dimensions = _analytics_identifiers(params.get("dimensions", ""), "dimensions", required=False)
+    if params.get("ids") != "channel==MINE":
+        raise YouTubeIntegrationError("Analytics channel identity must be channel==MINE")
+    parsed_dates: dict[str, date] = {}
+    for field in ("startDate", "endDate"):
+        value = params.get(field)
+        if not isinstance(value, str):
+            raise YouTubeIntegrationError(f"{field} must be an ISO date")
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            raise YouTubeIntegrationError(f"{field} must be an ISO date") from None
+        if parsed.isoformat() != value:
+            raise YouTubeIntegrationError(f"{field} must use YYYY-MM-DD format")
+        parsed_dates[field] = parsed
+    if parsed_dates["endDate"] < parsed_dates["startDate"]:
+        raise YouTubeIntegrationError("endDate cannot precede startDate")
+    inclusive_days = (parsed_dates["endDate"] - parsed_dates["startDate"]).days + 1
+    if inclusive_days > MAX_ANALYTICS_DATE_RANGE_DAYS:
+        raise YouTubeIntegrationError(
+            f"Analytics date range cannot exceed {MAX_ANALYTICS_DATE_RANGE_DAYS} inclusive days"
+        )
+    filters = params.get("filters")
+    if filters is not None:
+        if not isinstance(filters, str) or not filters or len(filters) > 500:
+            raise YouTubeIntegrationError("filters must be a non-empty string of at most 500 characters")
+        for clause in filters.split(";"):
+            key, separator, value = clause.partition("==")
+            if (not separator or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", key)
+                    or not value or value != value.strip() or "==" in value
+                    or any(unicodedata.category(ch) == "Cc" for ch in value)):
+                raise YouTubeIntegrationError("filters contains an invalid dimension==value clause")
+    return metrics, dimensions
+
+
+def _validate_analytics_report(result: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Validate YouTube Analytics result-table headers and row shape before exposing data."""
+    metrics, dimensions = _validate_analytics_request(params)
+    if not isinstance(result, dict) or result.get("kind") != "youtubeAnalytics#resultTable":
+        raise YouTubeIntegrationError("YouTube Analytics API returned an unexpected report kind")
+    headers = result.get("columnHeaders")
+    if not isinstance(headers, list) or len(headers) != len(metrics) + len(dimensions):
+        raise YouTubeIntegrationError("YouTube Analytics report has an invalid column header count")
+    expected = [(name, "DIMENSION") for name in dimensions]
+    expected.extend((name, "METRIC") for name in metrics)
+    for header, (expected_name, expected_type) in zip(headers, expected):
+        if not isinstance(header, dict) or header.get("name") != expected_name or header.get("columnType") != expected_type:
+            raise YouTubeIntegrationError("YouTube Analytics report headers do not match the requested columns")
+        data_type = header.get("dataType")
+        allowed_types = {"STRING"} if expected_type == "DIMENSION" else {"INTEGER", "FLOAT"}
+        if not isinstance(data_type, str) or data_type not in allowed_types:
+            raise YouTubeIntegrationError("YouTube Analytics report contains an unsupported column dataType")
+    rows = result.get("rows", [])
+    if not isinstance(rows, list):
+        raise YouTubeIntegrationError("YouTube Analytics report rows must be a list when present")
+    dimension_count = len(dimensions)
+    seen_dimension_tuples = set()
+    for row in rows:
+        if not isinstance(row, list) or len(row) != len(headers):
+            raise YouTubeIntegrationError("YouTube Analytics report contains a malformed row")
+        for value, header in zip(row, headers):
+            data_type = header["dataType"]
+            if data_type == "STRING":
+                valid_value = isinstance(value, str)
+            elif data_type == "INTEGER":
+                valid_value = isinstance(value, int) and not isinstance(value, bool)
+            else:
+                valid_value = (
+                    (isinstance(value, int) and not isinstance(value, bool))
+                    or (isinstance(value, float) and math.isfinite(value))
+                )
+            if not valid_value:
+                raise YouTubeIntegrationError(
+                    f"YouTube Analytics report value does not match column {header['name']} dataType"
+                )
+        dimension_tuple = tuple(row[:dimension_count])
+        if dimension_tuple in seen_dimension_tuples:
+            raise YouTubeIntegrationError(
+                "YouTube Analytics report contains a duplicate dimension-value combination"
+            )
+        seen_dimension_tuples.add(dimension_tuple)
+    return result
 
 
 
@@ -918,19 +1032,23 @@ class YouTubeClient:
             raise YouTubeIntegrationError("end_date cannot precede start_date")
         if not isinstance(metrics, str) or not metrics.strip() or len(metrics) > 500:
             raise YouTubeIntegrationError("metrics must be a non-empty string of at most 500 characters")
-        if not isinstance(dimensions, str) or not dimensions.strip() or len(dimensions) > 200:
-            raise YouTubeIntegrationError("dimensions must be a non-empty string of at most 200 characters")
+        if (not isinstance(dimensions, str) or len(dimensions) > 200
+                or (dimensions != "" and not dimensions.strip())):
+            raise YouTubeIntegrationError("dimensions must be a string of at most 200 characters; use an empty string to omit the optional dimension")
         if filters is not None and (not isinstance(filters, str) or len(filters) > 500):
             raise YouTubeIntegrationError("filters must be a string of at most 500 characters")
         params: dict[str, Any] = {
             "ids": "channel==MINE", "startDate": start_date.isoformat(),
-            "endDate": end_date.isoformat(), "metrics": metrics, "dimensions": dimensions,
+            "endDate": end_date.isoformat(), "metrics": metrics,
         }
+        if dimensions:
+            params["dimensions"] = dimensions
         if filters:
             params["filters"] = filters
         return self._analytics_api(params)
 
     def _analytics_api(self, params: dict[str, Any]) -> dict[str, Any]:
+        _validate_analytics_request(params)
         query = urlencode(params)
         status, raw, _ = self._authorized_request(
             f"{ANALYTICS_BASE}?{query}",
@@ -942,6 +1060,4 @@ class YouTubeClient:
             result = json.loads(raw)
         except ValueError:
             raise YouTubeIntegrationError("YouTube Analytics API returned invalid JSON") from None
-        if not isinstance(result, dict):
-            raise YouTubeIntegrationError("YouTube Analytics API returned an unexpected response")
-        return result
+        return _validate_analytics_report(result, params)
