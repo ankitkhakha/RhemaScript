@@ -72,7 +72,8 @@ def _validate_record_schema(record: dict[str, Any], *, legacy: bool = False) -> 
         raise AuditSinkError("audit record does not match the required schema")
     if set(record) - _ALLOWED_FIELDS:
         raise AuditSinkError("audit record contains fields outside the safe schema")
-    if record.get("phase") not in _ALLOWED_PHASES:
+    phase = record.get("phase")
+    if not isinstance(phase, str) or phase not in _ALLOWED_PHASES:
         raise AuditSinkError("audit record phase is invalid")
     if not legacy and record.get("schema_version") != _AUDIT_SCHEMA_VERSION:
         raise AuditSinkError("audit record schema version is unsupported")
