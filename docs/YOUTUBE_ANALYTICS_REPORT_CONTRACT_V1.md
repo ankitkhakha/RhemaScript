@@ -21,6 +21,16 @@ This contract hardens the response boundary for the channel-scoped YouTube Analy
 - If `rows` is omitted, it is treated as an empty result set. If present, it must be a list.
 - Every row must be a list with exactly one scalar value per header. Nested objects, nested lists and malformed row widths are rejected.
 
+## Supported response data types and row identity
+
+The client applies an explicit supported type contract before returning or snapshotting a result table:
+- Dimension columns must declare `STRING` and contain string values.
+- Metric columns must declare `INTEGER`, `FLOAT`, or `CURRENCY`. Integer columns require JSON integers (booleans are rejected); float/currency columns require finite JSON numbers. Numeric strings, booleans, nulls, and non-finite numbers are rejected.
+- Unknown or newly introduced provider data types fail closed until the integration contract and tests are deliberately extended. This is the integration's supported subset, not a claim that Google's published type vocabulary is exhaustive.
+- Every row must have a unique complete tuple of dimension values, matching Google's reports.query contract. Multiple rows may share one dimension value (for example, the same day across countries), but not the entire dimension tuple. A dimensionless aggregate report may contain at most one row.
+
+These checks protect the local evidence and aggregation boundary. They do not replace Google's report-specific metric/dimension compatibility rules.
+
 ## Data freshness and interpretation
 
 The API can omit the most recent days when all requested metrics are not yet available. An omitted row is not evidence of zero activity. Consumers must retain the requested date range, retrieval timestamp and source response metadata in any later evidence snapshot, and must not impute missing dates as zero without an explicit, separately governed transformation.
