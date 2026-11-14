@@ -216,6 +216,8 @@ def _validate_publish_session_rows(rows: list[object], *, schema: str) -> None:
                 or offset != size
             ):
                 raise ValueError
+            if audited == 1 and (row[9] != "COMPLETE" or audit_id is None):
+                raise ValueError
 
 
 def _validate_snapshot_payload(payload: object) -> dict[str, object]:
